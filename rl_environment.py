@@ -7,6 +7,24 @@ import matplotlib.pyplot as plt
 import imageio.v2 as imageio
 import os
 import matplotlib.patches as patches
+from enum import Enum
+
+class Actions(Enum):
+    DRIVE_TO_GOAL_0 = 0
+    DRIVE_TO_GOAL_1 = 1
+    DRIVE_TO_GOAL_2 = 2
+    DRIVE_TO_GOAL_3 = 3
+    DRIVE_TO_GOAL_4 = 4
+    PICK_UP_GOAL = 5
+    INTAKE_RING = 6
+    CLIMB = 7
+    DROP_GOAL = 8
+    DRIVE_TO_CORNER_0 = 9
+    DRIVE_TO_CORNER_1 = 10
+    DRIVE_TO_CORNER_2 = 11
+    DRIVE_TO_CORNER_3 = 12
+    ADD_RING_TO_GOAL = 13
+    DRIVE_TO_NEAREST_RING = 14
 
 class VEXHighStakesEnv(gym.Env):
     def __init__(self):
@@ -96,10 +114,7 @@ class VEXHighStakesEnv(gym.Env):
         if isinstance(action, (np.ndarray,)):
             action = int(action)
         # Reset temporary success flags each step
-        self.last_pickup_success = False
-        self.last_ring_success = False
-        self.last_drop_success = False
-        # Reset drop-related flags each step
+        self.last_action_success = False
         self.last_drop_in_corner = False
         self.last_rings_dropped = 0
 
@@ -107,7 +122,7 @@ class VEXHighStakesEnv(gym.Env):
         truncated = False
         time_cost = 0.0
 
-        if 0 <= action <= 4:  # Drive-to a specific goal index
+        if Actions.DRIVE_TO_GOAL_0.value <= action <= Actions.DRIVE_TO_GOAL_4.value:  # Drive-to a specific goal index
             specific_idx = action
             if specific_idx < self.mobile_goal_positions.shape[0] and self.goal_available[specific_idx]:
                 old_position = self.robot_position.copy()
@@ -120,7 +135,7 @@ class VEXHighStakesEnv(gym.Env):
             else:
                 time_cost = 0.5
 
-        elif action == 5:  # Pick up goal
+        elif action == Actions.PICK_UP_GOAL.value:  # Pick up goal
             time_cost = 0.5
             # Check if not holding any goal (i.e. all zeros)
             if np.sum(self.holding_goal) == 0:
@@ -138,9 +153,9 @@ class VEXHighStakesEnv(gym.Env):
                         chosen_idx = valid_idx[min_index]
                         self.holding_goal[chosen_idx] = 1  # mark as holding
                         self.goal_available[chosen_idx] = False
-                        self.last_pickup_success = True
+                        self.last_action_success = True
 
-        elif action == 6:  # Intake ring: pick up a ring from ground if less than 2 held
+        elif action == Actions.INTAKE_RING.value:  # Intake ring: pick up a ring from ground if less than 2 held
             time_cost = 0.5
             if np.sum(self.ring_status == 1) < 2:
                 # Only consider rings on the ground (status 0) not on a goal
@@ -155,12 +170,14 @@ class VEXHighStakesEnv(gym.Env):
                         self.ring_status[chosen_idx] = 1  # now on robot
                         # Update ring position to follow robot
                         self.ring_positions[chosen_idx] = self.robot_position.copy()
-                        self.last_ring_success = True
+                        self.last_action_success = True
 
-        elif action == 7:  # Climb
-            time_cost = 10.0
+        elif action == Actions.CLIMB.value:  # Climb
+            if(self.time_remaining <= 10):
+                self.last_action_success = True
+            time_cost = 120.0 # End of episode
 
-        elif action == 8:  # Drop goal
+        elif action == Actions.DROP_GOAL.value:  # Drop goal
             time_cost = 0.5
             # Check if holding any goal
             if np.sum(self.holding_goal) > 0:
@@ -169,17 +186,17 @@ class VEXHighStakesEnv(gym.Env):
                 self.mobile_goal_positions[dropped_idx] = self.robot_position.copy()
                 self.goal_available[dropped_idx] = True
                 self.holding_goal[dropped_idx] = 0  # mark as not holding
-                self.last_drop_success = True
+                self.last_action_success = True
                 # Check if drop location is at a corner (within 0.5 units)
                 corners = [np.array([0.5, 0.5]), np.array([11.5, 0.5]), np.array([0.5, 11.5]), np.array([11.5, 11.5])]
-                in_corner = any(np.linalg.norm(self.robot_position - corner) < 0.5 for corner in corners)
+                in_corner = any(np.linalg.norm(self.robot_position - corner) < 0.5 for corner in corners) # True if in any corner
                 self.last_drop_in_corner = in_corner
                 if in_corner:
                     self.last_rings_dropped = np.sum(self.ring_status == (dropped_idx + 2))
                 else:
                     self.last_rings_dropped = 0
 
-        elif 9 <= action <= 12:  # Drive-to a specific corner
+        elif Actions.DRIVE_TO_CORNER_0.value <= action <= Actions.DRIVE_TO_CORNER_3.value:  # Drive-to a specific corner
             corners = {
                 9: np.array([0.5, 0.5]),
                 10: np.array([11.5, 0.5]),
@@ -194,7 +211,7 @@ class VEXHighStakesEnv(gym.Env):
             distance = np.linalg.norm(target_position - old_position)
             time_cost = distance / 5.0
 
-        elif action == 13:  # Add ring to goal: move one ring from robot to held goal
+        elif action == Actions.ADD_RING_TO_GOAL.value:  # Add ring to goal: move one ring from robot to held goal
             time_cost = 0.5
             if np.sum(self.holding_goal) > 0 and np.sum(self.ring_status==1) > 0:
                 held_goal_idx = np.where(self.holding_goal == 1)[0][0]
@@ -203,8 +220,9 @@ class VEXHighStakesEnv(gym.Env):
                 self.ring_status[robot_ring_idx] = held_goal_idx + 2
                 # Update ring position to match the goal's position
                 self.ring_positions[robot_ring_idx] = self.mobile_goal_positions[held_goal_idx].copy()
+                self.last_action_success = True
 
-        elif action == 14:  # Drive to nearest ring action
+        elif action == Actions.DRIVE_TO_NEAREST_RING.value:  # Drive to nearest ring action
             candidate = np.where(self.ring_status == 0)[0]
             if candidate.size > 0:
                 rings = self.ring_positions[candidate]
@@ -271,10 +289,10 @@ class VEXHighStakesEnv(gym.Env):
 
     def reward_function(self, action):
         # For drive-to specific goal actions, reward only if no goal is held
-        if 0 <= action <= 4:
+        if Actions.DRIVE_TO_GOAL_0.value <= action <= Actions.DRIVE_TO_GOAL_4.value:
             return 1 if np.sum(self.holding_goal) == 0 else -10
         # For drive-to corner actions, reward only if you have a held goal with rings
-        if 9 <= action <= 12:
+        if Actions.DRIVE_TO_CORNER_0.value <= action <= Actions.DRIVE_TO_CORNER_3.value:
             held_goals = np.where(self.holding_goal == 1)[0]
             valid = False
             for i in held_goals:
@@ -282,44 +300,58 @@ class VEXHighStakesEnv(gym.Env):
                     valid = True
                     break
             return 1 if valid else -10
-        if action == 5:
-            return 5 if self.last_pickup_success else -1
-        elif action == 6:
+        if action == Actions.PICK_UP_GOAL.value:
+            return 10 if self.last_action_success else -10
+        elif action == Actions.INTAKE_RING.value:
             # Only reward ring intake if a goal is held; otherwise, penalize
             if np.sum(self.holding_goal) > 0:
-                return 1 if self.last_ring_success else -10
+                return 10 if self.last_action_success else -10
             else:
                 return -10
-        elif action == 7:
-            return 10 if self.time_remaining <= 30 else -10
-        elif action == 8:
-            if self.last_drop_success:
+        elif action == Actions.CLIMB.value:
+            return 10 if self.last_action_success == True else -100
+        elif action == Actions.DROP_GOAL.value:
+            if self.last_action_success:
                 if self.last_drop_in_corner:
                     return 5 * self.last_rings_dropped
                 else:
-                    return -5
+                    return -10
             else:
-                return -5
-        elif action == 14:
+                return -10
+        elif action == Actions.DRIVE_TO_NEAREST_RING.value:
             # Reward only if holding a goal and have less than 2 rings held on robot
-            return 1 if (np.sum(self.ring_status == 1) < 2 and np.sum(self.holding_goal) > 0) else -10
+            if np.sum(self.ring_status == 1) >= 2:
+                return -10
+            elif np.sum(self.holding_goal) == 0:
+                return 0
+            else:
+                return 10
+        elif action == Actions.ADD_RING_TO_GOAL.value:
+            return 10 if self.last_action_success == True else -10
         return 0
 
-    def render(self, mode='human', save_path=None, step_num=0, action=None):
+    def render(self, mode='human', save_path=None, step_num=0, action=None, reward=None):
         # Convert action from numpy array to int if necessary
         if isinstance(action, (np.ndarray,)):
             action = int(action)
         # Determine action description for printing
-        if 0 <= action <= 4:
+        if Actions.DRIVE_TO_GOAL_0.value <= action <= Actions.DRIVE_TO_GOAL_4.value:
             action_str = f"drive-to goal {action}"
-        elif 9 <= action <= 12:
+        elif Actions.DRIVE_TO_CORNER_0.value <= action <= Actions.DRIVE_TO_CORNER_3.value:
             action_str = f"drive-to corner {action}"
         else:
-            action_names = {5: "pick up goal", 6: "intake rings", 7: "climb", 8: "drop goal", 13: "add ring to goal"}
-            action_str = action_names.get(action, f"action {action}")
+            action_names = {
+                Actions.PICK_UP_GOAL: "pick up goal",
+                Actions.INTAKE_RING: "intake rings",
+                Actions.CLIMB: "climb",
+                Actions.DROP_GOAL: "drop goal",
+                Actions.ADD_RING_TO_GOAL: "add ring to goal",
+                Actions.DRIVE_TO_NEAREST_RING: "drive to nearest ring"
+            }
+            action_str = action_names.get(Actions(action), f"action {action}")
         # Convert robot position to string first before formatting
         robot_pos_str = f"({self.robot_position[0]:.2f}, {self.robot_position[1]:.2f})"
-        print(f"Step: {step_num:<3} | {action_str:<25} | Reward: {self.reward_function(action):<5} | Time remaining: {self.time_remaining:<7.2f} | Robot pos: {robot_pos_str}")
+        print(f"Step: {step_num:<3} | {action_str:<25} | Reward: {reward:<5} | Time remaining: {self.time_remaining:<7.2f} | Robot pos: {robot_pos_str}")
         # Create a plot
         fig, ax = plt.subplots()
         ax.set_xlim(0, 12)
@@ -373,42 +405,3 @@ class VEXHighStakesEnv(gym.Env):
 
     def close(self):
         pass
-
-
-# Check if the environment follows Gymnasium API
-env = VEXHighStakesEnv()
-check_env(env, warn=True)
-
-# Train a PPO agent on the environment
-model = PPO("MultiInputPolicy", env, verbose=1)
-
-print("Training model...")
-model.learn(total_timesteps=5000)
-print("Training complete.")
-
-# Save the trained model
-model.save("vex_high_stakes_ppo")
-
-# Load and test the model
-del model  # Remove to demonstrate loading
-model = PPO.load("vex_high_stakes_ppo")
-
-# Create a directory to save the images
-save_path = "simulation_steps"
-os.makedirs(save_path, exist_ok=True)
-
-done = False
-obs, _ = env.reset()
-step_num = 0
-images = []
-
-while not done:
-    action, _ = model.predict(obs)
-    obs, reward, done, truncated, _ = env.step(action)
-    env.render(save_path=save_path, step_num=step_num, action=action)
-    images.append(imageio.imread(f"{save_path}/step_{step_num}.png"))
-    step_num += 1
-
-imageio.mimsave('simulation.gif', images, fps=10)
-
-env.close()
