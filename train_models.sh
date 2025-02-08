@@ -2,7 +2,7 @@
 #SBATCH --job-name=vex_ai_reinforcement_learning       # Job name
 #SBATCH --output=job_results/job_%j/output.txt       # Output file (%j will be replaced with the job ID)
 #SBATCH --error=job_results/job_%j/error.txt         # Error file (%j will be replaced with the job ID)
-#SBATCH --time=0-1:0                 # Time limit (DD-HH:MM)
+#SBATCH --time=0-6:0                 # Time limit (DD-HH:MM)
 #SBATCH --partition=teaching         # Partition to submit to. `teaching` (for the T4 GPUs) is default on Rosie, but it's still being specified here
 
 # Default values
