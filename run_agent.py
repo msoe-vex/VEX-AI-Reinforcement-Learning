@@ -27,6 +27,7 @@ def run_agent(model_path):
         env.render(save_path=save_path, step_num=step_num, action=action, reward=reward)
         images.append(imageio.imread(f"{save_path}/step_{step_num}.png"))
         step_num += 1
+    print(f"Total score: {env.total_score}")
 
     imageio.mimsave('simulation.gif', images, fps=10)
 
@@ -37,7 +38,6 @@ if __name__ == "__main__":
     parser.add_argument('--model_path', type=str, default=None, help='Path to an existing model to load and run')
     parser.add_argument('--timesteps', type=int, default=500, help='Total timesteps for training the model')
     parser.add_argument('--train', action='store_true', help='Flag to indicate whether to train a new model')
-    parser.add_argument('--continue_training', action='store_true', help='Flag to indicate whether to continue training an existing model')
     args = parser.parse_args()
 
     if args.train:
@@ -66,4 +66,4 @@ if __name__ == "__main__":
     elif args.model_path:
         run_agent(args.model_path)
     else:
-        print("Please specify either --train to train a new model, --continue_training with --model_path to continue training an existing model, or --model_path to run an existing model.")
+        print("Please specify either --train to train a new model, or --model_path to run an existing model.")

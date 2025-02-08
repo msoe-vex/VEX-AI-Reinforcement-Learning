@@ -1,6 +1,7 @@
 /env
 /venv
 /simulation_steps
+simulation.gif
 /.vscode
 job-script.sh
 /job_results

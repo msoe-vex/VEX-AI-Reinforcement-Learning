@@ -45,6 +45,7 @@ class VEXHighStakesEnv(gym.Env):
         # Update action_space from 14 to 15 to add "drive to nearest ring" action
         self.action_space = spaces.Discrete(15)
         # Initialize state variables
+        self.total_score = 0  # Initialize total score
         self.reset()
 
     def reset(self, seed=None):
@@ -68,6 +69,7 @@ class VEXHighStakesEnv(gym.Env):
         self.time_remaining = 120  
         # Remove old ring counters and use a single counter for rings held.
         self.holding_rings = 0  
+        self.total_score = 0  # Reset total score
 
         # Pad mobile_goal_positions flattened to length 10 (5 goals x 2)
         mobile_goals = self.mobile_goal_positions.flatten()
@@ -127,13 +129,24 @@ class VEXHighStakesEnv(gym.Env):
             if specific_idx < self.mobile_goal_positions.shape[0] and self.goal_available[specific_idx]:
                 old_position = self.robot_position.copy()
                 target_position = self.mobile_goal_positions[specific_idx]
-                direction = target_position - old_position
-                self.robot_position = target_position.copy()
-                self.robot_orientation = np.arctan2(direction[1], direction[0])
                 distance = np.linalg.norm(target_position - old_position)
-                time_cost = distance / 5.0
+                if distance > 0.1:  # Check if the robot is not already at the goal (with a small threshold)
+                    direction = target_position - old_position
+                    self.robot_position = target_position.copy()
+                    self.robot_orientation = np.arctan2(direction[1], direction[0])
+                    time_cost = distance
+                    self.last_action_success = True
+                else:
+                    time_cost = 0.1  # Minimal time cost if already at the goal
+                    self.last_action_success = False
             else:
                 time_cost = 0.5
+                self.last_action_success = False
+            # Check if the robot is already near any goal
+            for goal_pos in self.mobile_goal_positions:
+                if np.linalg.norm(self.robot_position - goal_pos) < 0.1:
+                    self.last_action_success = False
+                    break
 
         elif action == Actions.PICK_UP_GOAL.value:  # Pick up goal
             time_cost = 0.5
@@ -285,12 +298,16 @@ class VEXHighStakesEnv(gym.Env):
         }
         # Now compute reward after state update
         reward = self.reward_function(action)
+        self.total_score += reward  # Update total score
         return observation, reward, done, truncated, {}
 
     def reward_function(self, action):
         # For drive-to specific goal actions, reward only if no goal is held
         if Actions.DRIVE_TO_GOAL_0.value <= action <= Actions.DRIVE_TO_GOAL_4.value:
-            return 1 if np.sum(self.holding_goal) == 0 else -10
+            if self.last_action_success:
+                return 1 if np.sum(self.holding_goal) == 0 else -10
+            else:
+                return -10
         # For drive-to corner actions, reward only if you have a held goal with rings
         if Actions.DRIVE_TO_CORNER_0.value <= action <= Actions.DRIVE_TO_CORNER_3.value:
             held_goals = np.where(self.holding_goal == 1)[0]
@@ -309,7 +326,7 @@ class VEXHighStakesEnv(gym.Env):
             else:
                 return -10
         elif action == Actions.CLIMB.value:
-            return 10 if self.last_action_success == True else -100
+            return 10 if self.last_action_success == True else -10000
         elif action == Actions.DROP_GOAL.value:
             if self.last_action_success:
                 if self.last_drop_in_corner:
@@ -330,7 +347,7 @@ class VEXHighStakesEnv(gym.Env):
             return 10 if self.last_action_success == True else -10
         return 0
 
-    def render(self, mode='human', save_path=None, step_num=0, action=None, reward=None):
+    def render(self, save_path=None, step_num=0, action=None, reward=None):
         # Convert action from numpy array to int if necessary
         if isinstance(action, (np.ndarray,)):
             action = int(action)

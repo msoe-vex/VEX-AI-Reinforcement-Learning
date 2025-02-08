@@ -19,17 +19,18 @@ def train_agent(env_class, total_timesteps, save_path):
     model = PPO("MultiInputPolicy", env, verbose=1)
     model.learn(total_timesteps=total_timesteps)
     model.save(save_path)
-    print(f"Training complete for {env_class.__name__}. Model saved to {save_path}")
+    print(f"Training complete. Model saved to {save_path}")
+    print(f"Final score: {env.total_score}\n")  # Print the final score
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train multiple agents concurrently.")
-    parser.add_argument('--num_agents', type=int, default=1, help='Number of agents to train')
-    parser.add_argument('--total_timesteps', type=int, default=100, help='Total timesteps for training each agent')
+    parser.add_argument('--agents', type=int, default=1, help='Number of agents to train')
+    parser.add_argument('--timesteps', type=int, default=1000, help='Total timesteps for training each agent')
     parser.add_argument('--job_id', type=str, required=True, help='Job ID for saving models')
     args = parser.parse_args()
 
-    num_agents = args.num_agents
-    total_timesteps = args.total_timesteps
+    num_agents = args.agents
+    total_timesteps = args.timesteps
     job_id = args.job_id
 
     processes = []
