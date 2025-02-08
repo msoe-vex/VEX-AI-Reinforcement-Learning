@@ -68,6 +68,9 @@ class VEXHighStakesEnv(gym.Env):
         self.time_remaining = 120  
         # Remove old ring counters and use a single counter for rings held.
         self.holding_rings = 0  
+        
+        # Path tracking
+        self.robot_path = [np.array(self.robot_position)]
 
         # Pad mobile_goal_positions flattened to length 10 (5 goals x 2)
         mobile_goals = self.mobile_goal_positions.flatten()
@@ -257,6 +260,9 @@ class VEXHighStakesEnv(gym.Env):
         else:
             rings_flat = rings_flat[:48]
 
+        # Path tracking
+        self.robot_path.append(np.array(self.robot_position))
+
         # Ensure observation has the correct shape (63,)
         max_goals = 5
         max_rings = 24
@@ -369,6 +375,11 @@ class VEXHighStakesEnv(gym.Env):
         orientation_arrow = patches.FancyArrow(center[0], center[1], arrow_dx, arrow_dy, width=0.1, 
                                                 color='yellow', length_includes_head=True, alpha=0.7)
         ax.add_patch(orientation_arrow)
+        
+        # Path tracking
+        for curr_pos, prev_pos in zip(self.robot_path[1:], self.robot_path[:-1]):
+            path_line = patches.FancyArrowPatch(prev_pos, curr_pos, lw=0.05, arrowstyle='-')
+            ax.add_patch(path_line)
         
         # Draw mobile goals as transparent hexagons if available
         for goal, available in zip(self.mobile_goal_positions, self.goal_available):
