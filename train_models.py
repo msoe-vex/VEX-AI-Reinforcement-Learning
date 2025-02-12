@@ -13,30 +13,50 @@ with open('rl_environment.py', 'rb') as f:
 
 from rl_environment import VEXHighStakesEnv
 
-def train_agent(env_class, total_timesteps, save_path):
+def evaluate_agent(model, env_class):
+    # Create a fresh environment for evaluation
+    env = env_class()
+    obs, _ = env.reset()
+    done = False
+    # Run one episode using the trained model
+    while not done:
+        action, _ = model.predict(obs)
+        obs, reward, terminated, truncated, _ = env.step(action)
+        done = terminated or truncated
+    print(f"Evaluation complete. Final score: {env.total_score}\n")
+    env.close()
+
+def train_agent(env_class, total_timesteps, save_path, model_path=""):
     env = env_class()
     check_env(env, warn=True)
-    model = PPO("MultiInputPolicy", env, verbose=1)
+    if model_path:
+        # Load the provided pretrained model
+        model = PPO.load(model_path, env=env)
+    else:
+        model = PPO("MultiInputPolicy", env, verbose=1)
     model.learn(total_timesteps=total_timesteps)
     model.save(save_path)
     print(f"Training complete. Model saved to {save_path}")
-    print(f"Final score: {env.total_score}\n")  # Print the final score
+    # Run evaluation to get an accurate final score
+    evaluate_agent(model, env_class)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train multiple agents concurrently.")
     parser.add_argument('--agents', type=int, default=1, help='Number of agents to train')
     parser.add_argument('--timesteps', type=int, default=1000, help='Total timesteps for training each agent')
     parser.add_argument('--job_id', type=str, required=True, help='Job ID for saving models')
+    parser.add_argument('--model_path', type=str, default="", help='Path to a pretrained model')
     args = parser.parse_args()
 
     num_agents = args.agents
     total_timesteps = args.timesteps
     job_id = args.job_id
+    model_path = args.model_path
 
     processes = []
     for i in range(num_agents):
         save_path = f"job_results/job_{job_id}/models/vex_high_stakes_ppo_agent_{i}"
-        p = Process(target=train_agent, args=(VEXHighStakesEnv, total_timesteps, save_path))
+        p = Process(target=train_agent, args=(VEXHighStakesEnv, total_timesteps, save_path, model_path))
         p.start()
         processes.append(p)
 

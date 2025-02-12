@@ -8,16 +8,22 @@
 # Default values
 NUM_AGENTS=5
 TOTAL_TIMESTEPS=10000
+MODEL_PATH=""
 
 # Parse command line arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         --agents) NUM_AGENTS="$2"; shift ;;
         --timesteps) TOTAL_TIMESTEPS="$2"; shift ;;
+        --model_path) MODEL_PATH="$2"; shift ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
     shift
 done
 
 # Run your code here
-python train_models.py --agents $NUM_AGENTS --timesteps $TOTAL_TIMESTEPS --job_id $SLURM_JOB_ID
+if [ -z "$MODEL_PATH" ]; then
+    python train_models.py --agents $NUM_AGENTS --timesteps $TOTAL_TIMESTEPS --job_id $SLURM_JOB_ID
+else
+    python train_models.py --agents $NUM_AGENTS --timesteps $TOTAL_TIMESTEPS --job_id $SLURM_JOB_ID --model_path $MODEL_PATH
+fi
