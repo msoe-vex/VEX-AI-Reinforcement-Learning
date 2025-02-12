@@ -27,12 +27,12 @@ def evaluate_agent(model, env_class):
     print(f"Evaluation complete. Final score: {env.total_score}\n")
     env.close()
 
-def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, discount_factor, model_path=""):
+def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, discount_factor, model_path):
     env = env_class()
     check_env(env, warn=True)
     if model_path:
         # Load the provided pretrained model
-        model = PPO.load(model_path, env=env)
+        model = PPO.load(model_path, env=env, verbose=1, ent_coef=entropy, learning_rate=learning_rate, gamma=discount_factor)
     else:
         model = PPO("MultiInputPolicy", env, verbose=1, ent_coef=entropy, learning_rate=learning_rate, gamma=discount_factor)
     model.learn(total_timesteps=total_timesteps)
@@ -63,7 +63,7 @@ if __name__ == "__main__":
     processes = []
     for i in range(num_agents):
         save_path = f"job_results/job_{job_id}/models/vex_high_stakes_ppo_agent_{i}"
-        p = Process(target=train_agent, args=(VEXHighStakesEnv, total_timesteps, save_path, model_path))
+        p = Process(target=train_agent, args=(VEXHighStakesEnv, total_timesteps, save_path, entropy, learning_rate, discount_factor, model_path))
         p.start()
         processes.append(p)
 
