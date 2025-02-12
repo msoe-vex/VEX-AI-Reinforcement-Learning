@@ -6,3 +6,4 @@ simulation.gif
 job-script.sh
 /job_results
 /__pycache__
+train_models_*.sh

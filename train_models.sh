@@ -9,6 +9,9 @@
 NUM_AGENTS=5
 TOTAL_TIMESTEPS=10000
 MODEL_PATH=""
+ENTROPY=0.0
+LEARNING_RATE=0.0003
+DISCOUNT_FACTOR=0.99
 
 # Parse command line arguments
 while [[ "$#" -gt 0 ]]; do
@@ -16,6 +19,9 @@ while [[ "$#" -gt 0 ]]; do
         --agents) NUM_AGENTS="$2"; shift ;;
         --timesteps) TOTAL_TIMESTEPS="$2"; shift ;;
         --model_path) MODEL_PATH="$2"; shift ;;
+        --entropy) ENTROPY="$2"; shift ;;
+        --learning_rate) LEARNING_RATE="$2"; shift ;;
+        --discount_factor) DISCOUNT_FACTOR="$2"; shift ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
     shift
@@ -23,7 +29,8 @@ done
 
 # Run your code here
 if [ -z "$MODEL_PATH" ]; then
-    python train_models.py --agents $NUM_AGENTS --timesteps $TOTAL_TIMESTEPS --job_id $SLURM_JOB_ID
+    python train_models.py --agents $NUM_AGENTS --timesteps $TOTAL_TIMESTEPS --entropy $ENTROPY --learning_rate $LEARNING_RATE --discount_factor $DISCOUNT_FACTOR --job_id $SLURM_JOB_ID
 else
-    python train_models.py --agents $NUM_AGENTS --timesteps $TOTAL_TIMESTEPS --job_id $SLURM_JOB_ID --model_path $MODEL_PATH
+    python train_models.py --agents $NUM_AGENTS --timesteps $TOTAL_TIMESTEPS --entropy $ENTROPY --learning_rate $LEARNING_RATE --discount_factor $DISCOUNT_FACTOR --job_id $SLURM_JOB_ID --model_path $MODEL_PATH
 fi
+
