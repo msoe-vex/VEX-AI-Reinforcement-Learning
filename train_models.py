@@ -17,7 +17,7 @@ from rl_environment import VEXHighStakesEnv
 def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, discount_factor):
     env = env_class()
     check_env(env, warn=True)
-    model = PPO("MultiInputPolicy", env, verbose=1, ent_coef=entropy, learning_rate=lambda p: 0.1 * np.exp(25 * (p - 1)) + 5 * 10 ** (-5), gamma=discount_factor)
+    model = PPO("MultiInputPolicy", env, verbose=1, ent_coef=entropy, learning_rate=learning_rate, gamma=discount_factor)
     model.learn(total_timesteps=total_timesteps)
     model.save(save_path)
     print(f"Training complete. Model saved to {save_path}")
