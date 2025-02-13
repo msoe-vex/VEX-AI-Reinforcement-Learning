@@ -14,7 +14,15 @@ def run_agent(model_path):
 
     # Create a directory to save the images
     save_path = "simulation_steps"
-    os.makedirs(save_path, exist_ok=True)
+    if os.path.exists(save_path):
+        for file in os.listdir(save_path):
+            file_path = os.path.join(save_path, file)
+            if os.path.isfile(file_path):
+                os.unlink(file_path)
+            elif os.path.isdir(file_path):
+                os.rmdir(file_path)
+    else:
+        os.makedirs(save_path, exist_ok=True)
 
     done = False
     obs, _ = env.reset()
@@ -29,6 +37,7 @@ def run_agent(model_path):
         step_num += 1
     print(f"Total score: {env.total_score}")
 
+    print("Creating GIF...")
     imageio.mimsave('simulation.gif', images, fps=10)
 
     env.close()
