@@ -61,6 +61,8 @@ class VEXHighStakesEnv(gym.Env):
         self.total_score = 0  # Initialize total score
         self.reset()
 
+        self.ignore_randomness = False
+
     def reset(self, seed=None):
         super().reset(seed=seed)
         self.robot_position = np.array([0.5, 6.0], dtype=np.float32)
@@ -141,7 +143,7 @@ class VEXHighStakesEnv(gym.Env):
 
         done = False
         truncated = False
-        time_cost = 0.0
+        time_cost = 0.1 # Default time cost for actions
 
         # Compute the initial score before taking the action
         initial_score = self.compute_field_score()
@@ -167,46 +169,48 @@ class VEXHighStakesEnv(gym.Env):
 
         elif action == Actions.PICK_UP_GOAL.value:  # Pick up goal
             time_cost = 0.5
-            # Check if not holding any goal
-            if self.holding_goal == 0:
-                valid_idx = np.where(
+            if np.random.rand() > 0.05 or self.ignore_randomness:  # 95% chance to succeed
+                if self.holding_goal == 0:
+                    valid_idx = np.where(
                     (self.goal_available) &
                     (self.mobile_goal_positions[:,0] >= 0) & (self.mobile_goal_positions[:,0] <= 12) &
                     (self.mobile_goal_positions[:,1] >= 0) & (self.mobile_goal_positions[:,1] <= 12)
-                )[0]
-                if valid_idx.size > 0:
-                    # Compute distances to all valid goals.
-                    goals = self.mobile_goal_positions[valid_idx]
-                    distances = np.linalg.norm(goals - self.robot_position, axis=1)
-                    min_index = np.argmin(distances)
-                    if distances[min_index] < 1.0:  # pickup threshold
-                        chosen_idx = valid_idx[min_index]
-                        self.holding_goal = 1  # mark as holding
-                        self.holding_goal_index = chosen_idx  # store the index of the held goal
-                        self.goal_available[chosen_idx] = False
-                        # Update holding_goal_full
-                        self.holding_goal_full = 1 if np.sum(self.ring_status == (chosen_idx + 2)) == 6 else 0
+                    )[0]
+                    if valid_idx.size > 0:
+                        # Compute distances to all valid goals.
+                        goals = self.mobile_goal_positions[valid_idx]
+                        distances = np.linalg.norm(goals - self.robot_position, axis=1)
+                        min_index = np.argmin(distances)
+                        if distances[min_index] < 1.0:  # pickup threshold
+                            chosen_idx = valid_idx[min_index]
+                            self.holding_goal = 1  # mark as holding
+                            self.holding_goal_index = chosen_idx  # store the index of the held goal
+                            self.goal_available[chosen_idx] = False
+                            # Update holding_goal_full
+                            self.holding_goal_full = 1 if np.sum(self.ring_status == (chosen_idx + 2)) == 6 else 0
 
         elif action == Actions.INTAKE_RING.value:  # Intake ring: pick up a ring from ground if less than 2 held
             time_cost = 0.5
-            if self.holding_rings < 2:
-                # Only consider rings on the ground (status 0) not on a goal or wall stake
-                ground_idx = np.where(self.ring_status == 0)[0]
-                if ground_idx.size > 0:
-                    # Compute distances to each candidate ring
-                    rings = self.ring_positions[ground_idx]
-                    distances = np.linalg.norm(rings - self.robot_position, axis=1)
-                    min_index = np.argmin(distances)
-                    if distances[min_index] < 1.0:
-                        chosen_idx = ground_idx[min_index]
-                        self.ring_status[chosen_idx] = 1  # now on robot
-                        self.holding_rings += 1  # increment rings held by robot
-                        # Update ring position to follow robot
-                        self.ring_positions[chosen_idx] = self.robot_position.copy()
+            if np.random.rand() > 0.05 or self.ignore_randomness:  # 95% chance to succeed
+                if self.holding_rings < 2:
+                    # Only consider rings on the ground (status 0) not on a goal or wall stake
+                    ground_idx = np.where(self.ring_status == 0)[0]
+                    if ground_idx.size > 0:
+                        # Compute distances to each candidate ring
+                        rings = self.ring_positions[ground_idx]
+                        distances = np.linalg.norm(rings - self.robot_position, axis=1)
+                        min_index = np.argmin(distances)
+                        if distances[min_index] < 1.0:
+                            chosen_idx = ground_idx[min_index]
+                            self.ring_status[chosen_idx] = 1  # now on robot
+                            self.holding_rings += 1  # increment rings held by robot
+                            # Update ring position to follow robot
+                            self.ring_positions[chosen_idx] = self.robot_position.copy()
 
-        elif action == Actions.CLIMB.value:  # Climb
-            time_cost = self.time_remaining # End of episode
-            self.climbed = True
+        elif action == Actions.CLIMB.value: 
+            if np.random.rand() > 0.1 or self.ignore_randomness:
+                time_cost = self.time_remaining # End of episode
+                self.climbed = True
 
         elif action == Actions.DROP_GOAL.value:  # Drop goal
             time_cost = 0.5
@@ -240,17 +244,18 @@ class VEXHighStakesEnv(gym.Env):
 
         elif action == Actions.ADD_RING_TO_GOAL.value:  # Add ring to goal: move one ring from robot to held goal
             time_cost = 0.5
-            if self.holding_goal == 1 and self.holding_rings > 0:
-                held_goal_idx = self.holding_goal_index
-                if np.sum(self.ring_status == (held_goal_idx + 2)) < 6:  # Check if goal has less than 6 rings
-                    robot_ring_idx = np.where(self.ring_status == 1)[0][0]
-                    # Attach ring to the held goal: set status to (held_goal_idx+2)
-                    self.ring_status[robot_ring_idx] = held_goal_idx + 2
-                    # Update ring position to match the goal's position
-                    self.ring_positions[robot_ring_idx] = self.mobile_goal_positions[held_goal_idx].copy()
-                    self.holding_rings -= 1  # decrement rings held by robot
-                    # Update holding_goal_full
-                    self.holding_goal_full = 1 if np.sum(self.ring_status == (held_goal_idx + 2)) == 6 else 0
+            if np.random.rand() > 0.05 or self.ignore_randomness:  # 95% chance to succeed
+                if self.holding_goal == 1 and self.holding_rings > 0:
+                    held_goal_idx = self.holding_goal_index
+                    if np.sum(self.ring_status == (held_goal_idx + 2)) < 6:  # Check if goal has less than 6 rings
+                        robot_ring_idx = np.where(self.ring_status == 1)[0][0]
+                        # Attach ring to the held goal: set status to (held_goal_idx+2)
+                        self.ring_status[robot_ring_idx] = held_goal_idx + 2
+                        # Update ring position to match the goal's position
+                        self.ring_positions[robot_ring_idx] = self.mobile_goal_positions[held_goal_idx].copy()
+                        self.holding_rings -= 1  # decrement rings held by robot
+                        # Update holding_goal_full
+                        self.holding_goal_full = 1 if np.sum(self.ring_status == (held_goal_idx + 2)) == 6 else 0
 
         elif action == Actions.DRIVE_TO_NEAREST_RING.value:  # Drive to nearest ring action
             candidate = np.where(self.ring_status == 0)[0]
@@ -283,15 +288,16 @@ class VEXHighStakesEnv(gym.Env):
 
         elif action == Actions.ADD_RING_TO_WALL_STAKE.value:  # Add ring to nearest wall stake
             time_cost = 0.5
-            if self.holding_rings > 0:
-                distances = np.linalg.norm(self.wall_stakes_positions - self.robot_position, axis=1)
-                nearest_stake_idx = np.argmin(distances)
-                max_rings_on_stake = 2 if nearest_stake_idx < 2 else 6  # short stakes can hold 2 rings, tall stakes can hold 6 rings
-                if self.wall_stakes[nearest_stake_idx] < max_rings_on_stake and distances[nearest_stake_idx] < 1.0:
-                    robot_ring_idx = np.where(self.ring_status == 1)[0][0]
-                    self.ring_status[robot_ring_idx] = nearest_stake_idx + 7  # set status to indicate ring is on wall stake
-                    self.wall_stakes[nearest_stake_idx] += 1  # add ring to the wall stake
-                    self.holding_rings -= 1  # decrement rings held by robot
+            if np.random.rand() > 0.05 or self.ignore_randomness:  # 95% chance to succeed
+                if self.holding_rings > 0:
+                    distances = np.linalg.norm(self.wall_stakes_positions - self.robot_position, axis=1)
+                    nearest_stake_idx = np.argmin(distances)
+                    max_rings_on_stake = 2 if nearest_stake_idx < 2 else 6  # short stakes can hold 2 rings, tall stakes can hold 6 rings
+                    if self.wall_stakes[nearest_stake_idx] < max_rings_on_stake and distances[nearest_stake_idx] < 1.0:
+                        robot_ring_idx = np.where(self.ring_status == 1)[0][0]
+                        self.ring_status[robot_ring_idx] = nearest_stake_idx + 7  # set status to indicate ring is on wall stake
+                        self.wall_stakes[nearest_stake_idx] += 1  # add ring to the wall stake
+                        self.holding_rings -= 1  # decrement rings held by robot
 
         self.time_remaining = max(0, self.time_remaining - time_cost)
         if self.time_remaining <= 0:
