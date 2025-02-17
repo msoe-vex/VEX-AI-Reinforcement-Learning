@@ -57,7 +57,9 @@ class VEXHighStakesEnv(gym.Env):
             "goals": spaces.Box(low=-1, high=12, shape=(max_goals*2,), dtype=np.float32),  # Positions of all goals (max_goals*2,)
             "wall_stakes": spaces.Box(low=0, high=6, shape=(max_wall_stakes,), dtype=np.int32),  # Number of rings on each wall stake (max_wall_stakes,)
             "holding_goal_full": spaces.Discrete(2),  # Whether the held goal is full (0: not holding or goal not full, 1: holding goal and full)
-            "time_remaining": spaces.Box(low=0, high=120, shape=(1,), dtype=np.float32)  # Time remaining in the episode (1,)
+            "time_remaining": spaces.Box(low=0, high=120, shape=(1,), dtype=np.float32),  # Time remaining in the episode (1,)
+            "visible_rings_count": spaces.Discrete(25),  # Number of visible rings (0 to 24)
+            "visible_goals_count": spaces.Discrete(6)  # Number of visible goals (0 to 5)
         })
         self.action_space = spaces.Discrete(22)  # Updated action space to include turn actions
         # Initialize state variables
@@ -127,7 +129,9 @@ class VEXHighStakesEnv(gym.Env):
             "goals": self.padded_goals,  # modified: use pre-allocated array
             "wall_stakes": self.wall_stakes,  # added wall_stakes to observation
             "holding_goal_full": self.holding_goal_full,  # added holding_goal_full to observation
-            "time_remaining": np.array([self.time_remaining], dtype=np.float32)  # added time_remaining to observation
+            "time_remaining": np.array([self.time_remaining], dtype=np.float32),  # added time_remaining to observation
+            "visible_rings_count": np.sum(self.padded_rings != -1) // 2,  # Count of visible rings
+            "visible_goals_count": np.sum(self.padded_goals != -1) // 2  # Count of visible goals
         }
         return observation, {}
 
@@ -296,10 +300,10 @@ class VEXHighStakesEnv(gym.Env):
                         self.holding_rings -= 1  # decrement rings held by robot
 
         elif action == Actions.TURN_LEFT.value:
-            self.robot_orientation = (self.robot_orientation + np.pi / 2) % (2 * np.pi)
+            self.robot_orientation = (self.robot_orientation + np.pi / 2) % (2 * np.pi) - np.pi
             time_cost = 0.1
         elif action == Actions.TURN_RIGHT.value:
-            self.robot_orientation = (self.robot_orientation - np.pi / 2) % (2 * np.pi)
+            self.robot_orientation = (self.robot_orientation - np.pi / 2) % (2 * np.pi) - np.pi
             time_cost = 0.1
 
         self.time_remaining = max(0, self.time_remaining - time_cost)
@@ -330,7 +334,9 @@ class VEXHighStakesEnv(gym.Env):
             "goals": self.padded_goals,
             "wall_stakes": self.wall_stakes,
             "holding_goal_full": self.holding_goal_full,
-            "time_remaining": np.array([self.time_remaining], dtype=np.float32)
+            "time_remaining": np.array([self.time_remaining], dtype=np.float32),
+            "visible_rings_count": np.sum(self.padded_rings != -1) // 2,  # Count of visible rings
+            "visible_goals_count": np.sum(self.padded_goals != -1) // 2  # Count of visible goals
         }
         # Now compute reward after state update
         reward = self.reward_function(initial_score, initial_time_remaining)
@@ -356,6 +362,8 @@ class VEXHighStakesEnv(gym.Env):
 
         self.padded_goals = visible_goals
         self.padded_rings = visible_rings
+        self.visible_rings_count = np.sum(visible_rings != -1) // 2  # Update visible rings count
+        self.visible_goals_count = np.sum(visible_goals != -1) // 2  # Update visible goals count
 
     def compute_field_score(self):
         score = 0
@@ -472,8 +480,9 @@ class VEXHighStakesEnv(gym.Env):
         
         # Draw mobile goals as transparent hexagons if available
         for goal_idx, (goal, available) in enumerate(zip(self.mobile_goal_positions, self.goal_available)):
+            color = 'green' if self.is_visible(goal) else 'gray'
             hexagon = patches.RegularPolygon(goal, numVertices=6, radius=0.5, orientation=np.pi/6, 
-                                                color='green', alpha=0.25)
+                                                color=color, alpha=0.25)
             ax.add_patch(hexagon)
             # Print the number of rings on the goal
             rings_on_goal = np.sum(self.ring_status == (goal_idx + 2))
@@ -500,17 +509,10 @@ class VEXHighStakesEnv(gym.Env):
             else:
                 goal_idx = status - 2
                 pos = self.mobile_goal_positions[goal_idx]  # attached to a goal
-            circle = patches.Circle(pos, 0.3, color='red', alpha=0.7)
+            color = 'red' if self.is_visible(pos) else 'gray'
+            circle = patches.Circle(pos, 0.3, color=color, alpha=0.7)
             ax.add_patch(circle)
         
-        for pos in wall_stakes_positions:
-            stake_circle = patches.Circle(pos, 0.2, color='black')
-            ax.add_patch(stake_circle)
-
-        # Print the number of rings the robot is holding just below the robot
-        ax.text(self.robot_position[0], self.robot_position[1], f"{self.holding_rings}", color='black', ha='center')
-
-        # Print the number of rings on each wall stake just outside of the field
         for idx, pos in enumerate(wall_stakes_positions):
             if idx == 0:  # left middle
                 text_pos = pos + np.array([-0.5, 0.0])
@@ -522,13 +524,16 @@ class VEXHighStakesEnv(gym.Env):
                 text_pos = pos + np.array([0.0, 0.5])
             ax.text(text_pos[0], text_pos[1], f"{self.wall_stakes[idx]}", color='black', ha='center')
 
+        # Print the number of rings the robot is holding just below the robot
+        ax.text(self.robot_position[0], self.robot_position[1], f"{self.holding_rings}", color='black', ha='center')
+
         # Print the total score off to the side of the field
         ax.text(-2.5, 6, f"Total Score: {self.total_score}", color='black', ha='center')
         ax.text(6, 13.25, f'Step {step_num}', color='black', ha='center')
         ax.text(6, -1.25, f'Action: {action_str}', color='black', ha='center')  # Print action name under the field
 
         # Draw the robot's field of view as a dotted line
-        fov_length = 12  # Length of the field of view lines
+        fov_length = 17  # Length of the field of view lines
         left_fov_angle = self.robot_orientation + np.pi / 2
         right_fov_angle = self.robot_orientation - np.pi / 2
 
@@ -537,6 +542,23 @@ class VEXHighStakesEnv(gym.Env):
 
         ax.plot([self.robot_position[0], left_fov_end[0]], [self.robot_position[1], left_fov_end[1]], 'k--', alpha=0.5)
         ax.plot([self.robot_position[0], right_fov_end[0]], [self.robot_position[1], right_fov_end[1]], 'k--', alpha=0.5)
+
+        # Draw gray overlay for the section the robot can't see
+        fov_polygon = np.array([self.robot_position, left_fov_end, right_fov_end])
+        field_corners = np.array([[0, 0], [12, 0], [12, 12], [0, 12]])
+
+        # Create a large rectangle covering the entire area the robot can't see
+        overlay_polygon = np.array([
+            self.robot_position,
+            left_fov_end,
+            left_fov_end - 100 * np.array([np.cos(self.robot_orientation), np.sin(self.robot_orientation)]),
+            right_fov_end - 100 * np.array([np.cos(self.robot_orientation), np.sin(self.robot_orientation)]),
+            right_fov_end,
+            self.robot_position
+        ])
+
+        overlay = patches.Polygon(overlay_polygon, closed=True, color='gray', alpha=0.3)
+        ax.add_patch(overlay)
 
         if save_path:
             plt.savefig(f"{save_path}/step_{step_num}.png")
