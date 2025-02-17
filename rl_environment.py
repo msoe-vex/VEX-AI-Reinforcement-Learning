@@ -30,10 +30,13 @@ class Actions(Enum):
     DRIVE_TO_WALL_STAKE_2 = 17
     DRIVE_TO_WALL_STAKE_3 = 18
     ADD_RING_TO_WALL_STAKE = 19  # Single action for adding ring to nearest wall stake
+    TURN_LEFT = 20
+    TURN_RIGHT = 21
 
 class VEXHighStakesEnv(gym.Env):
-    def __init__(self):
+    def __init__(self, randomize_positions=False):
         super(VEXHighStakesEnv, self).__init__()
+        self.randomize_positions = randomize_positions
         max_goals = 5
         max_rings = 24  # updated from 19 to 24 rings
         max_wall_stakes = 4  # 2 short and 2 tall wall stakes
@@ -56,7 +59,7 @@ class VEXHighStakesEnv(gym.Env):
             "holding_goal_full": spaces.Discrete(2),  # Whether the held goal is full (0: not holding or goal not full, 1: holding goal and full)
             "time_remaining": spaces.Box(low=0, high=120, shape=(1,), dtype=np.float32)  # Time remaining in the episode (1,)
         })
-        self.action_space = spaces.Discrete(20)
+        self.action_space = spaces.Discrete(22)  # Updated action space to include turn actions
         # Initialize state variables
         self.total_score = 0  # Initialize total score
         self.reset()
@@ -68,17 +71,21 @@ class VEXHighStakesEnv(gym.Env):
         self.robot_position = np.array([0.5, 6.0], dtype=np.float32)
         self.last_robot_position = self.robot_position.copy()
         self.robot_orientation = 0.0  
-        self.mobile_goal_positions = np.array([[4.0, 2.0], [4.0, 10.0], [8.0, 4.0], [8.0, 8.0], [10.0, 6.0]], dtype=np.float32)
+        if self.randomize_positions:
+            self.mobile_goal_positions = np.random.uniform(low=0.5, high=11.5, size=(5, 2)).astype(np.float32)
+            self.ring_positions = np.random.uniform(low=0.5, high=11.5, size=(24, 2)).astype(np.float32)
+        else:
+            self.mobile_goal_positions = np.array([[4.0, 2.0], [4.0, 10.0], [8.0, 4.0], [8.0, 8.0], [10.0, 6.0]], dtype=np.float32)
+            self.ring_positions = np.array([
+                [6.0, 1.0], [6.0, 11.0],
+                [2.0, 2.0], [2.0, 6.0], [2.0, 10.0], [4.0, 4.0], [4.0, 8.0],
+                [5.7, 5.7], [5.7, 6.3], [6.3, 5.7], [6.3, 6.3],
+                [6.0, 2.0], [6.0, 10.0], [8.0, 2.0], [8.0, 10.0], [10.0, 2.0], [10.0, 10.0],
+                [0.3, 0.3], [11.7, 11.7], [11.7, 0.3], [0.3, 11.7],
+                [10.0, 4.0], [10.0, 8.0], [11.0, 6.0]  # new rings added here
+            ], dtype=np.float32)
         self.goal_available = np.ones(len(self.mobile_goal_positions), dtype=bool)
         # Set ring_positions and initialize ring_status (all rings start on ground: 0)
-        self.ring_positions = np.array([
-            [6.0, 1.0], [6.0, 11.0],
-            [2.0, 2.0], [2.0, 6.0], [2.0, 10.0], [4.0, 4.0], [4.0, 8.0],
-            [5.7, 5.7], [5.7, 6.3], [6.3, 5.7], [6.3, 6.3],
-            [6.0, 2.0], [6.0, 10.0], [8.0, 2.0], [8.0, 10.0], [10.0, 2.0], [10.0, 10.0],
-            [0.3, 0.3], [11.7, 11.7], [11.7, 0.3], [0.3, 11.7],
-            [10.0, 4.0], [10.0, 8.0], [11.0, 6.0]  # new rings added here
-        ], dtype=np.float32)
         self.ring_status = np.zeros(self.ring_positions.shape[0], dtype=np.int32)  # all rings on ground
         # Replace has_goal and carried_goal_index with holding_goal (0: not holding, 1: holding)
         self.holding_goal = 0
@@ -107,6 +114,8 @@ class VEXHighStakesEnv(gym.Env):
         # Flatten and pad ring_positions
         rings_flat = self.ring_positions.flatten()
         self.padded_rings[:rings_flat.size] = rings_flat
+
+        self.update_visible_objects()
 
         observation = {
             "robot_x": np.array([self.robot_position[0]], dtype=np.float32),  # changed: return 1d array
@@ -139,7 +148,7 @@ class VEXHighStakesEnv(gym.Env):
 
         if Actions.DRIVE_TO_GOAL_0.value <= action <= Actions.DRIVE_TO_GOAL_4.value:  # Drive-to a specific goal index
             specific_idx = action
-            if specific_idx < self.mobile_goal_positions.shape[0] and self.goal_available[specific_idx]:
+            if specific_idx < self.mobile_goal_positions.shape[0] and self.goal_available[specific_idx] and self.is_visible(self.mobile_goal_positions[specific_idx]):
                 old_position = self.robot_position
                 target_position = self.mobile_goal_positions[specific_idx]
                 distance = np.linalg.norm(target_position - old_position)
@@ -147,7 +156,7 @@ class VEXHighStakesEnv(gym.Env):
                     direction = target_position - old_position
                     self.robot_position = target_position
                     self.robot_orientation = np.arctan2(direction[1], direction[0])
-                    time_cost = distance + 0.1
+                    time_cost = distance / 2 + 0.1
                 else:
                     time_cost = 0.1  # Minimal time cost if already at the goal
             else:
@@ -226,7 +235,7 @@ class VEXHighStakesEnv(gym.Env):
             self.robot_position = target_position
             self.robot_orientation = np.arctan2(direction[1], direction[0])
             distance = np.linalg.norm(target_position - old_position)
-            time_cost = distance + 0.1
+            time_cost = distance / 2 + 0.1
 
         elif action == Actions.ADD_RING_TO_GOAL.value:  # Add ring to goal: move one ring from robot to held goal
             time_cost = 0.5
@@ -245,18 +254,19 @@ class VEXHighStakesEnv(gym.Env):
 
         elif action == Actions.DRIVE_TO_NEAREST_RING.value:  # Drive to nearest ring action
             candidate = np.where(self.ring_status == 0)[0]
-            if candidate.size > 0:
-                rings = self.ring_positions[candidate]
+            visible_candidates = [i for i in candidate if self.is_visible(self.ring_positions[i])]
+            if visible_candidates:
+                rings = self.ring_positions[visible_candidates]
                 distances = np.linalg.norm(rings - self.robot_position, axis=1)
                 min_index = np.argmin(distances)
                 if distances[min_index] > 1.0:
                     # Drive to the nearest ring position
-                    target_position = self.ring_positions[candidate[min_index]]
+                    target_position = self.ring_positions[visible_candidates[min_index]]
                     old_position = self.robot_position
                     self.robot_position = target_position
                     self.robot_orientation = np.arctan2(target_position[1] - old_position[1],
-                                                        target_position[0] - old_position[0])
-                    time_cost = distances[min_index] + 0.1
+                                    target_position[0] - old_position[0])
+                    time_cost = distances[min_index] / 2 + 0.1
                 else:
                     time_cost = 0.5
             else:
@@ -270,7 +280,7 @@ class VEXHighStakesEnv(gym.Env):
             self.robot_position = target_position
             self.robot_orientation = np.arctan2(direction[1], direction[0])
             distance = np.linalg.norm(target_position - old_position)
-            time_cost = distance + 0.1
+            time_cost = distance / 2 + 0.1
 
         elif action == Actions.ADD_RING_TO_WALL_STAKE.value:  # Add ring to nearest wall stake
             time_cost = 0.5
@@ -284,6 +294,13 @@ class VEXHighStakesEnv(gym.Env):
                         self.ring_status[robot_ring_idx] = nearest_stake_idx + 7  # set status to indicate ring is on wall stake
                         self.wall_stakes[nearest_stake_idx] += 1  # add ring to the wall stake
                         self.holding_rings -= 1  # decrement rings held by robot
+
+        elif action == Actions.TURN_LEFT.value:
+            self.robot_orientation = (self.robot_orientation + np.pi / 2) % (2 * np.pi)
+            time_cost = 0.1
+        elif action == Actions.TURN_RIGHT.value:
+            self.robot_orientation = (self.robot_orientation - np.pi / 2) % (2 * np.pi)
+            time_cost = 0.1
 
         self.time_remaining = max(0, self.time_remaining - time_cost)
         if self.time_remaining <= 0:
@@ -301,6 +318,8 @@ class VEXHighStakesEnv(gym.Env):
         rings_flat = self.ring_positions.flatten()
         self.padded_rings[:rings_flat.size] = rings_flat
 
+        self.update_visible_objects()
+
         observation = {
             "robot_x": np.array([self.robot_position[0]], dtype=np.float32),
             "robot_y": np.array([self.robot_position[1]], dtype=np.float32),
@@ -316,6 +335,27 @@ class VEXHighStakesEnv(gym.Env):
         # Now compute reward after state update
         reward = self.reward_function(initial_score, initial_time_remaining)
         return observation, reward, done, truncated, {}
+
+    def is_visible(self, position):
+        direction = position - self.robot_position
+        angle = np.arctan2(direction[1], direction[0])
+        relative_angle = (angle - self.robot_orientation + np.pi) % (2 * np.pi) - np.pi
+        return -np.pi / 2 <= relative_angle <= np.pi / 2
+
+    def update_visible_objects(self):
+        visible_goals = np.full((10,), -1, dtype=np.float32)
+        visible_rings = np.full((48,), -1, dtype=np.float32)
+
+        for i, goal in enumerate(self.mobile_goal_positions):
+            if self.is_visible(goal):
+                visible_goals[i*2:i*2+2] = goal
+
+        for i, ring in enumerate(self.ring_positions):
+            if self.is_visible(ring):
+                visible_rings[i*2:i*2+2] = ring
+
+        self.padded_goals = visible_goals
+        self.padded_rings = visible_rings
 
     def compute_field_score(self):
         score = 0
@@ -394,7 +434,9 @@ class VEXHighStakesEnv(gym.Env):
                 Actions.DRIVE_TO_WALL_STAKE_1: "drive to wall stake 1",
                 Actions.DRIVE_TO_WALL_STAKE_2: "drive to wall stake 2",
                 Actions.DRIVE_TO_WALL_STAKE_3: "drive to wall stake 3",
-                Actions.ADD_RING_TO_WALL_STAKE: "add ring to wall stake"
+                Actions.ADD_RING_TO_WALL_STAKE: "add ring to wall stake",
+                Actions.TURN_LEFT: "turn left",
+                Actions.TURN_RIGHT: "turn right"
             }
             action_str = action_names.get(Actions(action), f"action {action}")
         # Convert robot position to string first before formatting
@@ -484,6 +526,17 @@ class VEXHighStakesEnv(gym.Env):
         ax.text(-2.5, 6, f"Total Score: {self.total_score}", color='black', ha='center')
         ax.text(6, 13.25, f'Step {step_num}', color='black', ha='center')
         ax.text(6, -1.25, f'Action: {action_str}', color='black', ha='center')  # Print action name under the field
+
+        # Draw the robot's field of view as a dotted line
+        fov_length = 12  # Length of the field of view lines
+        left_fov_angle = self.robot_orientation + np.pi / 2
+        right_fov_angle = self.robot_orientation - np.pi / 2
+
+        left_fov_end = self.robot_position + fov_length * np.array([np.cos(left_fov_angle), np.sin(left_fov_angle)])
+        right_fov_end = self.robot_position + fov_length * np.array([np.cos(right_fov_angle), np.sin(right_fov_angle)])
+
+        ax.plot([self.robot_position[0], left_fov_end[0]], [self.robot_position[1], left_fov_end[1]], 'k--', alpha=0.5)
+        ax.plot([self.robot_position[0], right_fov_end[0]], [self.robot_position[1], right_fov_end[1]], 'k--', alpha=0.5)
 
         if save_path:
             plt.savefig(f"{save_path}/step_{step_num}.png")

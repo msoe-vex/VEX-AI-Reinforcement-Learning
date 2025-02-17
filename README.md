@@ -84,6 +84,18 @@ sbatch train_models.sh --agents <NUM_AGENTS> --timesteps <TOTAL_TIMESTEPS>
 sbatch train_models.sh --agents 3 --timesteps 100000
 ```
 
+### Cancel job
+
+To view your running jobs
+```bash
+squeue -u $USER
+```
+
+To cancel the job
+```bash
+scancel <JOB_ID>
+```
+
 ## File Descriptions
 
 - `rl_environment.py`: Defines the custom VEX environment.

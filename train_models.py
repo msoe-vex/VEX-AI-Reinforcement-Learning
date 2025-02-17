@@ -41,20 +41,22 @@ def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, d
         model = PPO("MultiInputPolicy", env, verbose=1, ent_coef=entropy, learning_rate=learning_rate, gamma=discount_factor, device=device)
     
     check_steps = 10000
-
     print(f"Training agent with entropy={entropy}, learning_rate={learning_rate}, discount_factor={discount_factor}")
     print(f"Evaluating agent every {check_steps} timesteps and saving to {save_path}")
+    
     best_score = -np.inf
+    initial_timesteps = model.num_timesteps
     n_steps = 0
     while n_steps < total_timesteps:
         model.learn(total_timesteps=check_steps, reset_num_timesteps=False)
-        n_steps += check_steps
+        n_steps = model.num_timesteps - initial_timesteps
         score = evaluate_agent(model, env_class)
         if score > best_score:
             best_score = score
             model.save(save_path)
             print(f"Model saved to {save_path}.")
         print(f"Current best score: {best_score}")
+        print(f"Current timestep: {n_steps}/{total_timesteps}")
 
     # Run evaluation to get an accurate final score
     score = evaluate_agent(model, env_class)
@@ -65,13 +67,13 @@ def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, d
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train multiple agents concurrently.")
-    parser.add_argument('--agents', type=int, default=1, help='Number of agents to train')
-    parser.add_argument('--timesteps', type=int, default=100000, help='Total timesteps for training each agent')
-    parser.add_argument('--entropy', type=float, default=0.01, help='Entropy coefficient for agent exploration')
-    parser.add_argument('--learning_rate', type=float, default=0.0003, help='Magnitude of updates to make to model')
-    parser.add_argument('--discount_factor', type=float, default=0.99, help='Value to place on potential future rewards')
+    parser.add_argument('--agents', type=int, required=True, help='Number of agents to train')
+    parser.add_argument('--timesteps', type=int, required=True, help='Total timesteps for training each agent')
+    parser.add_argument('--entropy', type=float, required=True, help='Entropy coefficient for agent exploration')
+    parser.add_argument('--learning_rate', type=float, required=True, help='Magnitude of updates to make to model')
+    parser.add_argument('--discount_factor', type=float, required=True, help='Value to place on potential future rewards')
     parser.add_argument('--job_id', type=str, required=True, help='Job ID for saving models')
-    parser.add_argument('--model_path', type=str, default="", help='Path to a pretrained model')
+    parser.add_argument('--model_path', type=str, required=True, help='Path to a pretrained model')
     args = parser.parse_args()
 
     num_agents = args.agents

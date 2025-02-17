@@ -7,7 +7,7 @@ from rl_environment import VEXHighStakesEnv
 
 def run_agent(model_path):
     # Check if the environment follows Gymnasium API
-    env = VEXHighStakesEnv()
+    env = VEXHighStakesEnv(randomize_positions=True)
     check_env(env, warn=True)
 
     model = PPO.load(model_path)
