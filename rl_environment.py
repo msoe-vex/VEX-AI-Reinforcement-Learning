@@ -34,7 +34,7 @@ class Actions(Enum):
     TURN_RIGHT = 21
 
 class VEXHighStakesEnv(gym.Env):
-    def __init__(self, randomize_positions=False):
+    def __init__(self, randomize_positions=True):
         super(VEXHighStakesEnv, self).__init__()
         self.randomize_positions = randomize_positions
         max_goals = 5
