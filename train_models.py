@@ -15,9 +15,9 @@ with open('rl_environment.py', 'rb') as f:
 
 from rl_environment import VEXHighStakesEnv
 
-def evaluate_agent(model, env_class):
+def evaluate_agent(model, env_class, randomize_positions):
     # Create a fresh environment for evaluation
-    env = env_class()
+    env = env_class(randomize_positions=randomize_positions)
     obs, _ = env.reset()
     done = False
     # Run one episode using the trained model
@@ -28,8 +28,8 @@ def evaluate_agent(model, env_class):
     env.close()
     return env.total_score
 
-def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, discount_factor, model_path):
-    env = env_class()
+def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, discount_factor, model_path, randomize_positions):
+    env = env_class(randomize_positions=randomize_positions)
     check_env(env, warn=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if model_path:
@@ -50,7 +50,7 @@ def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, d
     while n_steps < total_timesteps:
         model.learn(total_timesteps=check_steps, reset_num_timesteps=False)
         n_steps = model.num_timesteps - initial_timesteps
-        score = evaluate_agent(model, env_class)
+        score = evaluate_agent(model, env_class, randomize_positions)
         if score > best_score:
             best_score = score
             model.save(save_path)
@@ -59,7 +59,7 @@ def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, d
         print(f"Current timestep: {n_steps}/{total_timesteps}")
 
     # Run evaluation to get an accurate final score
-    score = evaluate_agent(model, env_class)
+    score = evaluate_agent(model, env_class, randomize_positions)
     model.save(save_path+"_final")
     print(f"Training complete.")
     print(f"Model saved to {save_path}_final.")
@@ -75,6 +75,9 @@ if __name__ == "__main__":
     parser.add_argument('--discount_factor', type=float, required=True, help='Value to place on potential future rewards')
     parser.add_argument('--job_id', type=str, required=True, help='Job ID for saving models')
     parser.add_argument('--model_path', type=str, required=True, help='Path to a pretrained model')
+    parser.add_argument('--randomize', action='store_true', help='Randomize positions in the environment')
+    parser.add_argument('--no-randomize', action='store_false', dest='randomize', help='Do not randomize positions in the environment')
+    parser.set_defaults(randomize=True)
     args = parser.parse_args()
 
     num_agents = args.agents
@@ -84,11 +87,12 @@ if __name__ == "__main__":
     discount_factor = args.discount_factor
     job_id = args.job_id
     model_path = args.model_path
+    randomize_positions = args.randomize
 
     processes = []
     for i in range(num_agents):
         save_path = f"job_results/job_{job_id}/models/vex_high_stakes_ppo_agent_{i}"
-        p = Process(target=train_agent, args=(VEXHighStakesEnv, total_timesteps, save_path, entropy, learning_rate, discount_factor, model_path))
+        p = Process(target=train_agent, args=(VEXHighStakesEnv, total_timesteps, save_path, entropy, learning_rate, discount_factor, model_path, randomize_positions))
         p.start()
         processes.append(p)
 

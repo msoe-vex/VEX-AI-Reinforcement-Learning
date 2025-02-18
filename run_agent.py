@@ -5,9 +5,9 @@ import os
 import argparse
 from rl_environment import VEXHighStakesEnv
 
-def run_agent(model_path):
+def run_agent(model_path, randomize_positions):
     # Check if the environment follows Gymnasium API
-    env = VEXHighStakesEnv(randomize_positions=True)
+    env = VEXHighStakesEnv(randomize_positions=randomize_positions)
     check_env(env, warn=True)
 
     model = PPO.load(model_path)
@@ -45,13 +45,18 @@ def run_agent(model_path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train or run a PPO agent on the VEXHighStakesEnv.")
     parser.add_argument('--model_path', type=str, default=None, help='Path to an existing model to load and run')
-    parser.add_argument('--timesteps', type=int, default=500, help='Total timesteps for training the model')
+    parser.add_argument('--timesteps', type=int, default=10000, help='Total timesteps for training the model')
     parser.add_argument('--train', action='store_true', help='Flag to indicate whether to train a new model')
+    parser.add_argument('--randomize', action='store_true', help='Randomize positions in the environment')
+    parser.add_argument('--no-randomize', action='store_false', dest='randomize', help='Do not randomize positions in the environment')
+    parser.set_defaults(randomize=True)
     args = parser.parse_args()
+
+    print(args.randomize)
 
     if args.train:
         # Check if the environment follows Gymnasium API
-        env = VEXHighStakesEnv()
+        env = VEXHighStakesEnv(randomize_positions=args.randomize)
         check_env(env, warn=True)
 
         # Train a PPO agent on the environment
@@ -71,8 +76,8 @@ if __name__ == "__main__":
 
         env.close()
 
-        run_agent("vex_high_stakes_ppo")
+        run_agent("vex_high_stakes_ppo", args.randomize)
     elif args.model_path:
-        run_agent(args.model_path)
+        run_agent(args.model_path, args.randomize)
     else:
         print("Please specify either --train to train a new model, or --model_path to run an existing model.")

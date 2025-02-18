@@ -14,22 +14,6 @@ This project involves training and running reinforcement learning agents in a cu
     python remove_null_bytes.py
     ```
 
-## Training Agents
-
-To train multiple agents concurrently, use the `train_models.py` script. You can specify the number of agents and total timesteps for training.
-
-### Command
-
-```bash
-python train_models.py --agents <NUM_AGENTS> --timesteps <TOTAL_TIMESTEPS> --job_id <JOB_ID>
-```
-
-### Example
-
-```bash
-python train_models.py --agents 3 --timesteps 100000 --job_id 12345
-```
-
 ## Running an Agent
 
 To run a trained agent, use the `run_agent.py` script. You can specify the path to an existing model to load and run.
@@ -45,6 +29,14 @@ python run_agent.py --model_path <MODEL_PATH>
 ```bash
 python run_agent.py --model_path vex_high_stakes_ppo
 ```
+
+### Arguments
+
+- `--model_path`: Path to an existing model to load and run.
+- `--timesteps`: Total timesteps for training the model.
+- `--train`: Flag to indicate whether to train a new model.
+- `--randomize`: Randomize positions in the environment.
+- `--no-randomize`: Do not randomize positions in the environment.
 
 ## Training or Continuing Training an Agent
 
@@ -68,7 +60,7 @@ Continue training an existing model:
 python run_agent.py --train --timesteps 500 --model_path vex_high_stakes_ppo
 ```
 
-## SLURM Job Script
+## Training with SLURM Job Script
 
 To submit a job to a SLURM cluster, use the `train_models.sh` script. You can specify the number of agents and total timesteps for training.
 
@@ -83,6 +75,17 @@ sbatch train_models.sh --agents <NUM_AGENTS> --timesteps <TOTAL_TIMESTEPS>
 ```bash
 sbatch train_models.sh --agents 3 --timesteps 100000
 ```
+
+### Arguments
+
+- `--agents`: Number of agents to train.
+- `--timesteps`: Total timesteps for training each agent.
+- `--model_path`: Path to a pretrained model.
+- `--entropy`: Entropy coefficient for agent exploration.
+- `--learning_rate`: Magnitude of updates to make to the model.
+- `--discount`: Value to place on potential future rewards.
+- `--randomize`: Randomize positions in the environment.
+- `--no-randomize`: Do not randomize positions in the environment.
 
 ### Cancel job
 

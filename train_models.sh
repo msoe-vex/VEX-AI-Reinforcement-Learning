@@ -8,15 +8,16 @@
 # Parse command line arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
-        --agents) NUM_AGENTS="$2"; shift ;;
-        --timesteps) TOTAL_TIMESTEPS="$2"; shift ;;
-        --model_path) MODEL_PATH="$2"; shift ;;
-        --entropy) ENTROPY_I="$2"; shift ;;
-        --learning_rate) LR_I="$2"; shift ;;
-        --discount) DISCOUNT_I="$2"; shift ;;
+        --agents) NUM_AGENTS="$2"; shift 2 ;;
+        --timesteps) TOTAL_TIMESTEPS="$2"; shift 2 ;;
+        --model_path) MODEL_PATH="$2"; shift 2 ;;
+        --entropy) ENTROPY_I="$2"; shift 2 ;;
+        --learning_rate) LR_I="$2"; shift 2 ;;
+        --discount) DISCOUNT_I="$2"; shift 2 ;;
+        --randomize) RANDOMIZE="--randomize"; shift ;;
+        --no-randomize) RANDOMIZE="--no-randomize"; shift ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
-    shift
 done
 
 # Run your code here
@@ -27,4 +28,5 @@ python train_models.py \
     --learning_rate ${LR_I:-0.0003} \
     --discount ${DISCOUNT_I:-0.99} \
     --job_id $SLURM_JOB_ID \
-    --model_path ${MODEL_PATH:-""}
+    --model_path ${MODEL_PATH:-""} \
+    ${RANDOMIZE:-"--randomize"}
