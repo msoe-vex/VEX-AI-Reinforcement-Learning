@@ -60,8 +60,9 @@ def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, d
 
     # Run evaluation to get an accurate final score
     score = evaluate_agent(model, env_class)
+    model.save(save_path+"_final")
     print(f"Training complete.")
-    print(f"Model saved to {save_path}.")
+    print(f"Model saved to {save_path}_final.")
     print(f"Final score: {score}")
 
 
