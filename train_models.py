@@ -5,7 +5,7 @@ from multiprocessing import Process
 import os
 import argparse
 import numpy as np
-import torch
+import torch as th
 
 # Ensure the rl_environment.py file is read correctly
 with open('rl_environment.py', 'rb') as f:
@@ -28,20 +28,29 @@ def evaluate_agent(model, env_class, randomize_positions):
     env.close()
     return env.total_score
 
-def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, discount_factor, model_path, randomize_positions):
+def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, discount_factor, model_path, randomize_positions, num_layers, num_nodes):
     env = env_class(randomize_positions=randomize_positions)
     check_env(env, warn=True)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = th.device("cuda" if th.cuda.is_available() else "cpu")
+    
+    # Define the network architecture
+    net_arch = [num_nodes] * num_layers
+    
+    # Define policy keyword arguments
+    policy_kwargs = dict(
+        net_arch=net_arch,
+        activation_fn=th.nn.ReLU,  # Activation function
+    )
+    
     if model_path:
         # Load the provided pretrained model
         print(f"Loading model from {model_path}")
         model = PPO.load(model_path, env=env, verbose=1, ent_coef=entropy, learning_rate=learning_rate, gamma=discount_factor, device=device)
     else:
         print("Creating new model")
-        model = PPO("MultiInputPolicy", env, verbose=1, ent_coef=entropy, learning_rate=learning_rate, gamma=discount_factor, device=device)
+        model = PPO("MultiInputPolicy", env, verbose=1, ent_coef=entropy, learning_rate=learning_rate, gamma=discount_factor, device=device, policy_kwargs=policy_kwargs)
     
     check_steps = 10000
-    print(f"Training agent with entropy={entropy}, learning_rate={learning_rate}, discount_factor={discount_factor}")
     print(f"Evaluating agent every {check_steps} timesteps and saving to {save_path}")
     
     best_score = -np.inf
@@ -77,8 +86,22 @@ if __name__ == "__main__":
     parser.add_argument('--model_path', type=str, required=True, help='Path to a pretrained model')
     parser.add_argument('--randomize', action='store_true', help='Randomize positions in the environment')
     parser.add_argument('--no-randomize', action='store_false', dest='randomize', help='Do not randomize positions in the environment')
+    parser.add_argument('--num_layers', type=int, required=True, help='Number of layers in the policy network')
+    parser.add_argument('--num_nodes', type=int, required=True, help='Number of nodes per layer in the policy network')
     parser.set_defaults(randomize=True)
     args = parser.parse_args()
+
+    print(f"Training with the following arguments:")
+    print(f"Number of agents: {args.agents}")
+    print(f"Total timesteps: {args.timesteps}")
+    print(f"Entropy coefficient: {args.entropy}")
+    print(f"Learning rate: {args.learning_rate}")
+    print(f"Discount factor: {args.discount_factor}")
+    print(f"Job ID: {args.job_id}")
+    print(f"Model path: {args.model_path}")
+    print(f"Randomize positions: {args.randomize}")
+    print(f"Number of layers: {args.num_layers}")
+    print(f"Number of nodes: {args.num_nodes}")
 
     num_agents = args.agents
     total_timesteps = args.timesteps
@@ -88,11 +111,13 @@ if __name__ == "__main__":
     job_id = args.job_id
     model_path = args.model_path
     randomize_positions = args.randomize
+    num_layers = args.num_layers
+    num_nodes = args.num_nodes
 
     processes = []
     for i in range(num_agents):
         save_path = f"job_results/job_{job_id}/models/vex_high_stakes_ppo_agent_{i}"
-        p = Process(target=train_agent, args=(VEXHighStakesEnv, total_timesteps, save_path, entropy, learning_rate, discount_factor, model_path, randomize_positions))
+        p = Process(target=train_agent, args=(VEXHighStakesEnv, total_timesteps, save_path, entropy, learning_rate, discount_factor, model_path, randomize_positions, num_layers, num_nodes))
         p.start()
         processes.append(p)
 

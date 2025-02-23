@@ -16,6 +16,8 @@ while [[ "$#" -gt 0 ]]; do
         --discount) DISCOUNT_I="$2"; shift 2 ;;
         --randomize) RANDOMIZE="--randomize"; shift ;;
         --no-randomize) RANDOMIZE="--no-randomize"; shift ;;
+        --num_layers) NUM_LAYERS="$2"; shift 2 ;;
+        --num_nodes) NUM_NODES="$2"; shift 2 ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
 done
@@ -25,8 +27,10 @@ python train_models.py \
     --agents ${NUM_AGENTS:-1} \
     --timesteps ${TOTAL_TIMESTEPS:-1000000} \
     --entropy ${ENTROPY_I:-0.01} \
-    --learning_rate ${LR_I:-0.0003} \
+    --learning_rate ${LR_I:-0.0005} \
     --discount ${DISCOUNT_I:-0.99} \
     --job_id $SLURM_JOB_ID \
     --model_path ${MODEL_PATH:-""} \
-    ${RANDOMIZE:-"--randomize"}
+    ${RANDOMIZE:-"--randomize"} \
+    --num_layers ${NUM_LAYERS:-2} \
+    --num_nodes ${NUM_NODES:-64}

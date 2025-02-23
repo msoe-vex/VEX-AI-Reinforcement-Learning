@@ -86,6 +86,8 @@ sbatch train_models.sh --agents 3 --timesteps 100000
 - `--discount`: Value to place on potential future rewards.
 - `--randomize`: Randomize positions in the environment.
 - `--no-randomize`: Do not randomize positions in the environment.
+- `--num_layers`: Number of layers in the policy network.
+- `--num_nodes`: Number of nodes per layer in the policy network.
 
 ### Cancel job
 
