@@ -1,8 +1,6 @@
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
-from stable_baselines3 import PPO
-from stable_baselines3.common.env_checker import check_env
 import matplotlib.pyplot as plt
 import imageio.v2 as imageio
 import os
@@ -10,7 +8,7 @@ import matplotlib.patches as patches
 from enum import Enum
 
 # =============================================================================
-# Enum used to assign integer values to actions
+# Enum to assign integer values to robot actions
 # =============================================================================
 class Actions(Enum):
     PICK_UP_GOAL_0 = 0
@@ -37,79 +35,86 @@ class Actions(Enum):
 # Environment class for the VEX High Stakes Challenge
 # =============================================================================
 class VEXHighStakesEnv(gym.Env):
-    # =============================================================================
-    # Initialize the environment
-    # =============================================================================
+
+    # -----------------------------------------------------------------------------
+    # Initialize environment settings and spaces.
+    # -----------------------------------------------------------------------------
     def __init__(self, randomize_positions=True):
         super(VEXHighStakesEnv, self).__init__()
-        self.randomize_positions = randomize_positions # Determines whether to randomize the positions of the rings, goals, and the robot
-        self.num_goals = 5 # Total number of mobile goals on the field
-        self.num_rings = 24  # Total number of rings on the field
-        max_wall_stakes = 4  # 2 short and 2 tall wall stakes
+        self.randomize_positions = randomize_positions
+        self.num_goals = 5
+        self.num_rings = 24
+        max_wall_stakes = 4
         self.wall_stakes_positions = np.array([
-            [0.0, 6.0],  # left middle (short)
-            [12.0, 6.0],  # right middle (short)
-            [6.0, 0.0],  # bottom middle (tall)
-            [6.0, 12.0]  # top middle (tall)
+            [0.0, 6.0],
+            [12.0, 6.0],
+            [6.0, 0.0],
+            [6.0, 12.0]
         ])
-        # Updated observation_space to include time_remaining and holding_goal as a single value
+        # Define the observation space for the environment
         self.observation_space = spaces.Dict({
-            "robot_x": spaces.Box(low=0, high=12, shape=(1,), dtype=np.float32),  # Robot's x position - 1d array with 1 float for x position
-            "robot_y": spaces.Box(low=0, high=12, shape=(1,), dtype=np.float32),  # Robot's y position - 1d array with 1 float for y position
-            "robot_orientation": spaces.Box(low=-np.pi, high=np.pi, shape=(1,), dtype=np.float32),  # Robot's orientation - 1d array with 1 float for orientation
-            "holding_goal": spaces.Discrete(2),  # Whether the robot is holding a goal (0: not holding, 1: holding)
-            "holding_rings": spaces.Discrete(3),  # Number of rings the robot is holding (0, 1, or 2)
-            "rings": spaces.Box(low=-1, high=12, shape=(self.num_rings*2,), dtype=np.float32),  # Positions of all rings - 1d array with x and y position for each ring
-            "goals": spaces.Box(low=-1, high=12, shape=(self.num_goals*2,), dtype=np.float32),  # Positions of all goals - 1d array with x and y position for each goal
-            "wall_stakes": spaces.Box(low=0, high=6, shape=(max_wall_stakes,), dtype=np.int32),  # Number of rings on each wall stake - 1d array for number of rings on each wall stake
-            "holding_goal_full": spaces.Discrete(2),  # Whether the held goal is full (0: not holding or goal not full, 1: holding goal and full)
-            "time_remaining": spaces.Box(low=0, high=120, shape=(1,), dtype=np.float32),  # Time remaining in the episode - 1d array with 1 float for time remaining
-            "visible_rings_count": spaces.Discrete(25),  # Number of visible rings (0 to 24)
-            "visible_goals_count": spaces.Discrete(6)  # Number of visible goals (0 to 5)
+            # Robot's x-coordinate in the field (range: 0 to 12)
+            "robot_x": spaces.Box(low=0, high=12, shape=(1,), dtype=np.float32),
+            # Robot's y-coordinate in the field (range: 0 to 12)
+            "robot_y": spaces.Box(low=0, high=12, shape=(1,), dtype=np.float32),
+            # Robot's orientation in radians (range: -π to π)
+            "robot_orientation": spaces.Box(low=-np.pi, high=np.pi, shape=(1,), dtype=np.float32),
+            # Whether the robot is holding a goal (0: no, 1: yes)
+            "holding_goal": spaces.Discrete(2),
+            # Number of rings the robot is holding (0, 1, or 2)
+            "holding_rings": spaces.Discrete(3),
+            # Positions of all rings in the field (flattened array of xy-coordiantes, -1 if not visible)
+            "rings": spaces.Box(low=-1, high=12, shape=(self.num_rings*2,), dtype=np.float32),
+            # Positions of all goals in the field (flattened array of xy-coordiantes, -1 if not visible)
+            "goals": spaces.Box(low=-1, high=12, shape=(self.num_goals*2,), dtype=np.float32),
+            # Number of rings on each wall stake (array of 4 integers, range: 0 to 6)
+            "wall_stakes": spaces.Box(low=0, high=6, shape=(max_wall_stakes,), dtype=np.int32),
+            # Whether the held goal is full (0: no, 1: yes)
+            "holding_goal_full": spaces.Discrete(2),
+            # Time remaining in the episode (range: 0 to 120 seconds)
+            "time_remaining": spaces.Box(low=0, high=120, shape=(1,), dtype=np.float32),
+            # Number of visible rings (range: 0 to 24)
+            "visible_rings_count": spaces.Discrete(25),
+            # Number of visible goals (range: 0 to 5)
+            "visible_goals_count": spaces.Discrete(6)
         })
-        self.action_space = spaces.Discrete(19)  # 19 discrete actions available
+        self.action_space = spaces.Discrete(19)
         self.reset()
-
         self.ignore_randomness = True
 
-    # =============================================================================
-    # Return the current observation of the environment
-    # =============================================================================
+    # -----------------------------------------------------------------------------
+    # Build and return the current observation.
+    # -----------------------------------------------------------------------------
     def _get_observation(self):
         self.padded_goals[:self.mobile_goal_positions.size] = self.mobile_goal_positions.flatten()
         self.padded_rings[:self.ring_positions.size] = self.ring_positions.flatten()
-
         self.update_visible_objects()
         return {
             "robot_x": np.array([self.robot_position[0]], dtype=np.float32),
             "robot_y": np.array([self.robot_position[1]], dtype=np.float32),
             "robot_orientation": np.array([self.robot_orientation], dtype=np.float32),
             "holding_goal": self.holding_goal,
-            "holding_rings": int(np.sum(self.ring_status == 1)), # Update number of rings held by robot based on ring_status
+            "holding_rings": int(np.sum(self.ring_status == 1)),
             "rings": self.padded_rings,
             "goals": self.padded_goals,
             "wall_stakes": self.wall_stakes,
             "holding_goal_full": self.holding_goal_full,
             "time_remaining": np.array([self.time_remaining], dtype=np.float32),
-            "visible_rings_count": np.sum(self.padded_rings != -1) // 2, # Update visible rings count based on xy positions that are not -1
-            "visible_goals_count": np.sum(self.padded_goals != -1) // 2 # Update visible goals count based on xy positions that are not -1
+            "visible_rings_count": np.sum(self.padded_rings != -1) // 2,
+            "visible_goals_count": np.sum(self.padded_goals != -1) // 2
         }
 
-    # =============================================================================
-    # Reset the environment to the initial state for a new episode
-    # =============================================================================
+    # -----------------------------------------------------------------------------
+    # Reset environment to its initial state.
+    # -----------------------------------------------------------------------------
     def reset(self, seed=None):
         super().reset(seed=seed)
-
-        # Set initial positions of mobile goals and rings
         if self.randomize_positions:
-            # Randomize the positions of the mobile goals and rings
-            self.mobile_goal_positions = np.random.uniform(low=0.5, high=11.5, size=(5, 2)).astype(np.float32)
-            self.ring_positions = np.random.uniform(low=0.5, high=11.5, size=(24, 2)).astype(np.float32)
-            self.robot_position = np.random.uniform(low=0.5, high=11.5, size=(2,)).astype(np.float32)
-            self.robot_orientation = np.random.uniform(low=-np.pi, high=np.pi)
+            self.mobile_goal_positions = np.random.uniform(0.5, 11.5, size=(5, 2)).astype(np.float32)
+            self.ring_positions = np.random.uniform(0.5, 11.5, size=(24, 2)).astype(np.float32)
+            self.robot_position = np.random.uniform(0.5, 11.5, size=(2,)).astype(np.float32)
+            self.robot_orientation = np.random.uniform(-np.pi, np.pi)
         else:
-            # Use positions from the VEXU High Stakes Skills Challenge
             self.robot_position = np.array([0.5, 6.0], dtype=np.float32)
             self.robot_orientation = 0.0
             self.mobile_goal_positions = np.array([[4.0, 2.0], [4.0, 10.0], [8.0, 4.0], [8.0, 8.0], [10.0, 6.0]], dtype=np.float32)
@@ -122,76 +127,63 @@ class VEXHighStakesEnv(gym.Env):
                 [10.0, 4.0], [10.0, 8.0], [11.0, 6.0]
             ], dtype=np.float32)
         self.last_robot_position = self.robot_position.copy()
-
-        # Reset goal availability to true for all goals
         self.goal_available = np.ones(len(self.mobile_goal_positions), dtype=bool)
-        # Set ring_positions and initialize ring_status (all rings start on ground: 0)
-        self.ring_status = np.zeros(self.ring_positions.shape[0], dtype=np.int32)  # all rings on ground
-        # Replace has_goal and carried_goal_index with holding_goal (0: not holding, 1: holding)
+        self.ring_status = np.zeros(self.ring_positions.shape[0], dtype=np.int32)
         self.holding_goal = 0
-        self.holding_goal_index = -1  # Initialize holding_goal_index to -1 (not holding any goal)
-        self.holding_goal_full = 0  # Initialize holding_goal_full
-        # Initialize time remaining to 2 minutes (120 seconds)
-        self.time_remaining = 120  
-        self.holding_rings = 0  
-        self.total_score = 0  # Reset total score
-        
-        # Initialize wall stakes (2 short and 2 tall)
-        self.wall_stakes = np.zeros(4, dtype=np.int32)  # 0: empty, 1-6: number of rings
-
+        self.holding_goal_index = -1
+        self.holding_goal_full = 0
+        self.time_remaining = 120
+        self.holding_rings = 0
+        self.total_score = 0
+        self.wall_stakes = np.zeros(4, dtype=np.int32)
         self.climbed = False
-
-        # Create padded arrays for visible goals and rings (-1 indicates unknown position)
         self.padded_goals = np.full((self.num_goals * 2,), -1, dtype=np.float32)
         self.padded_rings = np.full((self.num_rings * 2,), -1, dtype=np.float32)
-        
-        # Update observation with initial values
-        observation = self._get_observation()
-        return observation, {}
+        obs = self._get_observation()
+        return obs, {}
 
-    # =============================================================================
-    # Perform the action in the environment and return the updated observation and info
-    # =============================================================================
+    # -----------------------------------------------------------------------------
+    # Take an action and update the environment state.
+    # -----------------------------------------------------------------------------
     def step(self, action):
-        # Ensure action is an integer (converts numpy.ndarray if needed)
         if isinstance(action, (np.ndarray,)):
             action = int(action)
-
         done = False
         truncated = False
-        time_cost = 0.1  # Default time cost for actions
-        penalty = 0  # Initialize penalty
-
-        # Compute the initial score before taking the action
+        time_cost = 0.1
+        penalty = 0
         initial_score = self.compute_field_score()
         initial_time_remaining = self.time_remaining
-
         self.last_robot_position = self.robot_position.copy()
 
-        if Actions.PICK_UP_GOAL_0.value <= action <= Actions.PICK_UP_GOAL_4.value:  # Drive-to and pick up specific goal
+        # ----------------------------------------------------------------------------- 
+        # PICK_UP_GOAL (Restrictions: not holding a goal; target available and visible)
+        # Drives the robot to the target goal and picks it up.
+        # -----------------------------------------------------------------------------
+        if Actions.PICK_UP_GOAL_0.value <= action <= Actions.PICK_UP_GOAL_4.value:
             specific_idx = action
             penalty = -1
-            if self.holding_goal == 0 and specific_idx < self.mobile_goal_positions.shape[0] and self.goal_available[specific_idx] and self.is_visible(self.mobile_goal_positions[specific_idx]):
+            if self.holding_goal == 0 and specific_idx < self.mobile_goal_positions.shape[0] and \
+               self.goal_available[specific_idx] and self.is_visible(self.mobile_goal_positions[specific_idx]):
                 old_position = self.robot_position
                 target_position = self.mobile_goal_positions[specific_idx]
                 distance = np.linalg.norm(target_position - old_position)
-                
                 direction = target_position - old_position
                 self.robot_position = target_position
                 self.robot_orientation = np.arctan2(direction[1], direction[0])
                 time_cost = distance / 2 + 0.5
-
                 penalty = 0
-
-                # Then pick up the goal
-                if np.random.rand() > 0.05 or self.ignore_randomness:  # 95% chance to succeed
-                    self.holding_goal = 1  # mark as holding
-                    self.holding_goal_index = specific_idx  # store the index of the held goal
+                if np.random.rand() > 0.05 or self.ignore_randomness:
+                    self.holding_goal = 1
+                    self.holding_goal_index = specific_idx
                     self.goal_available[specific_idx] = False
-                    # Update holding_goal_full
                     self.holding_goal_full = 1 if np.sum(self.ring_status == (specific_idx + 2)) == 6 else 0
 
-        elif action == Actions.PICK_UP_NEAREST_RING.value:  # Drive to and pick up nearest ring
+        # ----------------------------------------------------------------------------- 
+        # PICK_UP_NEAREST_RING (Restrictions: holding less than 2 rings; at least one ring is visible)
+        # Drives the robot to the nearest visible ring and picks it up.
+        # -----------------------------------------------------------------------------
+        elif action == Actions.PICK_UP_NEAREST_RING.value:
             penalty = -1
             if self.holding_rings < 2:
                 candidate = np.where(self.ring_status == 0)[0]
@@ -200,54 +192,59 @@ class VEXHighStakesEnv(gym.Env):
                     rings = self.ring_positions[visible_candidates]
                     distances = np.linalg.norm(rings - self.robot_position, axis=1)
                     min_index = np.argmin(distances)
-
                     target_position = self.ring_positions[visible_candidates[min_index]]
                     old_position = self.robot_position
                     self.robot_position = target_position
                     self.robot_orientation = np.arctan2(target_position[1] - old_position[1],
                                                         target_position[0] - old_position[0])
                     time_cost = distances[min_index] / 2 + 0.5
-
                     penalty = 0
-
-                    # Then pick up the ring
-                    if np.random.rand() > 0.05 or self.ignore_randomness:  # 95% chance to succeed
+                    if np.random.rand() > 0.05 or self.ignore_randomness:
                         chosen_idx = visible_candidates[min_index]
-                        self.ring_status[chosen_idx] = 1  # now on robot
-                        self.holding_rings += 1  # increment rings held by robot
-                        # Update ring position to follow robot
+                        self.ring_status[chosen_idx] = 1
+                        self.holding_rings += 1
                         self.ring_positions[chosen_idx] = self.robot_position
 
+        # ----------------------------------------------------------------------------- 
+        # CLIMB (Restrictions: more than 5 seconds remaining; less than 20 seconds remaining)
+        # Sets the climbed flag to True and ends the episode.
+        # -----------------------------------------------------------------------------
         elif action == Actions.CLIMB.value:
             if np.random.rand() > 0.1 or self.ignore_randomness:
-                if(self.time_remaining > 5): # assume 5 seconds needed to climb
+                if self.time_remaining > 5:
                     penalty = 0
-                    if(self.time_remaining > 20):
-                        penalty = -1000 # Too early to climb
+                    if self.time_remaining > 20:
+                        penalty = -1000
                     self.climbed = True
                 else:
-                    penalty = -1 # Too late to climb
+                    penalty = -1
                 time_cost = self.time_remaining
 
+        # ----------------------------------------------------------------------------- 
+        # DROP_GOAL (Restrictions: holding goal, area around bot is clear)
+        # Drops the held goal at the robot's current position.
+        # -----------------------------------------------------------------------------
         elif action == Actions.DROP_GOAL.value:
-            penalty = -1  # Drop goal
+            penalty = -1
             time_cost = 0.5
-            # Check if holding any goal
             if self.holding_goal == 1:
                 drop_position = self.robot_position
-                # Check if there are no other goals in the same area (within 1 unit distance)
                 other_goals = np.delete(self.mobile_goal_positions, self.holding_goal_index, axis=0)
                 goal_distances = np.linalg.norm(other_goals - drop_position, axis=1)
                 ring_distances = np.linalg.norm(self.ring_positions - drop_position, axis=1)
-                if np.all(goal_distances >= 1.0) and np.all(ring_distances >= 1.0):  # Ensure no other goals or rings are within 1 tile of the corner
+                if np.all(goal_distances >= 1.0) and np.all(ring_distances >= 1.0):
                     self.mobile_goal_positions[self.holding_goal_index] = drop_position
                     self.goal_available[self.holding_goal_index] = True
-                    self.holding_goal = 0  # mark as not holding
-                    self.holding_goal_index = -1  # reset the index of the held goal
-                    self.holding_goal_full = 0  # Update holding_goal_full
+                    self.holding_goal = 0
+                    self.holding_goal_index = -1
+                    self.holding_goal_full = 0
                     penalty = 0
 
-        elif Actions.DRIVE_TO_CORNER_0.value <= action <= Actions.DRIVE_TO_CORNER_3.value:  # Drive-to a specific corner
+        # ----------------------------------------------------------------------------- 
+        # DRIVE_TO_CORNER (Restrictions: robot is not at the corner; no goals are int the corner)
+        # Drives the robot to the target corner.
+        # -----------------------------------------------------------------------------
+        elif Actions.DRIVE_TO_CORNER_0.value <= action <= Actions.DRIVE_TO_CORNER_3.value:
             corners = np.array([
                 [0.5, 0.5],
                 [11.5, 0.5],
@@ -261,55 +258,38 @@ class VEXHighStakesEnv(gym.Env):
             self.robot_orientation = np.arctan2(direction[1], direction[0])
             distance = np.linalg.norm(target_position - old_position)
             time_cost = distance / 2 + 0.1
-
             if distance == 0:
                 penalty = -1
-
-            # Check if there is already a goal in the corner
             for goal_pos in self.mobile_goal_positions:
                 if np.linalg.norm(goal_pos - target_position) < 0.5:
                     penalty = -1
                     break
 
+        # ----------------------------------------------------------------------------- 
+        # ADD_RING_TO_GOAL (Restrictions: robot has a goal; robot has rings)
+        # Adds a ring to the held goal.
+        # -----------------------------------------------------------------------------
         elif action == Actions.ADD_RING_TO_GOAL.value:
-            penalty = -1  # Add ring to goal: move one ring from robot to held goal
+            penalty = -1
             time_cost = 0.5
-            if np.random.rand() > 0.05 or self.ignore_randomness:  # 95% chance to succeed
+            if np.random.rand() > 0.05 or self.ignore_randomness:
                 if self.holding_goal == 1 and self.holding_rings > 0:
                     held_goal_idx = self.holding_goal_index
-                    if np.sum(self.ring_status == (held_goal_idx + 2)) < 6:  # Check if goal has less than 6 rings
+                    if np.sum(self.ring_status == (held_goal_idx + 2)) < 6:
                         robot_ring_idx = np.where(self.ring_status == 1)[0]
                         if robot_ring_idx.size > 0:
                             robot_ring_idx = robot_ring_idx[0]
-                            # Attach ring to the held goal: set status to (held_goal_idx+2)
                             self.ring_status[robot_ring_idx] = held_goal_idx + 2
-                            # Update ring position to match the goal's position
                             self.ring_positions[robot_ring_idx] = self.mobile_goal_positions[held_goal_idx]
-                            self.holding_rings -= 1  # decrement rings held by robot
-                            # Update holding_goal_full
+                            self.holding_rings -= 1
                             self.holding_goal_full = 1 if np.sum(self.ring_status == (held_goal_idx + 2)) == 6 else 0
-                            penalty = 0  # Add penalty for unsuccessful action
+                            penalty = 0
 
-        elif action == Actions.PICK_UP_NEAREST_RING.value:
-            penalty = -1  # Drive to nearest ring action
-            candidate = np.where(self.ring_status == 0)[0]
-            visible_candidates = [i for i in candidate if self.is_visible(self.ring_positions[i])]
-            if visible_candidates:
-                rings = self.ring_positions[visible_candidates]
-                distances = np.linalg.norm(rings - self.robot_position, axis=1)
-                min_index = np.argmin(distances)
-                # Drive to the nearest ring position
-                target_position = self.ring_positions[visible_candidates[min_index]]
-                old_position = self.robot_position
-                self.robot_position = target_position
-                self.robot_orientation = np.arctan2(target_position[1] - old_position[1],
-                                target_position[0] - old_position[0])
-                time_cost = distances[min_index] / 2 + 0.1
-                penalty = 0
-            else:
-                time_cost = 0.5
-
-        elif Actions.DRIVE_TO_WALL_STAKE_0.value <= action <= Actions.DRIVE_TO_WALL_STAKE_3.value:  # Drive to a specific wall stake
+        # ----------------------------------------------------------------------------- 
+        # DRIVE_TO_WALL_STAKE (Restrictions: robot is not at the target stake)
+        # Drives the robot to the target wall stake.
+        # -----------------------------------------------------------------------------
+        elif Actions.DRIVE_TO_WALL_STAKE_0.value <= action <= Actions.DRIVE_TO_WALL_STAKE_3.value:
             stake_idx = action - Actions.DRIVE_TO_WALL_STAKE_0.value
             old_position = self.robot_position
             target_position = self.wall_stakes_positions[stake_idx]
@@ -318,32 +298,40 @@ class VEXHighStakesEnv(gym.Env):
             self.robot_orientation = np.arctan2(direction[1], direction[0])
             distance = np.linalg.norm(target_position - old_position)
             time_cost = distance / 2 + 0.1
-            if(distance == 0):
+            if distance == 0:
                 penalty = -1
 
-        elif action == Actions.ADD_RING_TO_WALL_STAKE.value:  # Add ring to nearest wall stake
+        # ----------------------------------------------------------------------------- 
+        # ADD_RING_TO_WALL_STAKE (Restrictions: robot is at a stake; robot has rings; stake is not full)
+        # Adds a ring to the wall stake at the robot's position.
+        # -----------------------------------------------------------------------------
+        elif action == Actions.ADD_RING_TO_WALL_STAKE.value:
             penalty = -1
             time_cost = 0.5
-            if np.random.rand() > 0.05 or self.ignore_randomness:  # 95% chance to succeed
+            if np.random.rand() > 0.05 or self.ignore_randomness:
                 if self.holding_rings > 0:
                     distances = np.linalg.norm(self.wall_stakes_positions - self.robot_position, axis=1)
                     nearest_stake_idx = np.argmin(distances)
-                    max_rings_on_stake = 2 if nearest_stake_idx < 2 else 6  # short stakes can hold 2 rings, tall stakes can hold 6 rings
+                    max_rings_on_stake = 2 if nearest_stake_idx < 2 else 6
                     if self.wall_stakes[nearest_stake_idx] < max_rings_on_stake and distances[nearest_stake_idx] < 1.0:
                         robot_ring_idx = np.where(self.ring_status == 1)[0]
                         if robot_ring_idx.size > 0:
                             robot_ring_idx = robot_ring_idx[0]
-                            self.ring_status[robot_ring_idx] = nearest_stake_idx + 7  # set status to indicate ring is on wall stake
-                            self.wall_stakes[nearest_stake_idx] += 1  # add ring to the wall stake
-                            self.holding_rings -= 1  # decrement rings held by robot
+                            self.ring_status[robot_ring_idx] = nearest_stake_idx + 7
+                            self.wall_stakes[nearest_stake_idx] += 1
+                            self.holding_rings -= 1
                             penalty = 0
 
+        # ----------------------------------------------------------------------------- 
+        # TURN_TOWARDS_CENTER (Restrictions:robot is not facing the center)
+        # Sets the robot's orientation to face the center of the field.
+        # -----------------------------------------------------------------------------
         elif action == Actions.TURN_TOWARDS_CENTER.value:
             center_position = np.array([6.0, 6.0])
             direction = center_position - self.robot_position
             new_orientation = np.arctan2(direction[1], direction[0])
             if np.isclose(self.robot_orientation, new_orientation, atol=1e-2):
-                penalty = -1  # Add penalty if already looking towards the center
+                penalty = -1
             else:
                 self.robot_orientation = new_orientation
                 penalty = 0
@@ -352,52 +340,44 @@ class VEXHighStakesEnv(gym.Env):
         self.time_remaining = max(0, self.time_remaining - time_cost)
         if self.time_remaining <= 0:
             done = True
-
-        # Update the position of the held goal to match the robot's position
         if self.holding_goal == 1:
             self.mobile_goal_positions[self.holding_goal_index] = self.robot_position
-
-        observation = self._get_observation()
+        obs = self._get_observation()
         reward = self.reward_function(initial_score, initial_time_remaining, penalty)
-        return observation, reward, done, truncated, {}
+        return obs, reward, done, truncated, {}
 
-    # =============================================================================
-    # Return True if the position is visible from the robot's current position and orientation
-    # =============================================================================
+    # -----------------------------------------------------------------------------
+    # Check if a given position is visible from the robot.
+    # -----------------------------------------------------------------------------
     def is_visible(self, position):
         direction = position - self.robot_position
         angle = np.arctan2(direction[1], direction[0])
         relative_angle = (angle - self.robot_orientation + np.pi) % (2 * np.pi) - np.pi
         return -np.pi / 2 <= relative_angle <= np.pi / 2
 
-    # =============================================================================
-    # Update the visible goals and rings based on the robot's position and orientation
-    # =============================================================================
+    # -----------------------------------------------------------------------------
+    # Update internal representation of visible goals and rings.
+    # -----------------------------------------------------------------------------
     def update_visible_objects(self):
         visible_goals = np.full((10,), -1, dtype=np.float32)
         visible_rings = np.full((48,), -1, dtype=np.float32)
-
         for i, goal in enumerate(self.mobile_goal_positions):
             if self.is_visible(goal):
                 visible_goals[i*2:i*2+2] = goal
-
         for i, ring in enumerate(self.ring_positions):
             if self.is_visible(ring):
                 visible_rings[i*2:i*2+2] = ring
-
         self.padded_goals = visible_goals
         self.padded_rings = visible_rings
-        self.visible_rings_count = np.sum(visible_rings != -1) // 2  # Update visible rings count
-        self.visible_goals_count = np.sum(visible_goals != -1) // 2  # Update visible goals count
+        self.visible_rings_count = np.sum(visible_rings != -1) // 2
+        self.visible_goals_count = np.sum(visible_goals != -1) // 2
 
-    # =============================================================================
-    # Compute score of the field based on VEX High Stakes Skills Challenge rules
-    # =============================================================================
+    # -----------------------------------------------------------------------------
+    # Compute and return the field score based on VEXU skills rules.
+    # -----------------------------------------------------------------------------
     def compute_field_score(self):
         score = 0
         corners = [np.array([0.5, 0.5]), np.array([11.5, 0.5]), np.array([0.5, 11.5]), np.array([11.5, 11.5])]
-        
-        # Mobile goals scoring
         for goal_idx, goal_pos in enumerate(self.mobile_goal_positions):
             if np.any(self.ring_status == (goal_idx + 2)):
                 rings_on_goal = np.sum(self.ring_status == (goal_idx + 2))
@@ -406,167 +386,103 @@ class VEXHighStakesEnv(gym.Env):
                 else:
                     multiplier = 1
                 if rings_on_goal > 0:
-                    score += 3 * multiplier  # First ring on a goal
-                    score += (rings_on_goal - 1) * multiplier  # Other rings on goal
-
-        # Wall stakes scoring
+                    score += 3 * multiplier
+                    score += (rings_on_goal - 1) * multiplier
         for stake_idx in range(4):
             if np.any(self.ring_status == (stake_idx + 7)):
                 rings_on_stake = np.sum(self.ring_status == (stake_idx + 7))
                 if rings_on_stake > 0:
-                    score += 3  # First ring on a stake
-                    score += (rings_on_stake - 1)  # Other rings on stake
-        
-        # Climb scoring
+                    score += 3
+                    score += (rings_on_stake - 1)
         if self.climbed:
             score += 3
-
         self.total_score = score
         return score
 
-    # =============================================================================
-    # Compute the reward based on initial score for the action taken
-    # =============================================================================
+    # -----------------------------------------------------------------------------
+    # Calculate reward based on score change and penalty.
+    # -----------------------------------------------------------------------------
     def reward_function(self, initial_score, initial_time_remaining, penalty):
-        # Compute the new score after taking the action
         new_score = self.compute_field_score()
-
-
-        # =============================================================================
-        # Experimenting with other reward functions
-        # =============================================================================
-
-        # if(initial_time_remaining == 120):
-        #     initial_estimated_final_score = initial_score  
-        # else:  
-        #     initial_estimated_final_score = (initial_score / (120.0 - initial_time_remaining)) * 120.0
-        
-        # if(self.time_remaining == 120):
-        #     new_estimated_final_score = new_score
-        # else:
-        #     new_estimated_final_score = (new_score / (120.0 - self.time_remaining)) * 120.0
-
-        # initial_scoring_potential = initial_estimated_final_score - initial_score
-        # new_scoring_potential = new_estimated_final_score - new_score
-        
-        # delta_scoring_potential = new_scoring_potential - initial_scoring_potential
-
         delta_score = new_score - initial_score
-
-        # Reward is the change in score
-        reward = delta_score + penalty/100
+        reward = delta_score + penalty / 100
         return reward
 
-    # =============================================================================
-    # Print action and create a visual frame for rendering with matplotlib
-    # =============================================================================
+    # -----------------------------------------------------------------------------
+    # Create a visual representation of the environment.
+    # -----------------------------------------------------------------------------
     def render(self, save_path=None, step_num=0, action=None, reward=None):
-        # Convert action from numpy array to int if necessary
         if isinstance(action, (np.ndarray,)):
             action = int(action)
-        # Determine action description for printing
         action_str = Actions(action).name
-        # Convert robot position to string first before formatting
-        robot_pos_str = f"({self.robot_position[0]:.2f}, {self.robot_position[1]:.2f})"
         print(f"Step: {step_num:<3} | {action_str:<25} | Reward: {reward:<5} | Total score: {self.total_score:<3} | Time remaining: {self.time_remaining:<7.2f}")
-
-        # Create a plot with specified figure size
         fig, ax = plt.subplots(figsize=(10,8))
         ax.set_xlim(0, 12)
         ax.set_ylim(0, 12)
-        ax.set_aspect('equal')  # Ensure the field is rendered as a square
-        ax.set_xticks([])  # Hide x-axis value labels
-        ax.set_yticks([])  # Hide y-axis value labels
-        ax.spines['top'].set_visible(True)
-        ax.spines['right'].set_visible(True)
-        ax.spines['bottom'].set_visible(True)
-        ax.spines['left'].set_visible(True)
-
-        # Draw the robot as a slightly transparent square
+        ax.set_aspect('equal')
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_visible(True)
         robot = patches.Rectangle(self.robot_position - 0.5, 1, 1, color='blue', alpha=0.25)
         ax.add_patch(robot)
-        
-        # Represent orientation with an arrow (with transparency)
         center = self.robot_position
         arrow_dx = np.cos(self.robot_orientation)
         arrow_dy = np.sin(self.robot_orientation)
-        orientation_arrow = patches.FancyArrow(center[0], center[1], arrow_dx, arrow_dy, width=0.1, 
-                                                color='yellow', length_includes_head=True, alpha=0.25)
+        orientation_arrow = patches.FancyArrow(center[0], center[1], arrow_dx, arrow_dy,
+                                                width=0.1, color='yellow', length_includes_head=True, alpha=0.25)
         ax.add_patch(orientation_arrow)
-        
-        path_line = patches.FancyArrowPatch(self.last_robot_position, self.robot_position, lw=1, arrowstyle='-', alpha=0.25, color='black')
+        path_line = patches.FancyArrowPatch(self.last_robot_position, self.robot_position, lw=1,
+                                             arrowstyle='-', alpha=0.25, color='black')
         ax.add_patch(path_line)
-        
-        # Draw mobile goals as transparent hexagons if available
         for goal_idx, (goal, available) in enumerate(zip(self.mobile_goal_positions, self.goal_available)):
             color = 'green' if self.is_visible(goal) else 'gray'
-            hexagon = patches.RegularPolygon(goal, numVertices=6, radius=0.5, orientation=np.pi/6, 
-                                                color=color, alpha=0.25)
+            hexagon = patches.RegularPolygon(goal, numVertices=6, radius=0.5, orientation=np.pi/6, color=color, alpha=0.25)
             ax.add_patch(hexagon)
-            # Print the number of rings on the goal
             rings_on_goal = np.sum(self.ring_status == (goal_idx + 2))
             ax.text(goal[0], goal[1] + 0.6, str(rings_on_goal), color='black', ha='center')
-
-        # Draw wall stakes as small black circles
         wall_stakes_positions = [
-            np.array([0.0, 6.0]),  # left middle (short)
-            np.array([12.0, 6.0]),  # right middle (short)
-            np.array([6.0, 0.0]),  # bottom middle (tall)
-            np.array([6.0, 12.0])  # top middle (tall)
+            np.array([0.0, 6.0]),
+            np.array([12.0, 6.0]),
+            np.array([6.0, 0.0]),
+            np.array([6.0, 12.0])
         ]
-
-        # Draw rings based on ring_status:
         for i, ring in enumerate(self.ring_positions):
             status = self.ring_status[i]
             if status == 0:
-                pos = ring  # on ground
+                pos = ring
             elif status == 1:
-                pos = self.robot_position  # on robot
+                pos = self.robot_position
             elif status >= 7:
                 stake_idx = status - 7
-                pos = self.wall_stakes_positions[stake_idx]  # on wall stake
+                pos = self.wall_stakes_positions[stake_idx]
             else:
                 goal_idx = status - 2
-                pos = self.mobile_goal_positions[goal_idx]  # attached to a goal
+                pos = self.mobile_goal_positions[goal_idx]
             color = 'red' if self.is_visible(pos) else 'gray'
             circle = patches.Circle(pos, 0.3, color=color, alpha=0.7)
             ax.add_patch(circle)
-        
         for idx, pos in enumerate(wall_stakes_positions):
-            if idx == 0:  # left middle
+            if idx == 0:
                 text_pos = pos + np.array([-0.5, 0.0])
-            elif idx == 1:  # right middle
+            elif idx == 1:
                 text_pos = pos + np.array([0.5, 0.0])
-            elif idx == 2:  # bottom middle
+            elif idx == 2:
                 text_pos = pos + np.array([0.0, -0.5])
-            elif idx == 3:  # top middle
+            elif idx == 3:
                 text_pos = pos + np.array([0.0, 0.5])
             ax.text(text_pos[0], text_pos[1], f"{self.wall_stakes[idx]}", color='black', ha='center')
-
-        # Print the number of rings the robot is holding just below the robot
         ax.text(self.robot_position[0], self.robot_position[1], f"{self.holding_rings}", color='black', ha='center')
-
-        # Print the total score off to the side of the field
         ax.text(-2.5, 6, f"Total Score: {self.total_score}", color='black', ha='center')
         ax.text(6, 13.25, f'Step {step_num}', color='black', ha='center')
-        ax.text(6, -1.25, f'Action: {action_str}', color='black', ha='center')  # Print action name under the field
-
-        # Draw the robot's field of view as a dotted line
-        fov_length = 17  # Length of the field of view lines
+        ax.text(6, -1.25, f'{action_str}', color='black', ha='center')
+        fov_length = 17
         left_fov_angle = self.robot_orientation + np.pi / 2
         right_fov_angle = self.robot_orientation - np.pi / 2
-
         left_fov_end = self.robot_position + fov_length * np.array([np.cos(left_fov_angle), np.sin(left_fov_angle)])
         right_fov_end = self.robot_position + fov_length * np.array([np.cos(right_fov_angle), np.sin(right_fov_angle)])
-
         ax.plot([self.robot_position[0], left_fov_end[0]], [self.robot_position[1], left_fov_end[1]], 'k--', alpha=0.5)
         ax.plot([self.robot_position[0], right_fov_end[0]], [self.robot_position[1], right_fov_end[1]], 'k--', alpha=0.5)
-
-        # Draw gray overlay for the section the robot can't see
-        fov_polygon = np.array([self.robot_position, left_fov_end, right_fov_end])
-        field_corners = np.array([[0, 0], [12, 0], [12, 12], [0, 12]])
-
-        # Create a large rectangle covering the entire area the robot can't see
         overlay_polygon = np.array([
             self.robot_position,
             left_fov_end,
@@ -575,10 +491,8 @@ class VEXHighStakesEnv(gym.Env):
             right_fov_end,
             self.robot_position
         ])
-
         overlay = patches.Polygon(overlay_polygon, closed=True, color='gray', alpha=0.3)
         ax.add_patch(overlay)
-
         if save_path:
             plt.savefig(f"{save_path}/step_{step_num}.png")
             plt.close()
