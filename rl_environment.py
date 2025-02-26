@@ -6,6 +6,7 @@ import imageio.v2 as imageio
 import os
 import matplotlib.patches as patches
 from enum import Enum
+from path_planner import PathPlanner, Obstacle
 
 # =============================================================================
 # Enum to assign integer values to robot actions
@@ -39,9 +40,10 @@ class VEXHighStakesEnv(gym.Env):
     # -----------------------------------------------------------------------------
     # Initialize environment settings and spaces.
     # -----------------------------------------------------------------------------
-    def __init__(self, randomize_positions=True):
+    def __init__(self, randomize_positions=True, use_realistic_pathing=False):
         super(VEXHighStakesEnv, self).__init__()
         self.randomize_positions = randomize_positions
+        self.use_realistic_pathing = use_realistic_pathing
         self.num_goals = 5
         self.num_rings = 24
         max_wall_stakes = 4
@@ -254,10 +256,17 @@ class VEXHighStakesEnv(gym.Env):
             old_position = self.robot_position
             target_position = corners[action - Actions.DRIVE_TO_CORNER_0.value]
             direction = target_position - old_position
+            distance = np.linalg.norm(target_position - old_position)
+
+            if self.use_realistic_pathing:
+                planned_x, planned_y, time = self.calculate_path(self.robot_position / 12.0, target_position / 12.0)
+                time_cost = float(time)
+            else:
+                time_cost = distance / 2 + 0.1
+
             self.robot_position = target_position
             self.robot_orientation = np.arctan2(direction[1], direction[0])
-            distance = np.linalg.norm(target_position - old_position)
-            time_cost = distance / 2 + 0.1
+
             if distance == 0:
                 penalty = -1
             for goal_pos in self.mobile_goal_positions:
@@ -294,10 +303,17 @@ class VEXHighStakesEnv(gym.Env):
             old_position = self.robot_position
             target_position = self.wall_stakes_positions[stake_idx]
             direction = target_position - old_position
+
+            distance = np.linalg.norm(target_position - old_position)
+
+            if self.use_realistic_pathing:
+                planned_x, planned_y, time = self.calculate_path(self.robot_position / 12.0, target_position / 12.0)
+                time_cost = float(time)
+            else:
+                time_cost = distance / 2 + 0.1
+
             self.robot_position = target_position
             self.robot_orientation = np.arctan2(direction[1], direction[0])
-            distance = np.linalg.norm(target_position - old_position)
-            time_cost = distance / 2 + 0.1
             if distance == 0:
                 penalty = -1
 
@@ -407,6 +423,17 @@ class VEXHighStakesEnv(gym.Env):
         delta_score = new_score - initial_score
         reward = delta_score + penalty / 100
         return reward
+    
+    def calculate_path(self, start_point, end_point):
+        sp = np.array(start_point, dtype=np.float64)
+        ep = np.array(end_point, dtype=np.float64)
+        obstacles = [Obstacle(3/6, 2/6, 3.5/144, False),
+                     Obstacle(3/6, 4/6, 3.5/144, False),
+                     Obstacle(2/6, 3/6, 3.5/144, False),
+                     Obstacle(4/6, 3/6, 3.5/144, False)]
+        planner = PathPlanner()
+        sol = planner.Solve(start_point=sp, end_point=ep, obstacles=obstacles)
+        return planner.getPath(sol)
 
     # -----------------------------------------------------------------------------
     # Create a visual representation of the environment.
@@ -432,9 +459,14 @@ class VEXHighStakesEnv(gym.Env):
         orientation_arrow = patches.FancyArrow(center[0], center[1], arrow_dx, arrow_dy,
                                                 width=0.1, color='yellow', length_includes_head=True, alpha=0.25)
         ax.add_patch(orientation_arrow)
-        path_line = patches.FancyArrowPatch(self.last_robot_position, self.robot_position, lw=1,
-                                             arrowstyle='-', alpha=0.25, color='black')
-        ax.add_patch(path_line)
+
+        if not np.array_equal(self.robot_position, self.last_robot_position):
+            planned_x, planned_y, time = self.calculate_path(self.last_robot_position / 12.0, self.robot_position / 12.0)
+            planned_x *= 12
+            planned_y *= 12
+            ax.plot(planned_x, planned_y, 'k--', alpha=0.5)
+
+
         for goal_idx, (goal, available) in enumerate(zip(self.mobile_goal_positions, self.goal_available)):
             color = 'green' if self.is_visible(goal) else 'gray'
             hexagon = patches.RegularPolygon(goal, numVertices=6, radius=0.5, orientation=np.pi/6, color=color, alpha=0.25)
