@@ -80,7 +80,7 @@ def build_point_path(points, spd_weights, name="PointPath"):
     ret = "static inline PointPath* {path_name} = new PointPath(\"{path_name}\", ".format(path_name=name)
     # Build vector for PointPath
     vector = "{"
-    vector += f'{{{', '.join([str(point) for point in points])}}}'
+    vector += f"{{{', '.join([str(point) for point in points])}}}"
     vector += ", 100, 3, 1, false" # constants
     vector += "}"
     ret += ");"

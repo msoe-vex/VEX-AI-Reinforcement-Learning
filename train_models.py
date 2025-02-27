@@ -19,8 +19,8 @@ from rl_environment import VEXHighStakesEnv
 # Evaluate Agent
 # Runs one episode with the trained model and returns its total score.
 # ---------------------------------------------------------------------------
-def evaluate_agent(model, env_class, randomize_positions):
-    env = env_class(randomize_positions=randomize_positions)
+def evaluate_agent(model, env_class, save_path, randomize_positions):
+    env = env_class(save_path, randomize_positions=randomize_positions)
     obs, _ = env.reset()
     done = False
     while not done:
@@ -35,7 +35,7 @@ def evaluate_agent(model, env_class, randomize_positions):
 # Trains a single agent and saves the best model.
 # ---------------------------------------------------------------------------
 def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, discount_factor, model_path, randomize_positions, num_layers, num_nodes):
-    env = env_class(randomize_positions=randomize_positions)
+    env = env_class(save_path, randomize_positions=randomize_positions)
     check_env(env, warn=True)
     device = th.device("cuda" if th.cuda.is_available() else "cpu")
     
@@ -59,13 +59,13 @@ def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, d
     while n_steps < total_timesteps:
         model.learn(total_timesteps=check_steps, reset_num_timesteps=False)
         n_steps = model.num_timesteps - initial_timesteps
-        score = evaluate_agent(model, env_class, randomize_positions)
+        score = evaluate_agent(model, env_class, save_path, randomize_positions)
         if score > best_score:
             best_score = score
             model.save(save_path)
             print(f"Model saved to {save_path}.")
         print(f"Best: {best_score} | {n_steps}/{total_timesteps} timesteps")
-    score = evaluate_agent(model, env_class, randomize_positions)
+    score = evaluate_agent(model, env_class, save_path, randomize_positions)
     model.save(save_path+"_final")
     print("Training complete.")
     print(f"Final model saved to {save_path}_final with score {score}")
