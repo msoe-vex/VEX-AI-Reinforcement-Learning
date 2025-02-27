@@ -102,7 +102,7 @@ if __name__ == "__main__":
 
     processes = []
     for i in range(args.agents):
-        save_path = f"job_results/job_{args.job_id}/models/vex_high_stakes_ppo_agent_{i}"
+        save_path = f"job_results/job_{args.job_id}/models/model_{i}"
         p = Process(target=train_agent, args=(VEXHighStakesEnv, args.timesteps, save_path, args.entropy, args.learning_rate, args.discount_factor, args.model_path, args.randomize, args.num_layers, args.num_nodes))
         p.start()
         processes.append(p)

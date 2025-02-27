@@ -40,7 +40,7 @@ class VEXHighStakesEnv(gym.Env):
     # -----------------------------------------------------------------------------
     # Initialize environment settings and spaces.
     # -----------------------------------------------------------------------------
-    def __init__(self, randomize_positions=True, use_realistic_pathing=False):
+    def __init__(self, save_path, randomize_positions=True, use_realistic_pathing=False):
         super(VEXHighStakesEnv, self).__init__()
         self.randomize_positions = randomize_positions
         self.use_realistic_pathing = use_realistic_pathing
@@ -83,6 +83,13 @@ class VEXHighStakesEnv(gym.Env):
         self.action_space = spaces.Discrete(19)
         self.reset()
         self.ignore_randomness = True
+        self.save_path = save_path
+        self.steps_save_path = f"{save_path}/steps"
+
+        self.permanent_obstacles = [Obstacle(3/6, 2/6, 3.5/144, False),
+                     Obstacle(3/6, 4/6, 3.5/144, False),
+                     Obstacle(2/6, 3/6, 3.5/144, False),
+                     Obstacle(4/6, 3/6, 3.5/144, False)]
 
     # -----------------------------------------------------------------------------
     # Build and return the current observation.
@@ -157,6 +164,18 @@ class VEXHighStakesEnv(gym.Env):
         initial_score = self.compute_field_score()
         initial_time_remaining = self.time_remaining
         self.last_robot_position = self.robot_position.copy()
+
+        def enforce_wall_distance(position):
+            buffer = 0.8
+            if position[0] < buffer:
+                position[0] = buffer
+            elif position[0] > 12-buffer:
+                position[0] = 12-buffer
+            if position[1] < buffer:
+                position[1] = buffer
+            elif position[1] > 12-buffer:
+                position[1] = 12-buffer
+            return position
 
         # ----------------------------------------------------------------------------- 
         # PICK_UP_GOAL (Restrictions: not holding a goal; target available and visible)
@@ -353,6 +372,8 @@ class VEXHighStakesEnv(gym.Env):
                 penalty = 0
             time_cost = 0.5
 
+        self.robot_position = enforce_wall_distance(self.robot_position)
+
         self.time_remaining = max(0, self.time_remaining - time_cost)
         if self.time_remaining <= 0:
             done = True
@@ -427,22 +448,82 @@ class VEXHighStakesEnv(gym.Env):
     def calculate_path(self, start_point, end_point):
         sp = np.array(start_point, dtype=np.float64)
         ep = np.array(end_point, dtype=np.float64)
-        obstacles = [Obstacle(3/6, 2/6, 3.5/144, False),
-                     Obstacle(3/6, 4/6, 3.5/144, False),
-                     Obstacle(2/6, 3/6, 3.5/144, False),
-                     Obstacle(4/6, 3/6, 3.5/144, False)]
         planner = PathPlanner()
-        sol = planner.Solve(start_point=sp, end_point=ep, obstacles=obstacles)
+        sol = planner.Solve(start_point=sp, end_point=ep, obstacles=self.permanent_obstacles)
         return planner.getPath(sol)
+
+    def clearAuton(self):
+        if not os.path.exists(self.save_path):
+            os.makedirs(self.save_path, exist_ok=True)
+        with open(f'{self.save_path}/auton.csv', 'w') as f:
+            f.write("")
+    
+    def clearPNGs(self):
+        if os.path.exists(self.steps_save_path):
+            for file in os.listdir(self.steps_save_path):
+                file_path = os.path.join(self.steps_save_path, file)
+                if os.path.isfile(file_path):
+                    os.unlink(file_path)
+                elif os.path.isdir(file_path):
+                    os.rmdir(file_path)
+        else:
+            os.makedirs(self.steps_save_path, exist_ok=True)
 
     # -----------------------------------------------------------------------------
     # Create a visual representation of the environment.
     # -----------------------------------------------------------------------------
-    def render(self, save_path=None, step_num=0, action=None, reward=None):
+    def render(self, step_num=0, action=None, reward=None):
         if isinstance(action, (np.ndarray,)):
             action = int(action)
+        
+        # Print step info to console
         action_str = Actions(action).name
         print(f"Step: {step_num:<3} | {action_str:<25} | Reward: {reward:<5} | Total score: {self.total_score:<3} | Time remaining: {self.time_remaining:<7.2f}")
+        
+        # Generate path
+        planned_x, planned_y, time = self.calculate_path(self.last_robot_position / 12.0, self.robot_position / 12.0)
+        planned_x *= 12
+        planned_y *= 12
+
+        # Add data to CSV
+        FORWARD = "FORWARD"
+        BACKWARD = "BACKWARD"
+
+        with open(f'{self.save_path}/auton.csv', 'a') as f:
+            if Actions.PICK_UP_GOAL_0.value <= action <= Actions.PICK_UP_GOAL_4.value:
+                f.write(f"{BACKWARD}, ")
+                for x, y in zip(planned_x, planned_y):
+                    f.write(f"{x:.2f},{y:.2f}, ")
+                f.write(f"\n")
+                f.write(f"PICKUP_GOAL\n")
+            if Actions.PICK_UP_NEAREST_RING.value == action:
+                f.write(f"{FORWARD}, ")
+                for x, y in zip(planned_x, planned_y):
+                    f.write(f"{x:.2f},{y:.2f}, ")
+                f.write(f"\n")
+                f.write(f"PICKUP_RING\n")
+            if Actions.CLIMB.value == action:
+                f.write("CLIMB\n")
+            if Actions.DROP_GOAL.value == action:
+                f.write("DROP_GOAL\n")
+            if Actions.DRIVE_TO_CORNER_0.value <= action <= Actions.DRIVE_TO_CORNER_3.value:
+                f.write(f"{BACKWARD}, ")
+                for x, y in zip(planned_x, planned_y):
+                    f.write(f"{x:.2f},{y:.2f}, ")
+                f.write(f"\n")
+            if Actions.ADD_RING_TO_GOAL.value == action:
+                f.write("ADD_RING_TO_GOAL\n")
+            if Actions.DRIVE_TO_WALL_STAKE_0.value <= action <= Actions.DRIVE_TO_WALL_STAKE_3.value:
+                f.write(f"{BACKWARD}, ")
+                for x, y in zip(planned_x, planned_y):
+                    f.write(f"{x:.2f},{y:.2f}, ")
+                f.write(f"\n")
+            if Actions.ADD_RING_TO_WALL_STAKE.value == action:
+                f.write("ADD_RING_TO_WALL_STAKE\n")
+            if Actions.TURN_TOWARDS_CENTER.value == action:
+                f.write(f"TURN_TOWARDS_CENTER, {self.robot_orientation:.2f}\n")
+
+        # Create visualization
         fig, ax = plt.subplots(figsize=(10,8))
         ax.set_xlim(0, 12)
         ax.set_ylim(0, 12)
@@ -460,12 +541,12 @@ class VEXHighStakesEnv(gym.Env):
                                                 width=0.1, color='yellow', length_includes_head=True, alpha=0.25)
         ax.add_patch(orientation_arrow)
 
-        if not np.array_equal(self.robot_position, self.last_robot_position):
-            planned_x, planned_y, time = self.calculate_path(self.last_robot_position / 12.0, self.robot_position / 12.0)
-            planned_x *= 12
-            planned_y *= 12
-            ax.plot(planned_x, planned_y, 'k--', alpha=0.5)
+        ax.plot(planned_x, planned_y, 'k--', alpha=0.5)
 
+
+        for obstacle in self.permanent_obstacles:
+            circle = patches.Circle((obstacle.x * 12, obstacle.y * 12), obstacle.radius * 12, edgecolor='black', facecolor='none', linestyle='dotted', alpha=0.5)
+            ax.add_patch(circle)
 
         for goal_idx, (goal, available) in enumerate(zip(self.mobile_goal_positions, self.goal_available)):
             color = 'green' if self.is_visible(goal) else 'gray'
@@ -525,8 +606,6 @@ class VEXHighStakesEnv(gym.Env):
         ])
         overlay = patches.Polygon(overlay_polygon, closed=True, color='gray', alpha=0.3)
         ax.add_patch(overlay)
-        if save_path:
-            plt.savefig(f"{save_path}/step_{step_num}.png")
-            plt.close()
-        else:
-            plt.show()
+
+        plt.savefig(f"{self.steps_save_path}/step_{step_num}.png")
+        plt.close()

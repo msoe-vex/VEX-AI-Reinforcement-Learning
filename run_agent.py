@@ -8,24 +8,12 @@ from rl_environment import VEXHighStakesEnv
 # -----------------------------------------------------------------------------
 # Description: Run a PPO agent on the VEXHighStakesEnv.
 # -----------------------------------------------------------------------------
-def run_agent(model_path, randomize_positions):
+def run_agent(model_path, save_path, randomize_positions):
     # Check if the environment follows Gymnasium API
-    env = VEXHighStakesEnv(randomize_positions=randomize_positions)
+    env = VEXHighStakesEnv(save_path=save_path, randomize_positions=randomize_positions)
     check_env(env, warn=True)
 
     model = PPO.load(model_path)
-
-    # Create a directory to save the images
-    save_path = "simulation_steps"
-    if os.path.exists(save_path):
-        for file in os.listdir(save_path):
-            file_path = os.path.join(save_path, file)
-            if os.path.isfile(file_path):
-                os.unlink(file_path)
-            elif os.path.isdir(file_path):
-                os.rmdir(file_path)
-    else:
-        os.makedirs(save_path, exist_ok=True)
 
     done = False
     obs, _ = env.reset()
@@ -35,16 +23,18 @@ def run_agent(model_path, randomize_positions):
     # -----------------------------------------------------------------------------
     # Description: Run one episode and collect rendered frames.
     # -----------------------------------------------------------------------------
+    env.clearAuton()
+    env.clearPNGs()
     while not done:
         action, _ = model.predict(obs)
         obs, reward, done, truncated, _ = env.step(action)
-        env.render(save_path=save_path, step_num=step_num, action=action, reward=reward)
-        images.append(imageio.imread(f"{save_path}/step_{step_num}.png"))
+        env.render(step_num=step_num, action=action, reward=reward)
+        images.append(imageio.imread(f"{env.steps_save_path}/step_{step_num}.png"))
         step_num += 1
 
     print(f"Total score: {env.total_score}")
     print("Creating GIF...")
-    imageio.mimsave('simulation.gif', images, fps=10)
+    imageio.mimsave(f'{save_path}/simulation.gif', images, fps=10)
     env.close()
 
 # -----------------------------------------------------------------------------
@@ -60,11 +50,11 @@ if __name__ == "__main__":
     parser.set_defaults(randomize=True)
     args = parser.parse_args()
 
-    print(args.randomize)
+    save_path = "run_agent_results"
 
     if args.train:
         # Check if the environment follows Gymnasium API
-        env = VEXHighStakesEnv(randomize_positions=args.randomize)
+        env = VEXHighStakesEnv(save_path=save_path, randomize_positions=args.randomize)
         check_env(env, warn=True)
 
         # Train a PPO agent on the environment
@@ -80,12 +70,13 @@ if __name__ == "__main__":
         print("Training complete.")
 
         # Save the trained model
-        model.save("vex_high_stakes_ppo")
+        model_save_path = os.path.join(save_path, "model")
+        model.save(model_save_path)
 
         env.close()
 
-        run_agent("vex_high_stakes_ppo", args.randomize)
+        run_agent(model_save_path, save_path, args.randomize)
     elif args.model_path:
-        run_agent(args.model_path, args.randomize)
+        run_agent(args.model_path, save_path, args.randomize)
     else:
         print("Please specify --train to train a new model or provide a --model_path to run an existing model.")

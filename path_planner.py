@@ -238,7 +238,7 @@ class PathPlanner:
         self.status = solver.stats()['return_status']
         return res
 
-    def print_trajectory_details(self, res):
+    def print_trajectory_details(self, res, save_path):
         # -------------------------------------------------------------------------
         # Trajectory Output: Print details and save to a file
         # -------------------------------------------------------------------------
@@ -271,8 +271,9 @@ class PathPlanner:
         print(f"Path time: {optimized_time_step * self.num_steps:.2f}")
         print(f"\nStatus: {self.status}")
         lemlib_output_string += "endData"
-        with open('path_output.txt', 'w') as file:
-            file.write(lemlib_output_string)
+        if save_path:
+            with open(save_path, 'w') as file:
+                file.write(lemlib_output_string)
 
     def plotResults(self, sol):
         # -------------------------------------------------------------------------
@@ -320,7 +321,7 @@ class PathPlanner:
         ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), borderaxespad=0., frameon=False)
         ax.set_aspect('equal', adjustable='box')
         ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.grid()
-        plt.show()
+        plt.savefig('path.png')
     
     def getPath(self, sol):
         planned_px = np.array(sol['x'][self.indexes.px:self.indexes.py]).flatten()
@@ -341,10 +342,13 @@ if __name__ == "__main__":
         obstacles.append(Obstacle(random.uniform(.0, 1), random.uniform(.0, 1), 5.75/144, True))
 
 
-    start_point = [0, 0]
-    end_point = [1, 1]
+    start_point = [random.uniform(0, 1), random.uniform(0, 1)]
+    end_point = [random.uniform(0, 1), random.uniform(0, 1)]
+
+    start_point = [0.1, 0.1]
+    end_point = [0.9, 0.9]
 
     planner = PathPlanner()
     sol = planner.Solve(start_point=start_point, end_point=end_point, obstacles=obstacles)
-    planner.print_trajectory_details(sol)
+    planner.print_trajectory_details(sol, None)
     planner.plotResults(sol)
