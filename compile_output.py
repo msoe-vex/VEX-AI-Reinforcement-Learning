@@ -109,14 +109,14 @@ def build_point_path(points, spd_weights, name="PointPath", action="FORWARD"):
     # TODO: Direction (could use action name to determine it?)
 
     # Start PointPath definition
-    ret = "    static inline PointPath* {path_name} = new PointPath(\"{path_name}\", ".format(path_name=name)
+    # PointPath constructor takes only points
+    ret = "    static inline PointPath* {path_name} = new PointPath(".format(path_name=name)
 
     # Build vector for PointPath
     vector = f"{{{', '.join(['{' + str(point[0]) + ', ' + str(point[1]) + '}' for point in points])}}}"
 
     # Add vector and finish definition
-    other_params = ""  # ", 100, 3, 1, false" # constants
-    # ^ PointPath constructor takes only points
+    other_params = ""
     ret += vector + other_params + ");\n"
 
     return ret
