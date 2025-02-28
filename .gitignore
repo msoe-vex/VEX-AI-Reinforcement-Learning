@@ -5,5 +5,5 @@ job-script.sh
 /job_results
 /__pycache__
 train_models_*.sh
-/run_agent_results
 path.png
+*/steps

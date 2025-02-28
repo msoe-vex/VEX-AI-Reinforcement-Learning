@@ -47,11 +47,23 @@ class VEXHighStakesEnv(gym.Env):
         self.num_goals = 5
         self.num_rings = 24
         max_wall_stakes = 4
+
+        self.robot_length = 15/12
+        self.robot_width = 15/12
+        self.buffer_radius = 0/12
+        self.robot_radius = np.sqrt(self.robot_length**2 + self.robot_width**2) / 2 + self.buffer_radius
+
         self.wall_stakes_positions = np.array([
-            [0.0, 6.0],
-            [12.0, 6.0],
-            [6.0, 0.0],
-            [6.0, 12.0]
+            [0.0, 6.0-self.robot_radius],
+            [12.0-self.robot_radius, 6.0],
+            [6.0, 0.0+self.robot_radius],
+            [6.0, 12.0-self.robot_radius]
+        ])
+        self.corner_positions = np.array([
+            [self.robot_radius, self.robot_radius],
+            [12-self.robot_radius, self.robot_radius],
+            [self.robot_radius, 12-self.robot_radius],
+            [12-self.robot_radius, 12-self.robot_radius]
         ])
         # Define the observation space for the environment
         self.observation_space = spaces.Dict({
@@ -165,18 +177,6 @@ class VEXHighStakesEnv(gym.Env):
         initial_time_remaining = self.time_remaining
         self.last_robot_position = self.robot_position.copy()
 
-        def enforce_wall_distance(position):
-            buffer = 0.8
-            if position[0] < buffer:
-                position[0] = buffer
-            elif position[0] > 12-buffer:
-                position[0] = 12-buffer
-            if position[1] < buffer:
-                position[1] = buffer
-            elif position[1] > 12-buffer:
-                position[1] = 12-buffer
-            return position
-
         # ----------------------------------------------------------------------------- 
         # PICK_UP_GOAL (Restrictions: not holding a goal; target available and visible)
         # Drives the robot to the target goal and picks it up.
@@ -266,14 +266,8 @@ class VEXHighStakesEnv(gym.Env):
         # Drives the robot to the target corner.
         # -----------------------------------------------------------------------------
         elif Actions.DRIVE_TO_CORNER_0.value <= action <= Actions.DRIVE_TO_CORNER_3.value:
-            corners = np.array([
-                [0.5, 0.5],
-                [11.5, 0.5],
-                [0.5, 11.5],
-                [11.5, 11.5]
-            ])
             old_position = self.robot_position
-            target_position = corners[action - Actions.DRIVE_TO_CORNER_0.value]
+            target_position = self.corner_positions[action - Actions.DRIVE_TO_CORNER_0.value]
             direction = target_position - old_position
             distance = np.linalg.norm(target_position - old_position)
 
@@ -372,8 +366,6 @@ class VEXHighStakesEnv(gym.Env):
                 penalty = 0
             time_cost = 0.5
 
-        self.robot_position = enforce_wall_distance(self.robot_position)
-
         self.time_remaining = max(0, self.time_remaining - time_cost)
         if self.time_remaining <= 0:
             done = True
@@ -414,11 +406,10 @@ class VEXHighStakesEnv(gym.Env):
     # -----------------------------------------------------------------------------
     def compute_field_score(self):
         score = 0
-        corners = [np.array([0.5, 0.5]), np.array([11.5, 0.5]), np.array([0.5, 11.5]), np.array([11.5, 11.5])]
         for goal_idx, goal_pos in enumerate(self.mobile_goal_positions):
             if np.any(self.ring_status == (goal_idx + 2)):
                 rings_on_goal = np.sum(self.ring_status == (goal_idx + 2))
-                if self.holding_goal_index != goal_idx and any(np.linalg.norm(goal_pos - corner) < 0.5 for corner in corners):
+                if self.holding_goal_index != goal_idx and any(np.linalg.norm(goal_pos - corner) < 0.5 for corner in self.corner_positions):
                     multiplier = 2
                 else:
                     multiplier = 1
@@ -521,7 +512,7 @@ class VEXHighStakesEnv(gym.Env):
             if Actions.ADD_RING_TO_WALL_STAKE.value == action:
                 f.write("ADD_RING_TO_WALL_STAKE\n")
             if Actions.TURN_TOWARDS_CENTER.value == action:
-                f.write(f"TURN_TOWARDS_CENTER, {self.robot_orientation:.2f}\n")
+                f.write(f"TURN_TO, {self.robot_orientation:.2f}\n")
 
         # Create visualization
         fig, ax = plt.subplots(figsize=(10,8))

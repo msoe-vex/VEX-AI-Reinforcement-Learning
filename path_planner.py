@@ -322,6 +322,8 @@ class PathPlanner:
         ax.set_aspect('equal', adjustable='box')
         ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.grid()
         plt.savefig('path.png')
+
+        print("Path saved to path.png")
     
     def getPath(self, sol):
         planned_px = np.array(sol['x'][self.indexes.px:self.indexes.py]).flatten()
