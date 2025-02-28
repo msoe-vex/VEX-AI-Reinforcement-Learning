@@ -112,14 +112,12 @@ def build_point_path(points, spd_weights, name="PointPath", action="FORWARD"):
     ret = "    static inline PointPath* {path_name} = new PointPath(\"{path_name}\", ".format(path_name=name)
 
     # Build vector for PointPath
-    # TODO: Vector format correct?
-    vector = "{"
-    vector += f"{{{', '.join([str(point) for point in points])}}}"
-    vector += ", 100, 3, 1, false" # constants
-    vector += "}"
+    vector = f"{{{', '.join(['{' + str(point[0]) + ', ' + str(point[1]) + '}' for point in points])}}}"
 
     # Add vector and finish definition
-    ret += vector + ");\n"
+    other_params = ""  # ", 100, 3, 1, false" # constants
+    # ^ PointPath constructor takes only points
+    ret += vector + other_params + ");\n"
 
     return ret
 
@@ -127,7 +125,7 @@ def build_point_path(points, spd_weights, name="PointPath", action="FORWARD"):
 # Description: Process assuming the file is a unified action/path file
 # -----------------------------------------------------------------------------
 def parse_unified(lines):
-    # TODO: Final file format, restructure this to fit that
+    # TODO: Will this be the final file format or will revisions be made yet?
 
     # Generate the beginning of the output file
     output = begin_file()
