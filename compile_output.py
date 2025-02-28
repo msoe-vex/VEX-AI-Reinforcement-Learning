@@ -112,8 +112,11 @@ def build_point_path(points, spd_weights, name="PointPath", action="FORWARD"):
     # PointPath constructor takes only points
     ret = "    static inline PointPath* {path_name} = new PointPath(".format(path_name=name)
 
+    # Scale points for the robot code
+    new_points = [(x * 144 / 12 - 72, y * 144 / 12 - 72) for x, y in points]
+
     # Build vector for PointPath
-    vector = f"{{{', '.join(['{' + str(point[0]) + ', ' + str(point[1]) + '}' for point in points])}}}"
+    vector = f"{{{', '.join([f'{{{x:.2f}, {y:.2f}}}' for x, y in new_points])}}}"
 
     # Add vector and finish definition
     other_params = ""
