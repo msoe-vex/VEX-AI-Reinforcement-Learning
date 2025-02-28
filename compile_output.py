@@ -9,7 +9,7 @@ def begin_file(file_name="auton1.h"):
     class_name_lower = file_name.split(".")[0]
     class_name = class_name_lower[0].upper() + class_name_lower[1:]
 
-    includes = ["config.h", "vex.h", "BezierCurve.h", "robotController.h"]
+    includes = ["config.h", "vex.h", "BezierCurve.h", "pointPath.h", "robotController.h"]
 
     # Add include guard
     ret = r'''#ifndef {name}

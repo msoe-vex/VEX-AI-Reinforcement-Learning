@@ -3,6 +3,7 @@
 #include "config.h"
 #include "vex.h"
 #include "BezierCurve.h"
+#include "pointPath.h"
 #include "robotController.h"
 using namespace vex;
 
