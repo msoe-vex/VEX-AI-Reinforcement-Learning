@@ -38,6 +38,7 @@ def begin_run_method(drive_names=["leftDrive", "rightDrive", "centerDrive"], bra
 '''
 
     # Set tracker position
+    # TODO: Initial position?
     ret += set_position()
 
     # Set stopping brake styles
@@ -58,10 +59,22 @@ def set_position(x=0, y=0, angle=0, tracker_name="tracker"):
 # -----------------------------------------------------------------------------
 # Description: Generate commands for an action
 # -----------------------------------------------------------------------------
-def do_action(action_name, path_id=None, extra_params=None):
-    # TODO: Dummy line for testing
-    print(f'TODO - ACTION - {action_name} - {path_id} - {extra_params}')
-    return ''
+def do_action(action_name, path_name=None, extra_params=None):
+    ret = ''
+
+    # Generate code following a path
+    # TODO: Forward/backward direction
+    if (action_name == 'FORWARD' or action_name == 'BACKWARD') and path_name is not None:
+        ret = r'''
+        robotController->startHeading({path_name});
+        robotController->follow({path_name});
+'''.format(path_name=path_name)
+
+    # Currently unsupported action, print so user knows
+    else:
+        print(f'TODO - ACTION - {action_name} - {path_name} - {extra_params}')
+
+    return ret
 
 # -----------------------------------------------------------------------------
 # Description: Generate the end of the run() method
@@ -106,8 +119,6 @@ def build_bez_curve(p1, p2, spd):
 # Description: Generate code creating a point-based path for the robot
 # -----------------------------------------------------------------------------
 def build_point_path(points, spd_weights, name="PointPath", action="FORWARD"):
-    # TODO: Direction (could use action name to determine it?)
-
     # Start PointPath definition
     # PointPath constructor takes only points
     ret = "    static inline PointPath* {path_name} = new PointPath(".format(path_name=name)
