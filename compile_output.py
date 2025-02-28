@@ -60,7 +60,8 @@ def set_position(x=0, y=0, angle=0, tracker_name="tracker"):
 # -----------------------------------------------------------------------------
 def do_action(action_name, path_id=None, extra_params=None):
     # TODO: Dummy line for testing
-    return f'ACTION TEST - {action_name} - {path_id} - {extra_params}\n'
+    print(f'TODO - ACTION - {action_name} - {path_id} - {extra_params}')
+    return ''
 
 # -----------------------------------------------------------------------------
 # Description: Generate the end of the run() method
@@ -75,8 +76,8 @@ def end_run_method():
 # -----------------------------------------------------------------------------
 def create_path(path_name, path, path_action):
     # TODO: Seems replaced by build_point_path, remove?
-    # TODO: Dummy line for testing
-    return f'PATH CREATION TEST - {path_name} - {path_action} - {path}\n'
+    print(f'TODO - PATH CREATION - {path_name} - {path_action} - {path}')
+    return ''
 
 # -----------------------------------------------------------------------------
 # Description: Generate the end of the file
@@ -98,7 +99,8 @@ def end_file(file_name="auton1.h"):
 # -----------------------------------------------------------------------------
 def build_bez_curve(p1, p2, spd):
     ret = ""
-    return "TODO - INCOMPLETE" # Bez Curves aren't supported
+    print("TODO - BUILD BEZIER CURVE - INCOMPLETE") # Bez Curves aren't supported
+    return ret
 
 # -----------------------------------------------------------------------------
 # Description: Generate code creating a point-based path for the robot
@@ -110,6 +112,7 @@ def build_point_path(points, spd_weights, name="PointPath", action="FORWARD"):
     ret = "    static inline PointPath* {path_name} = new PointPath(\"{path_name}\", ".format(path_name=name)
 
     # Build vector for PointPath
+    # TODO: Vector format correct?
     vector = "{"
     vector += f"{{{', '.join([str(point) for point in points])}}}"
     vector += ", 100, 3, 1, false" # constants
@@ -163,7 +166,8 @@ def parse_unified(lines):
             call_extra_params = fields[1:]
 
         # Add action code to output
-        output += do_action(action_name, f'Path{call_path_id}', call_extra_params)
+        output += do_action(action_name, None if call_path_id is None else f'Path{call_path_id}', \
+            call_extra_params)
 
     # End the run() method
     output += end_run_method()
