@@ -151,7 +151,6 @@ def parse_unified(lines):
     curr_path_id = 0
     paths = []
     path_actions = []
-    curr_path = []
     for line in lines:
         # Get action from line
         fields = [f.strip() for f in line.split(',')]
@@ -167,6 +166,7 @@ def parse_unified(lines):
         # Get path if there is one
         if has_path:
             curr_path_id += 1
+            curr_path = []
             for x, y in zip(fields[1::2], fields[2::2]):
                 curr_path.append((float(x), float(y)))
             paths.append(curr_path)
