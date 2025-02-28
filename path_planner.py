@@ -35,17 +35,17 @@ class PathPlanner:
         self.NUM_OF_ACTS = 2   # Number of MPC actions (vx, vy)
         self.NUM_OF_STATES = 2  # Number of MPC states (px, py)
 
-        self.num_steps = 30
-        self.step_timeinterval = 0.1
+        self.num_steps = 20
+        self.initial_time_step = 0.1
 
-        self.max_time = 10  # Maximum time for the path
+        self.max_time = 30  # Maximum time for the path
         self.min_time = 0   # Minimum time for the path
         self.time_step_min = self.min_time/self.num_steps  # Minimum time step
         self.time_step_max = self.max_time/self.num_steps   # Maximum time step
 
         self.robot_length = 15/144
         self.robot_width = 15/144
-        self.buffer_radius = 0/144
+        self.buffer_radius = 2/144
         self.robot_radius = sqrt(self.robot_length**2 + self.robot_width**2) / 2 + self.buffer_radius
 
         self.max_velocity = 70/144
@@ -129,8 +129,8 @@ class PathPlanner:
         self.init_x = init_x  # For plotting
         self.init_y = init_y
 
-        init_v = [0] * ((self.num_steps - 1) * self.NUM_OF_ACTS)
-        init_time_step = self.step_timeinterval 
+        init_v = [self.max_velocity/2] * ((self.num_steps - 1) * self.NUM_OF_ACTS)
+        init_time_step = self.initial_time_step 
         x_ = np.concatenate((init_x, init_y, init_v, [init_time_step]))
 
         time_step = x[self.indexes.dt]
@@ -147,7 +147,7 @@ class PathPlanner:
             x_lowerbound_[i] = -self.max_velocity
             x_upperbound_[i] = self.max_velocity
 
-        # Constrain start and goal positions & velocities
+        # Constrain start and final positions
         x_lowerbound_[self.indexes.px] = start_point[0]
         x_lowerbound_[self.indexes.py] = start_point[1]
         x_lowerbound_[self.indexes.px + self.num_steps - 1] = end_point[0]
@@ -157,14 +157,22 @@ class PathPlanner:
         x_upperbound_[self.indexes.px + self.num_steps - 1] = end_point[0]
         x_upperbound_[self.indexes.py + self.num_steps - 1] = end_point[1]
 
-        x_lowerbound_[self.indexes.vx + self.num_steps - 2] = 0
-        x_lowerbound_[self.indexes.vy + self.num_steps - 2] = 0
-        x_upperbound_[self.indexes.vx + self.num_steps - 2] = 0
-        x_upperbound_[self.indexes.vy + self.num_steps - 2] = 0
+        # Constrain start and final velocities
+        # x_lowerbound_[self.indexes.vx] = 0
+        # x_lowerbound_[self.indexes.vy] = 0
+        # x_upperbound_[self.indexes.vx] = 0
+        # x_upperbound_[self.indexes.vy] = 0
 
+        # x_lowerbound_[self.indexes.vx + self.num_steps - 2] = 0
+        # x_lowerbound_[self.indexes.vy + self.num_steps - 2] = 0
+        # x_upperbound_[self.indexes.vx + self.num_steps - 2] = 0
+        # x_upperbound_[self.indexes.vy + self.num_steps - 2] = 0
+
+        # Constrain time step
         x_lowerbound_[self.indexes.dt] = self.time_step_min
         x_upperbound_[self.indexes.dt] = self.time_step_max
 
+        # Define constraint bounds
         g_lowerbound_ = [exp(-10)] * self.num_of_g_
         g_upperbound_ = [exp(10)] * self.num_of_g_
 
@@ -232,7 +240,7 @@ class PathPlanner:
                 g_index += 1
 
         nlp = {'x': x, 'f': cost, 'g': vertcat(*g)}
-        opts = {"ipopt.print_level": 0, "print_time": 0, 'ipopt.tol': 1e-6}
+        opts = {"ipopt.print_level": 0, "print_time": 0, 'ipopt.tol': 1e-6, "ipopt.sb": "yes"}
         solver = nlpsol('solver', 'ipopt', nlp, opts)
         res = solver(x0=x_, lbx=x_lowerbound_, ubx=x_upperbound_, lbg=g_lowerbound_, ubg=g_upperbound_)
         self.status = solver.stats()['return_status']

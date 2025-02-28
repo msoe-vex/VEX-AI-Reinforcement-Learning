@@ -93,7 +93,7 @@ class VEXHighStakesEnv(gym.Env):
             "visible_goals_count": spaces.Discrete(6)
         })
         self.action_space = spaces.Discrete(19)
-        self.reset()
+
         self.ignore_randomness = True
         self.save_path = save_path
         self.steps_save_path = f"{save_path}/steps"
@@ -102,6 +102,8 @@ class VEXHighStakesEnv(gym.Env):
                      Obstacle(3/6, 4/6, 3.5/144, False),
                      Obstacle(2/6, 3/6, 3.5/144, False),
                      Obstacle(4/6, 3/6, 3.5/144, False)]
+
+        self.reset()
 
     # -----------------------------------------------------------------------------
     # Build and return the current observation.
@@ -160,6 +162,7 @@ class VEXHighStakesEnv(gym.Env):
         self.climbed = False
         self.padded_goals = np.full((self.num_goals * 2,), -1, dtype=np.float32)
         self.padded_rings = np.full((self.num_rings * 2,), -1, dtype=np.float32)
+        self.last_action_success = False
         obs = self._get_observation()
         return obs, {}
 
@@ -176,6 +179,7 @@ class VEXHighStakesEnv(gym.Env):
         initial_score = self.compute_field_score()
         initial_time_remaining = self.time_remaining
         self.last_robot_position = self.robot_position.copy()
+        self.last_action_success = False
 
         # ----------------------------------------------------------------------------- 
         # PICK_UP_GOAL (Restrictions: not holding a goal; target available and visible)
@@ -193,7 +197,10 @@ class VEXHighStakesEnv(gym.Env):
                 self.robot_position = target_position
                 self.robot_orientation = np.arctan2(direction[1], direction[0])
                 time_cost = distance / 2 + 0.5
+
                 penalty = 0
+                self.last_action_success = True
+
                 if np.random.rand() > 0.05 or self.ignore_randomness:
                     self.holding_goal = 1
                     self.holding_goal_index = specific_idx
@@ -219,7 +226,10 @@ class VEXHighStakesEnv(gym.Env):
                     self.robot_orientation = np.arctan2(target_position[1] - old_position[1],
                                                         target_position[0] - old_position[0])
                     time_cost = distances[min_index] / 2 + 0.5
+
                     penalty = 0
+                    self.last_action_success = True
+
                     if np.random.rand() > 0.05 or self.ignore_randomness:
                         chosen_idx = visible_candidates[min_index]
                         self.ring_status[chosen_idx] = 1
@@ -236,7 +246,9 @@ class VEXHighStakesEnv(gym.Env):
                     penalty = 0
                     if self.time_remaining > 20:
                         penalty = -1000
+                    
                     self.climbed = True
+                    self.last_action_success = True
                 else:
                     penalty = -1
                 time_cost = self.time_remaining
@@ -259,7 +271,9 @@ class VEXHighStakesEnv(gym.Env):
                     self.holding_goal = 0
                     self.holding_goal_index = -1
                     self.holding_goal_full = 0
+
                     penalty = 0
+                    self.last_action_success = True
 
         # ----------------------------------------------------------------------------- 
         # DRIVE_TO_CORNER (Restrictions: robot is not at the corner; no goals are int the corner)
@@ -276,15 +290,19 @@ class VEXHighStakesEnv(gym.Env):
                 time_cost = float(time)
             else:
                 time_cost = distance / 2 + 0.1
-
-            self.robot_position = target_position
-            self.robot_orientation = np.arctan2(direction[1], direction[0])
-
+            
             if distance == 0:
                 penalty = -1
+                self.last_action_success = False
+            else:
+                self.robot_position = target_position
+                self.robot_orientation = np.arctan2(direction[1], direction[0])
+                self.last_action_success = True
+            
             for goal_pos in self.mobile_goal_positions:
                 if np.linalg.norm(goal_pos - target_position) < 0.5:
                     penalty = -1
+                    self.last_action_success = False
                     break
 
         # ----------------------------------------------------------------------------- 
@@ -305,7 +323,9 @@ class VEXHighStakesEnv(gym.Env):
                             self.ring_positions[robot_ring_idx] = self.mobile_goal_positions[held_goal_idx]
                             self.holding_rings -= 1
                             self.holding_goal_full = 1 if np.sum(self.ring_status == (held_goal_idx + 2)) == 6 else 0
+                            
                             penalty = 0
+                            self.last_action_success = True
 
         # ----------------------------------------------------------------------------- 
         # DRIVE_TO_WALL_STAKE (Restrictions: robot is not at the target stake)
@@ -325,10 +345,13 @@ class VEXHighStakesEnv(gym.Env):
             else:
                 time_cost = distance / 2 + 0.1
 
-            self.robot_position = target_position
-            self.robot_orientation = np.arctan2(direction[1], direction[0])
             if distance == 0:
                 penalty = -1
+                self.last_action_success = False
+            else:
+                self.robot_position = target_position
+                self.robot_orientation = np.arctan2(direction[1], direction[0])
+                self.last_action_success = True
 
         # ----------------------------------------------------------------------------- 
         # ADD_RING_TO_WALL_STAKE (Restrictions: robot is at a stake; robot has rings; stake is not full)
@@ -349,7 +372,9 @@ class VEXHighStakesEnv(gym.Env):
                             self.ring_status[robot_ring_idx] = nearest_stake_idx + 7
                             self.wall_stakes[nearest_stake_idx] += 1
                             self.holding_rings -= 1
+
                             penalty = 0
+                            self.last_action_success = True
 
         # ----------------------------------------------------------------------------- 
         # TURN_TOWARDS_CENTER (Restrictions:robot is not facing the center)
@@ -363,7 +388,9 @@ class VEXHighStakesEnv(gym.Env):
                 penalty = -1
             else:
                 self.robot_orientation = new_orientation
+
                 penalty = 0
+                self.last_action_success = True
             time_cost = 0.5
 
         self.time_remaining = max(0, self.time_remaining - time_cost)
@@ -469,50 +496,55 @@ class VEXHighStakesEnv(gym.Env):
         
         # Print step info to console
         action_str = Actions(action).name
-        print(f"Step: {step_num:<3} | {action_str:<25} | Reward: {reward:<5} | Total score: {self.total_score:<3} | Time remaining: {self.time_remaining:<7.2f}")
+        print(f"Step: {step_num:<3} | {action_str:<25} | {('Valid' if self.last_action_success else 'Invalid'):<8} | Reward: {reward:<5} | Score: {self.total_score:<3} | Time: {self.time_remaining:<7.2f}")
         
         # Generate path
-        planned_x, planned_y, time = self.calculate_path(self.last_robot_position / 12.0, self.robot_position / 12.0)
-        planned_x *= 12
-        planned_y *= 12
+        if not np.array_equal(self.robot_position, self.last_robot_position):
+            planned_x, planned_y, time = self.calculate_path(self.last_robot_position / 12.0, self.robot_position / 12.0)
+            planned_x *= 12
+            planned_y *= 12
+        else:
+            planned_x = [self.robot_position[0]]
+            planned_y = [self.robot_position[1]]
 
         # Add data to CSV
         FORWARD = "FORWARD"
         BACKWARD = "BACKWARD"
 
-        with open(f'{self.save_path}/auton.csv', 'a') as f:
-            if Actions.PICK_UP_GOAL_0.value <= action <= Actions.PICK_UP_GOAL_4.value:
-                f.write(f"{BACKWARD}, ")
-                for x, y in zip(planned_x, planned_y):
-                    f.write(f"{x:.2f},{y:.2f}, ")
-                f.write(f"\n")
-                f.write(f"PICKUP_GOAL\n")
-            if Actions.PICK_UP_NEAREST_RING.value == action:
-                f.write(f"{FORWARD}, ")
-                for x, y in zip(planned_x, planned_y):
-                    f.write(f"{x:.2f},{y:.2f}, ")
-                f.write(f"\n")
-                f.write(f"PICKUP_RING\n")
-            if Actions.CLIMB.value == action:
-                f.write("CLIMB\n")
-            if Actions.DROP_GOAL.value == action:
-                f.write("DROP_GOAL\n")
-            if Actions.DRIVE_TO_CORNER_0.value <= action <= Actions.DRIVE_TO_CORNER_3.value:
-                f.write(f"{BACKWARD}, ")
-                for x, y in zip(planned_x, planned_y):
-                    f.write(f"{x:.2f},{y:.2f}, ")
-                f.write(f"\n")
-            if Actions.ADD_RING_TO_GOAL.value == action:
-                f.write("ADD_RING_TO_GOAL\n")
-            if Actions.DRIVE_TO_WALL_STAKE_0.value <= action <= Actions.DRIVE_TO_WALL_STAKE_3.value:
-                f.write(f"{BACKWARD}, ")
-                for x, y in zip(planned_x, planned_y):
-                    f.write(f"{x:.2f},{y:.2f}, ")
-                f.write(f"\n")
-            if Actions.ADD_RING_TO_WALL_STAKE.value == action:
-                f.write("ADD_RING_TO_WALL_STAKE\n")
-            if Actions.TURN_TOWARDS_CENTER.value == action:
-                f.write(f"TURN_TO, {self.robot_orientation:.2f}\n")
+        if self.last_action_success:
+            with open(f'{self.save_path}/auton.csv', 'a') as f:
+                if Actions.PICK_UP_GOAL_0.value <= action <= Actions.PICK_UP_GOAL_4.value:
+                    f.write(f"{BACKWARD}, ")
+                    for x, y in zip(planned_x, planned_y):
+                        f.write(f"{x:.2f},{y:.2f}, ")
+                    f.write(f"\n")
+                    f.write(f"PICKUP_GOAL\n")
+                if Actions.PICK_UP_NEAREST_RING.value == action:
+                    f.write(f"{FORWARD}, ")
+                    for x, y in zip(planned_x, planned_y):
+                        f.write(f"{x:.2f},{y:.2f}, ")
+                    f.write(f"\n")
+                    f.write(f"PICKUP_RING\n")
+                if Actions.CLIMB.value == action:
+                    f.write("CLIMB\n")
+                if Actions.DROP_GOAL.value == action:
+                    f.write("DROP_GOAL\n")
+                if Actions.DRIVE_TO_CORNER_0.value <= action <= Actions.DRIVE_TO_CORNER_3.value:
+                    f.write(f"{BACKWARD}, ")
+                    for x, y in zip(planned_x, planned_y):
+                        f.write(f"{x:.2f},{y:.2f}, ")
+                    f.write(f"\n")
+                if Actions.ADD_RING_TO_GOAL.value == action:
+                    f.write("ADD_RING_TO_GOAL\n")
+                if Actions.DRIVE_TO_WALL_STAKE_0.value <= action <= Actions.DRIVE_TO_WALL_STAKE_3.value:
+                    f.write(f"{BACKWARD}, ")
+                    for x, y in zip(planned_x, planned_y):
+                        f.write(f"{x:.2f},{y:.2f}, ")
+                    f.write(f"\n")
+                if Actions.ADD_RING_TO_WALL_STAKE.value == action:
+                    f.write("ADD_RING_TO_WALL_STAKE\n")
+                if Actions.TURN_TOWARDS_CENTER.value == action:
+                    f.write(f"TURN_TO, {self.robot_orientation:.2f}\n")
 
         # Create visualization
         fig, ax = plt.subplots(figsize=(10,8))
