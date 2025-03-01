@@ -5,8 +5,8 @@ import argparse
 # -----------------------------------------------------------------------------
 def begin_file(file_name="auton1.h"):
     # Translate H file name into different names for within the code
-    define_name = file_name.replace(".", "_").upper()
-    class_name_lower = file_name.split(".")[0]
+    define_name = file_name.replace("_", "").replace(".", "_").upper()
+    class_name_lower = file_name.replace("_", "").split(".")[0]
     class_name = class_name_lower[0].upper() + class_name_lower[1:]
 
     includes = ["config.h", "vex.h", "BezierCurve.h", "pointPath.h", "robotController.h"]
@@ -60,22 +60,51 @@ def set_position(x=0, y=0, angle=0, tracker_name="tracker"):
 # Description: Generate commands for an action
 # -----------------------------------------------------------------------------
 def do_action(action_name, path_name=None, extra_params=None):
-    ret = ''
+    ret = r'''
+        // {action_name}'''.format(action_name=action_name)
 
     # Generate code following a path
     if (action_name == 'FORWARD' or action_name == 'BACKWARD') and path_name is not None:
         reverse = (action_name == 'BACKWARD')
-        ret = r'''
+        ret += r'''
         robotController->setReverse({rev_bool});
         robotController->startHeading({path_name});
         robotController->follow({path_name});
 '''.format(path_name=path_name, rev_bool=str(reverse).lower())
 
+    # Used so the robot can see more of the field
     elif action_name == 'TURN_TO':
-        pass  # Ignored, should be irrelevant for autonomous
+        ret += '\n'  # Ignored, should be irrelevant for autonomous
+
+    # Generate code to grab a goal once the robot arrives
+    elif action_name == 'PICKUP_GOAL':
+        ret += r'''
+        robotController->waitForPercent(0.95);
+        tooth.set(true);
+        robotController->waitForCompletion();
+'''
+
+    # Generate code to place the goal where the robot is
+    elif action_name == 'DROP_GOAL':
+        ret += r'''
+        tooth.set(false);
+'''
+
+    # Generate code to grab a ring
+    elif action_name == 'PICKUP_RING':
+        ret += r'''
+        intake.spin(forward, 12, volt);
+'''
+
+    # Generate code to place a ring
+    elif action_name == 'ADD_RING_TO_GOAL':
+        ret += r'''
+        transfer.spin(forward, 12, volt);
+'''
 
     # Currently unsupported action, print so user knows
     else:
+        ret += '\n'
         print(f'TODO - ACTION - {action_name} - {path_name} - {extra_params}')
 
     return ret
