@@ -63,12 +63,16 @@ def do_action(action_name, path_name=None, extra_params=None):
     ret = ''
 
     # Generate code following a path
-    # TODO: Forward/backward direction
     if (action_name == 'FORWARD' or action_name == 'BACKWARD') and path_name is not None:
+        reverse = (action_name == 'BACKWARD')
         ret = r'''
+        robotController->setReverse({rev_bool});
         robotController->startHeading({path_name});
         robotController->follow({path_name});
-'''.format(path_name=path_name)
+'''.format(path_name=path_name, rev_bool=str(reverse).lower())
+
+    elif action_name == 'TURN_TO':
+        pass  # Ignored, should be irrelevant for autonomous
 
     # Currently unsupported action, print so user knows
     else:
