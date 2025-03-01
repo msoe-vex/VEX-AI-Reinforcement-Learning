@@ -10,14 +10,18 @@ while [[ "$#" -gt 0 ]]; do
     case $1 in
         --agents) NUM_AGENTS="$2"; shift 2 ;;
         --timesteps) TOTAL_TIMESTEPS="$2"; shift 2 ;;
-        --model_path) MODEL_PATH="$2"; shift 2 ;;
+        --model-path) MODEL_PATH="$2"; shift 2 ;;
         --entropy) ENTROPY_I="$2"; shift 2 ;;
-        --learning_rate) LR_I="$2"; shift 2 ;;
-        --discount) DISCOUNT_I="$2"; shift 2 ;;
+        --learning-rate) LR_I="$2"; shift 2 ;;
+        --discount-factor) DISCOUNT_I="$2"; shift 2 ;;
         --randomize) RANDOMIZE="--randomize"; shift ;;
         --no-randomize) RANDOMIZE="--no-randomize"; shift ;;
-        --num_layers) NUM_LAYERS="$2"; shift 2 ;;
-        --num_nodes) NUM_NODES="$2"; shift 2 ;;
+        --num-layers) NUM_LAYERS="$2"; shift 2 ;;
+        --num-nodes) NUM_NODES="$2"; shift 2 ;;
+        --realistic-pathing) REALISTIC_PATHING="--realistic-pathing"; shift ;;
+        --no-realistic-pathing) REALISTIC_PATHING="--no-realistic-pathing"; shift ;;
+        --realistic-vision) REALISTIC_VISION="--realistic-vision"; shift ;;
+        --no-realistic-vision) REALISTIC_VISION="--no-realistic-vision"; shift ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
 done
@@ -27,10 +31,12 @@ python train_models.py \
     --agents ${NUM_AGENTS:-1} \
     --timesteps ${TOTAL_TIMESTEPS:-1000000} \
     --entropy ${ENTROPY_I:-0.01} \
-    --learning_rate ${LR_I:-0.0005} \
-    --discount ${DISCOUNT_I:-0.99} \
-    --job_id $SLURM_JOB_ID \
-    --model_path ${MODEL_PATH:-""} \
+    --learning-rate ${LR_I:-0.0005} \
+    --discount-factor ${DISCOUNT_I:-0.99} \
+    --job-id $SLURM_JOB_ID \
+    --model-path ${MODEL_PATH:-""} \
     ${RANDOMIZE:-"--randomize"} \
-    --num_layers ${NUM_LAYERS:-2} \
-    --num_nodes ${NUM_NODES:-64}
+    --num-layers ${NUM_LAYERS:-2} \
+    --num-nodes ${NUM_NODES:-64} \
+    ${REALISTIC_PATHING:-"--no-realistic-pathing"} \
+    ${REALISTIC_VISION:-"--realistic-vision"}

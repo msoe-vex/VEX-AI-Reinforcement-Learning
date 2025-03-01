@@ -21,22 +21,26 @@ To run a trained agent, use the `run_agent.py` script. You can specify the path 
 ### Command
 
 ```bash
-python run_agent.py --model_path <MODEL_PATH>
+python run_agent.py --model-path <MODEL_PATH>
 ```
 
 ### Example
 
 ```bash
-python run_agent.py --model_path vex_high_stakes_ppo
+python run_agent.py --model-path vex_high_stakes_ppo
 ```
 
 ### Arguments
 
-- `--model_path`: Path to an existing model to load and run.
+- `--model-path`: Path to an existing model to load and run.
 - `--timesteps`: Total timesteps for training the model.
 - `--train`: Flag to indicate whether to train a new model.
 - `--randomize`: Randomize positions in the environment.
 - `--no-randomize`: Do not randomize positions in the environment.
+- `--realistic-pathing`: Use realistic pathing.
+- `--no-realistic-pathing`: Do not use realistic pathing.
+- `--realistic-vision`: Use realistic vision.
+- `--no-realistic-vision`: Do not use realistic vision.
 
 ## Training or Continuing Training an Agent
 
@@ -45,7 +49,7 @@ To train a new model or continue training an existing model, use the `run_agent.
 ### Command
 
 ```bash
-python run_agent.py --train --timesteps <TOTAL_TIMESTEPS> [--model_path <MODEL_PATH>]
+python run_agent.py --train --timesteps <TOTAL_TIMESTEPS> [--model-path <MODEL_PATH>]
 ```
 
 ### Example
@@ -57,7 +61,7 @@ python run_agent.py --train --timesteps 500
 
 Continue training an existing model:
 ```bash
-python run_agent.py --train --timesteps 500 --model_path vex_high_stakes_ppo
+python run_agent.py --train --timesteps 500 --model-path vex_high_stakes_ppo
 ```
 
 ## Training with SLURM Job Script
@@ -80,14 +84,18 @@ sbatch train_models.sh --agents 3 --timesteps 100000
 
 - `--agents`: Number of agents to train.
 - `--timesteps`: Total timesteps for training each agent.
-- `--model_path`: Path to a pretrained model.
+- `--model-path`: Path to a pretrained model.
 - `--entropy`: Entropy coefficient for agent exploration.
-- `--learning_rate`: Magnitude of updates to make to the model.
-- `--discount`: Value to place on potential future rewards.
+- `--learning-rate`: Magnitude of updates to make to the model.
+- `--discount-factor`: Value to place on potential future rewards.
 - `--randomize`: Randomize positions in the environment.
 - `--no-randomize`: Do not randomize positions in the environment.
-- `--num_layers`: Number of layers in the policy network.
-- `--num_nodes`: Number of nodes per layer in the policy network.
+- `--num-layers`: Number of layers in the policy network.
+- `--num-nodes`: Number of nodes per layer in the policy network.
+- `--realistic-pathing`: Use realistic pathing.
+- `--no-realistic-pathing`: Do not use realistic pathing.
+- `--realistic-vision`: Use realistic vision.
+- `--no-realistic-vision`: Do not use realistic vision.
 
 ### Cancel job
 

@@ -12,25 +12,21 @@ from path_planner import PathPlanner, Obstacle
 # Enum to assign integer values to robot actions
 # =============================================================================
 class Actions(Enum):
-    PICK_UP_GOAL_0 = 0
-    PICK_UP_GOAL_1 = 1
-    PICK_UP_GOAL_2 = 2
-    PICK_UP_GOAL_3 = 3
-    PICK_UP_GOAL_4 = 4
-    PICK_UP_NEAREST_RING = 5
-    CLIMB = 6
-    DROP_GOAL = 7
-    DRIVE_TO_CORNER_0 = 8
-    DRIVE_TO_CORNER_1 = 9
-    DRIVE_TO_CORNER_2 = 10
-    DRIVE_TO_CORNER_3 = 11
-    ADD_RING_TO_GOAL = 12
-    DRIVE_TO_WALL_STAKE_0 = 13
-    DRIVE_TO_WALL_STAKE_1 = 14
-    DRIVE_TO_WALL_STAKE_2 = 15
-    DRIVE_TO_WALL_STAKE_3 = 16
-    ADD_RING_TO_WALL_STAKE = 17
-    TURN_TOWARDS_CENTER = 18
+    PICK_UP_NEAREST_GOAL = 0
+    PICK_UP_NEAREST_RING = 1
+    CLIMB = 2
+    DROP_GOAL = 3
+    DRIVE_TO_CORNER_0 = 4
+    DRIVE_TO_CORNER_1 = 5
+    DRIVE_TO_CORNER_2 = 6
+    DRIVE_TO_CORNER_3 = 7
+    ADD_RING_TO_GOAL = 8
+    DRIVE_TO_WALL_STAKE_0 = 9
+    DRIVE_TO_WALL_STAKE_1 = 10
+    DRIVE_TO_WALL_STAKE_2 = 11
+    DRIVE_TO_WALL_STAKE_3 = 12
+    ADD_RING_TO_WALL_STAKE = 13
+    TURN_TOWARDS_CENTER = 14
 
 # =============================================================================
 # Environment class for the VEX High Stakes Challenge
@@ -40,21 +36,22 @@ class VEXHighStakesEnv(gym.Env):
     # -----------------------------------------------------------------------------
     # Initialize environment settings and spaces.
     # -----------------------------------------------------------------------------
-    def __init__(self, save_path, randomize_positions=True, use_realistic_pathing=False):
+    def __init__(self, save_path, randomize_positions=True, realistic_pathing=False, realistic_vision=True):
         super(VEXHighStakesEnv, self).__init__()
         self.randomize_positions = randomize_positions
-        self.use_realistic_pathing = use_realistic_pathing
+        self.realistic_pathing = realistic_pathing
+        self.realistic_vision = realistic_vision
         self.num_goals = 5
         self.num_rings = 24
         max_wall_stakes = 4
 
-        self.robot_length = 15/12
-        self.robot_width = 15/12
-        self.buffer_radius = 0/12
-        self.robot_radius = np.sqrt(self.robot_length**2 + self.robot_width**2) / 2 + self.buffer_radius
+        self.robot_length = 15
+        self.robot_width = 15
+        buffer = 2
+        self.robot_radius = np.sqrt((self.robot_length/12)**2 + (self.robot_width/12)**2) / 2 + buffer/12
 
         self.wall_stakes_positions = np.array([
-            [0.0, 6.0-self.robot_radius],
+            [0.0+self.robot_radius, 6.0],
             [12.0-self.robot_radius, 6.0],
             [6.0, 0.0+self.robot_radius],
             [6.0, 12.0-self.robot_radius]
@@ -92,7 +89,7 @@ class VEXHighStakesEnv(gym.Env):
             # Number of visible goals (range: 0 to 5)
             "visible_goals_count": spaces.Discrete(6)
         })
-        self.action_space = spaces.Discrete(19)
+        self.action_space = spaces.Discrete(15)
 
         self.ignore_randomness = True
         self.save_path = save_path
@@ -102,6 +99,7 @@ class VEXHighStakesEnv(gym.Env):
                      Obstacle(3/6, 4/6, 3.5/144, False),
                      Obstacle(2/6, 3/6, 3.5/144, False),
                      Obstacle(4/6, 3/6, 3.5/144, False)]
+        self.path_planner = PathPlanner(robot_length=self.robot_length/144, robot_width=self.robot_width/144, buffer_radius=buffer/144, max_velocity=80/144, max_accel=100/144)
 
         self.reset()
 
@@ -182,30 +180,34 @@ class VEXHighStakesEnv(gym.Env):
         self.last_action_success = False
 
         # ----------------------------------------------------------------------------- 
-        # PICK_UP_GOAL (Restrictions: not holding a goal; target available and visible)
-        # Drives the robot to the target goal and picks it up.
+        # PICK_UP_NEAREST_GOAL (Restrictions: not holding a goal; at least one goal is visible)
+        # Drives the robot to the nearest visible goal and picks it up.
         # -----------------------------------------------------------------------------
-        if Actions.PICK_UP_GOAL_0.value <= action <= Actions.PICK_UP_GOAL_4.value:
-            specific_idx = action
+        if action == Actions.PICK_UP_NEAREST_GOAL.value:
             penalty = -1
-            if self.holding_goal == 0 and specific_idx < self.mobile_goal_positions.shape[0] and \
-               self.goal_available[specific_idx] and self.is_visible(self.mobile_goal_positions[specific_idx]):
-                old_position = self.robot_position
-                target_position = self.mobile_goal_positions[specific_idx]
-                distance = np.linalg.norm(target_position - old_position)
-                direction = target_position - old_position
-                self.robot_position = target_position
-                self.robot_orientation = np.arctan2(direction[1], direction[0])
-                time_cost = distance / 2 + 0.5
+            if self.holding_goal == 0:
+                candidate = np.where(self.goal_available)[0]
+                visible_candidates = [i for i in candidate if self.is_visible(self.mobile_goal_positions[i])]
+                if visible_candidates:
+                    goals = self.mobile_goal_positions[visible_candidates]
+                    distances = np.linalg.norm(goals - self.robot_position, axis=1)
+                    min_index = np.argmin(distances)
+                    target_position = self.mobile_goal_positions[visible_candidates[min_index]]
+                    old_position = self.robot_position
+                    self.robot_position = target_position
+                    self.robot_orientation = np.arctan2(target_position[1] - old_position[1],
+                                                        target_position[0] - old_position[0])
+                    time_cost = distances[min_index] / 2 + 0.5
 
-                penalty = 0
-                self.last_action_success = True
+                    penalty = 0
+                    self.last_action_success = True
 
-                if np.random.rand() > 0.05 or self.ignore_randomness:
-                    self.holding_goal = 1
-                    self.holding_goal_index = specific_idx
-                    self.goal_available[specific_idx] = False
-                    self.holding_goal_full = 1 if np.sum(self.ring_status == (specific_idx + 2)) == 6 else 0
+                    if np.random.rand() > 0.05 or self.ignore_randomness:
+                        chosen_idx = visible_candidates[min_index]
+                        self.holding_goal = 1
+                        self.holding_goal_index = chosen_idx
+                        self.goal_available[chosen_idx] = False
+                        self.holding_goal_full = 1 if np.sum(self.ring_status == (chosen_idx + 2)) == 6 else 0
 
         # ----------------------------------------------------------------------------- 
         # PICK_UP_NEAREST_RING (Restrictions: holding less than 2 rings; at least one ring is visible)
@@ -285,7 +287,7 @@ class VEXHighStakesEnv(gym.Env):
             direction = target_position - old_position
             distance = np.linalg.norm(target_position - old_position)
 
-            if self.use_realistic_pathing:
+            if self.realistic_pathing:
                 planned_x, planned_y, time = self.calculate_path(self.robot_position / 12.0, target_position / 12.0)
                 time_cost = float(time)
             else:
@@ -339,7 +341,7 @@ class VEXHighStakesEnv(gym.Env):
 
             distance = np.linalg.norm(target_position - old_position)
 
-            if self.use_realistic_pathing:
+            if self.realistic_pathing:
                 planned_x, planned_y, time = self.calculate_path(self.robot_position / 12.0, target_position / 12.0)
                 time_cost = float(time)
             else:
@@ -406,6 +408,8 @@ class VEXHighStakesEnv(gym.Env):
     # Check if a given position is visible from the robot.
     # -----------------------------------------------------------------------------
     def is_visible(self, position):
+        if not self.realistic_vision:
+            return True
         direction = position - self.robot_position
         angle = np.arctan2(direction[1], direction[0])
         relative_angle = (angle - self.robot_orientation + np.pi) % (2 * np.pi) - np.pi
@@ -415,18 +419,24 @@ class VEXHighStakesEnv(gym.Env):
     # Update internal representation of visible goals and rings.
     # -----------------------------------------------------------------------------
     def update_visible_objects(self):
-        visible_goals = np.full((10,), -1, dtype=np.float32)
-        visible_rings = np.full((48,), -1, dtype=np.float32)
-        for i, goal in enumerate(self.mobile_goal_positions):
-            if self.is_visible(goal):
-                visible_goals[i*2:i*2+2] = goal
-        for i, ring in enumerate(self.ring_positions):
-            if self.is_visible(ring):
-                visible_rings[i*2:i*2+2] = ring
-        self.padded_goals = visible_goals
-        self.padded_rings = visible_rings
-        self.visible_rings_count = np.sum(visible_rings != -1) // 2
-        self.visible_goals_count = np.sum(visible_goals != -1) // 2
+        if not self.realistic_vision:
+            self.padded_goals = self.mobile_goal_positions.flatten()
+            self.padded_rings = self.ring_positions.flatten()
+            self.visible_rings_count = self.num_rings
+            self.visible_goals_count = self.num_goals
+        else:
+            visible_goals = np.full((10,), -1, dtype=np.float32)
+            visible_rings = np.full((48,), -1, dtype=np.float32)
+            for i, goal in enumerate(self.mobile_goal_positions):
+                if self.is_visible(goal):
+                    visible_goals[i*2:i*2+2] = goal
+            for i, ring in enumerate(self.ring_positions):
+                if self.is_visible(ring):
+                    visible_rings[i*2:i*2+2] = ring
+            self.padded_goals = visible_goals
+            self.padded_rings = visible_rings
+            self.visible_rings_count = np.sum(visible_rings != -1) // 2
+            self.visible_goals_count = np.sum(visible_goals != -1) // 2
 
     # -----------------------------------------------------------------------------
     # Compute and return the field score based on VEXU skills rules.
@@ -466,9 +476,8 @@ class VEXHighStakesEnv(gym.Env):
     def calculate_path(self, start_point, end_point):
         sp = np.array(start_point, dtype=np.float64)
         ep = np.array(end_point, dtype=np.float64)
-        planner = PathPlanner()
-        sol = planner.Solve(start_point=sp, end_point=ep, obstacles=self.permanent_obstacles)
-        return planner.getPath(sol)
+        sol = self.path_planner.Solve(start_point=sp, end_point=ep, obstacles=self.permanent_obstacles)
+        return self.path_planner.getPath(sol)
 
     def clearAuton(self):
         if not os.path.exists(self.save_path):
@@ -513,7 +522,7 @@ class VEXHighStakesEnv(gym.Env):
 
         if self.last_action_success:
             with open(f'{self.save_path}/auton.csv', 'a') as f:
-                if Actions.PICK_UP_GOAL_0.value <= action <= Actions.PICK_UP_GOAL_4.value:
+                if Actions.PICK_UP_NEAREST_GOAL.value == action:
                     f.write(f"{BACKWARD}, ")
                     for x, y in zip(planned_x, planned_y):
                         f.write(f"{x:.2f},{y:.2f}, ")
@@ -555,13 +564,16 @@ class VEXHighStakesEnv(gym.Env):
         ax.set_yticks([])
         for spine in ax.spines.values():
             spine.set_visible(True)
-        robot = patches.Rectangle(self.robot_position - 0.5, 1, 1, color='blue', alpha=0.25)
+        robot = patches.Rectangle(self.robot_position - np.array([self.robot_length / 24, self.robot_width / 24]), 
+              self.robot_length / 12, self.robot_width / 12, color='blue', alpha=0.25, ec='black', transform=ax.transData)
+        t = patches.transforms.Affine2D().rotate_deg_around(self.robot_position[0], self.robot_position[1], np.degrees(self.robot_orientation)) + ax.transData
+        robot.set_transform(t)
         ax.add_patch(robot)
         center = self.robot_position
         arrow_dx = np.cos(self.robot_orientation)
         arrow_dy = np.sin(self.robot_orientation)
         orientation_arrow = patches.FancyArrow(center[0], center[1], arrow_dx, arrow_dy,
-                                                width=0.1, color='yellow', length_includes_head=True, alpha=0.25)
+                width=0.1, color='yellow', length_includes_head=True, alpha=0.25)
         ax.add_patch(orientation_arrow)
 
         ax.plot(planned_x, planned_y, 'k--', alpha=0.5)
@@ -612,23 +624,26 @@ class VEXHighStakesEnv(gym.Env):
         ax.text(-2.5, 6, f"Total Score: {self.total_score}", color='black', ha='center')
         ax.text(6, 13.25, f'Step {step_num}', color='black', ha='center')
         ax.text(6, -1.25, f'{action_str}', color='black', ha='center')
-        fov_length = 17
-        left_fov_angle = self.robot_orientation + np.pi / 2
-        right_fov_angle = self.robot_orientation - np.pi / 2
-        left_fov_end = self.robot_position + fov_length * np.array([np.cos(left_fov_angle), np.sin(left_fov_angle)])
-        right_fov_end = self.robot_position + fov_length * np.array([np.cos(right_fov_angle), np.sin(right_fov_angle)])
-        ax.plot([self.robot_position[0], left_fov_end[0]], [self.robot_position[1], left_fov_end[1]], 'k--', alpha=0.5)
-        ax.plot([self.robot_position[0], right_fov_end[0]], [self.robot_position[1], right_fov_end[1]], 'k--', alpha=0.5)
-        overlay_polygon = np.array([
-            self.robot_position,
-            left_fov_end,
-            left_fov_end - 100 * np.array([np.cos(self.robot_orientation), np.sin(self.robot_orientation)]),
-            right_fov_end - 100 * np.array([np.cos(self.robot_orientation), np.sin(self.robot_orientation)]),
-            right_fov_end,
-            self.robot_position
-        ])
-        overlay = patches.Polygon(overlay_polygon, closed=True, color='gray', alpha=0.3)
-        ax.add_patch(overlay)
+        
+        if self.realistic_vision:
+            fov_length = 17
+            left_fov_angle = self.robot_orientation + np.pi / 2
+            right_fov_angle = self.robot_orientation - np.pi / 2
+            left_fov_end = self.robot_position + fov_length * np.array([np.cos(left_fov_angle), np.sin(left_fov_angle)])
+            right_fov_end = self.robot_position + fov_length * np.array([np.cos(right_fov_angle), np.sin(right_fov_angle)])
+            ax.plot([self.robot_position[0], left_fov_end[0]], [self.robot_position[1], left_fov_end[1]], 'k--', alpha=0.5)
+            ax.plot([self.robot_position[0], right_fov_end[0]], [self.robot_position[1], right_fov_end[1]], 'k--', alpha=0.5)
+            overlay_polygon = np.array([
+                self.robot_position,
+                left_fov_end,
+                left_fov_end - 100 * np.array([np.cos(self.robot_orientation), np.sin(self.robot_orientation)]),
+                right_fov_end - 100 * np.array([np.cos(self.robot_orientation), np.sin(self.robot_orientation)]),
+                right_fov_end,
+                self.robot_position
+            ])
+            overlay = patches.Polygon(overlay_polygon, closed=True, color='gray', alpha=0.3)
+            ax.add_patch(overlay)
+
 
         plt.savefig(f"{self.steps_save_path}/step_{step_num}.png")
         plt.close()

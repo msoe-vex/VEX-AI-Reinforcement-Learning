@@ -7,3 +7,5 @@ job-script.sh
 train_models_*.sh
 path.png
 */steps
+/artifacts
+/run_agent_results

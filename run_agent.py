@@ -8,9 +8,9 @@ from rl_environment import VEXHighStakesEnv
 # -----------------------------------------------------------------------------
 # Description: Run a PPO agent on the VEXHighStakesEnv.
 # -----------------------------------------------------------------------------
-def run_agent(model_path, save_path, randomize_positions):
+def run_agent(model_path, save_path, randomize_positions, realistic_pathing, realistic_vision):
     # Check if the environment follows Gymnasium API
-    env = VEXHighStakesEnv(save_path=save_path, randomize_positions=randomize_positions)
+    env = VEXHighStakesEnv(save_path=save_path, randomize_positions=randomize_positions, realistic_pathing=realistic_pathing, realistic_vision=realistic_vision)
     check_env(env, warn=True)
 
     model = PPO.load(model_path)
@@ -42,19 +42,23 @@ def run_agent(model_path, save_path, randomize_positions):
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run a PPO agent on the VEXHighStakesEnv.")
-    parser.add_argument('--model_path', type=str, default=None, help='Path to an existing model to load and run')
+    parser.add_argument('--model-path', type=str, default=None, help='Path to an existing model to load and run')
     parser.add_argument('--timesteps', type=int, default=10000, help='Total timesteps for training the model')
     parser.add_argument('--train', action='store_true', help='Train a new model if specified')
     parser.add_argument('--randomize', action='store_true', help='Randomize positions in the environment')
     parser.add_argument('--no-randomize', action='store_false', dest='randomize', help='Do not randomize positions in the environment')
-    parser.set_defaults(randomize=True)
+    parser.add_argument('--realistic-pathing', action='store_true', help='Use realistic pathing')
+    parser.add_argument('--no-realistic-pathing', action='store_false', dest='realistic_pathing', help='Do not use realistic pathing')
+    parser.add_argument('--realistic-vision', action='store_true', help='Use realistic vision')
+    parser.add_argument('--no-realistic-vision', action='store_false', dest='realistic_vision', help='Do not use realistic vision')
+    parser.set_defaults(realistic_pathing=False, realistic_vision=True, randomize=True)
     args = parser.parse_args()
 
     save_path = "run_agent_results"
 
     if args.train:
         # Check if the environment follows Gymnasium API
-        env = VEXHighStakesEnv(save_path=save_path, randomize_positions=args.randomize)
+        env = VEXHighStakesEnv(save_path=save_path, randomize_positions=args.randomize, realistic_pathing=args.realistic_pathing, realistic_vision=args.realistic_vision)
         check_env(env, warn=True)
 
         # Train a PPO agent on the environment
@@ -75,8 +79,8 @@ if __name__ == "__main__":
 
         env.close()
 
-        run_agent(model_save_path, save_path, args.randomize)
+        run_agent(model_save_path, save_path, args.randomize, args.realistic_pathing, args.realistic_vision)
     elif args.model_path:
-        run_agent(args.model_path, save_path, args.randomize)
+        run_agent(args.model_path, save_path, args.randomize, args.realistic_pathing, args.realistic_vision)
     else:
         print("Please specify --train to train a new model or provide a --model_path to run an existing model.")

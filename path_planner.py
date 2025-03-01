@@ -27,7 +27,7 @@ class FirstStateIndex:
 # PathPlanner Class Definitions
 # =============================================================================
 class PathPlanner:
-    def __init__(self):
+    def __init__(self, robot_length, robot_width, buffer_radius, max_velocity, max_accel):
         # -------------------------------------------------------------------------
         # Initialization: Robot and field parameters
         # -------------------------------------------------------------------------
@@ -35,27 +35,31 @@ class PathPlanner:
         self.NUM_OF_ACTS = 2   # Number of MPC actions (vx, vy)
         self.NUM_OF_STATES = 2  # Number of MPC states (px, py)
 
-        self.num_steps = 20
+        default_steps = 30
+
+        self.initialize(default_steps)
+
+        self.robot_length = robot_length
+        self.robot_width = robot_width
+        self.buffer_radius = buffer_radius
+        self.robot_radius = sqrt(self.robot_length**2 + self.robot_width**2) / 2
+
+        self.max_velocity = max_velocity
+        self.max_accel = max_accel
+
+        self.center_circle_radius = 1/6+3.5/144 # Circle surrounding the center obstacles of the field
+    
+    def initialize(self, num_steps):
+        self.num_steps = max(num_steps, 3)
         self.initial_time_step = 0.1
 
-        self.max_time = 30  # Maximum time for the path
-        self.min_time = 0   # Minimum time for the path
+        self.max_time = 30 # Maximum time for the path
+        self.min_time = 0  # Minimum time for the path
         self.time_step_min = self.min_time/self.num_steps  # Minimum time step
-        self.time_step_max = self.max_time/self.num_steps   # Maximum time step
+        self.time_step_max = self.max_time/self.num_steps  # Maximum time step
 
-        self.robot_length = 15/144
-        self.robot_width = 15/144
-        self.buffer_radius = 2/144
-        self.robot_radius = sqrt(self.robot_length**2 + self.robot_width**2) / 2 + self.buffer_radius
 
-        self.max_velocity = 70/144
-        self.max_accel = 70/144
-        self.max_power = 100
-
-        self.center_circle_radius = 1/6+3.5/144
-    
     def intersects(self, x1, y1, x2, y2, r):
-        # ...existing code...
         if(x1**2 + y1**2 < r**2 or x2**2 + y2**2 < r**2):
             return False  # Prevent error when start or end is inside the circle
         if x1 == x2:
@@ -90,13 +94,13 @@ class PathPlanner:
             if d1 < d2:
                 init_x = np.linspace(x1+0.5, x7+0.5, self.num_steps//2)
                 init_y = np.linspace(y1+0.5, y7+0.5, self.num_steps//2)
-                init_x2 = np.linspace(x7+0.5, x2+0.5, self.num_steps//2)
-                init_y2 = np.linspace(y7+0.5, y2+0.5, self.num_steps//2)
+                init_x2 = np.linspace(x7+0.5, x2+0.5, self.num_steps - self.num_steps//2)
+                init_y2 = np.linspace(y7+0.5, y2+0.5, self.num_steps - self.num_steps//2)
             else:
                 init_x = np.linspace(x1+0.5, x8+0.5, self.num_steps//2)
                 init_y = np.linspace(y1+0.5, y8+0.5, self.num_steps//2)
-                init_x2 = np.linspace(x8+0.5, x2+0.5, self.num_steps//2)
-                init_y2 = np.linspace(y8+0.5, y2+0.5, self.num_steps//2)
+                init_x2 = np.linspace(x8+0.5, x2+0.5, self.num_steps - self.num_steps//2)
+                init_y2 = np.linspace(y8+0.5, y2+0.5, self.num_steps - self.num_steps//2)
             init_x = np.concatenate((init_x, init_x2))
             init_y = np.concatenate((init_y, init_y2))
         else:
@@ -105,6 +109,11 @@ class PathPlanner:
         return (init_x, init_y)
 
     def Solve(self, start_point, end_point, obstacles):
+        inches_per_step = 6
+        inches = int(np.linalg.norm(np.array(start_point) - np.array(end_point)) * 144)
+        steps = int(inches / inches_per_step)
+        self.initialize(steps)
+
         # Ensure start_point and end_point are numpy arrays of type float64
         start_point = np.array(start_point, dtype=np.float64)
         end_point = np.array(end_point, dtype=np.float64)
@@ -235,7 +244,7 @@ class PathPlanner:
                 if obstacle.ignore_collision:
                     g_lowerbound_[g_index] = exp(-10)
                 else:
-                    g_lowerbound_[g_index] = (obstacle.radius + self.robot_radius)**2
+                    g_lowerbound_[g_index] = (obstacle.radius + self.robot_radius + self.buffer_radius)**2
                 g_upperbound_[g_index] = exp(10)
                 g_index += 1
 
@@ -272,8 +281,7 @@ class PathPlanner:
             else:
                 ax = ay = 0
             print(f"{i:<5} ({px*144-72:.2f}, {py*144-72:.2f})\t\t({vx*144:.2f}, {vy*144:.2f})\t\t({ax*144:.2f}, {ay*144:.2f})")
-            speed = (sqrt(vx*vx+vy*vy)/self.max_velocity*self.max_power)
-            lemlib_output_string += f"{px*144-72:.3f}, {py*144-72:.3f}, {speed:.3f}\n"
+            lemlib_output_string += f"{px*144-72:.3f}, {py*144-72:.3f}\n"
         print(f"\nFinal cost: {final_cost:.2f}")
         print(f"\nTime step: {optimized_time_step:.2f}")
         print(f"Path time: {optimized_time_step * self.num_steps:.2f}")
@@ -317,11 +325,15 @@ class PathPlanner:
         for obstacle in obstacles:
             danger_x = obstacle.x + (obstacle.radius - 0.005) * np.cos(theta_list)
             danger_y = obstacle.y + (obstacle.radius - 0.005) * np.sin(theta_list)
+            buffer_x = obstacle.x + (obstacle.radius + self.buffer_radius) * np.cos(theta_list)
+            buffer_y = obstacle.y + (obstacle.radius + self.buffer_radius) * np.sin(theta_list)
             if first_obstacle:
                 ax.plot(danger_x, danger_y, 'r-', label='obstacle')
+                ax.plot(buffer_x, buffer_y, 'r--', label='buffer zone', alpha=0.5)
                 first_obstacle = False
             else:
                 ax.plot(danger_x, danger_y, 'r-')
+                ax.plot(buffer_x, buffer_y, 'r--', alpha=0.5)
         radius = self.center_circle_radius; center_x, center_y = 0.5, 0.5
         circle_x = center_x + radius * np.cos(theta_list)
         circle_y = center_y + radius * np.sin(theta_list)
@@ -351,14 +363,23 @@ if __name__ == "__main__":
     for i in range(5):
         obstacles.append(Obstacle(random.uniform(.0, 1), random.uniform(.0, 1), 5.75/144, True))
 
-
     start_point = [random.uniform(0, 1), random.uniform(0, 1)]
     end_point = [random.uniform(0, 1), random.uniform(0, 1)]
 
-    start_point = [0.1, 0.1]
-    end_point = [0.9, 0.9]
+    robot_length = 15/144
+    robot_width = 15/144
+    buffer_radius = 2/144
+    max_velocity = 70/144
+    max_accel = 70/144
 
-    planner = PathPlanner()
-    sol = planner.Solve(start_point=start_point, end_point=end_point, obstacles=obstacles)
-    planner.print_trajectory_details(sol, None)
-    planner.plotResults(sol)
+    planner = PathPlanner(robot_length, robot_width, buffer_radius, max_velocity, max_accel)
+
+    for i in range(100):
+        start_point = [np.random.uniform(0.1, 0.9), np.random.uniform(0.1, 0.9)]
+        end_point = [np.random.uniform(0.1, 0.9), np.random.uniform(0.1, 0.9)]
+        sol = planner.Solve(start_point=start_point, end_point=end_point, obstacles=obstacles)
+
+        planner.print_trajectory_details(sol, None)
+        planner.plotResults(sol)
+
+        input()
