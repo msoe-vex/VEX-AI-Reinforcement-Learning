@@ -65,12 +65,23 @@ def do_action(action_name, path_name=None, extra_params=None):
 
     # Generate code following a path
     if (action_name == 'FORWARD' or action_name == 'BACKWARD') and path_name is not None:
+        # Synchronous or asynchronous?
+        asynch = False
+        if extra_params is not None and len(extra_params) >= 1:
+            # Account for any actions that require asynchronous movement
+            if extra_params[0] == 'PICKUP_GOAL':
+                asynch = True
+        follow_func = 'startFollow' if asynch else 'follow'
+
+        # Direction of the robot?
         reverse = (action_name == 'BACKWARD')
+
+        # Make the code
         ret += r'''
         robotController->setReverse({rev_bool});
         robotController->startHeading({path_name});
-        robotController->follow({path_name});
-'''.format(path_name=path_name, rev_bool=str(reverse).lower())
+        robotController->{follow_func}({path_name});
+'''.format(path_name=path_name, rev_bool=str(reverse).lower(), follow_func=follow_func)
 
     # Used so the robot can see more of the field
     elif action_name == 'TURN_TO':
@@ -91,13 +102,13 @@ def do_action(action_name, path_name=None, extra_params=None):
 '''
 
     # Generate code to grab a ring
-    elif action_name == 'PICKUP_RING':
+    elif action_name == 'PICKUP_RING':  # TODO: Should the path before this be synchronous or async?
         ret += r'''
         intake.spin(forward, 12, volt);
 '''
 
     # Generate code to place a ring
-    elif action_name == 'ADD_RING_TO_GOAL':
+    elif action_name == 'ADD_RING_TO_GOAL':  # TODO: Should the path before this be synchronous or async?
         ret += r'''
         transfer.spin(forward, 12, volt);
 '''
@@ -184,11 +195,19 @@ def parse_unified(lines):
     curr_path_id = 0
     paths = []
     path_actions = []
-    for line in lines:
+    for line, next_line in zip(lines, lines[1:] + [None]):
         # Get action from line
         fields = [f.strip() for f in line.split(',')]
         fields = [f for f in fields if f != '']
         action_name = fields[0]
+
+        # Get info from next action (if we can)
+        if next_line is not None:
+            next_fields = [f.strip() for f in next_line.split(',')]
+            next_fields = [f for f in next_fields if f != '']
+            next_action_name = next_fields[0]
+        else:
+            next_action_name = None
 
         # Do we have a path?
         has_path = (action_name == 'FORWARD' or action_name == 'BACKWARD')
@@ -205,6 +224,7 @@ def parse_unified(lines):
             paths.append(curr_path)
             path_actions.append(action_name)
             call_path_id = curr_path_id
+            call_extra_params = [next_action_name]
 
         # Get extra parameters if they exist
         elif len(fields) > 1:
