@@ -132,14 +132,6 @@ def end_run_method():
     return ret
 
 # -----------------------------------------------------------------------------
-# Description: Generate the code defining what each path is
-# -----------------------------------------------------------------------------
-def create_path(path_name, path, path_action):
-    # TODO: Seems replaced by build_point_path, remove?
-    print(f'TODO - PATH CREATION - {path_name} - {path_action} - {path}')
-    return ''
-
-# -----------------------------------------------------------------------------
 # Description: Generate the end of the file
 # -----------------------------------------------------------------------------
 def end_file(file_name="auton1.h"):
@@ -279,41 +271,6 @@ def parse_unified(lines):
     return output
 
 # -----------------------------------------------------------------------------
-# Description: Process assuming the file is a path output
-# -----------------------------------------------------------------------------
-def parse_path_only(lines):
-    # Generate the beginning of the output file
-    output = begin_file()
-
-    # Start the run() method
-    output += begin_run_method()
-
-    # Single action: Follow path
-    output += do_action('FORWARD', 1)
-
-    # Iterate through source file's lines
-    path = []
-    for line in lines:
-        # Get name and value from line
-        fields = line.strip().split(', ')
-        if len(fields) != 3:
-            break # Probably the last line
-        x, y, _ = fields
-        path.append((float(x), float(y)))
-
-    # End the run() method
-    output += end_run_method()
-
-    # Generate lines defining the paths
-    # TODO: spd_weights
-    output += create_path(path, None, 'Path1', 'FORWARD')
-
-    # Generate the end of the file
-    output += end_file()
-
-    return output
-
-# -----------------------------------------------------------------------------
 # Description: Parse arguments, read the file, process, and output into a new file
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -328,10 +285,7 @@ if __name__ == "__main__":
         lines = f.readlines()
 
     # Process and convert to source code
-    if 'endData' in lines[-1]:
-        output = parse_path_only(lines)
-    else:
-        output = parse_unified(lines)
+    output = parse_unified(lines)
 
     # Write output string to file
     with open(args.output, 'w') as f:
