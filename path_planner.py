@@ -23,10 +23,13 @@ class FirstStateIndex:
         self.vy = self.vx + n - 1
         self.dt = self.vy + n - 1
 
+INCHES_PER_FIELD = 144
+
 # =============================================================================
 # PathPlanner Class Definitions
 # =============================================================================
 class PathPlanner:
+    # All values are based on a scale from 0 to 1, where 1 is the length of the field
     def __init__(self, robot_length, robot_width, buffer_radius, max_velocity, max_accel):
         # -------------------------------------------------------------------------
         # Initialization: Robot and field parameters
@@ -47,7 +50,7 @@ class PathPlanner:
         self.max_velocity = max_velocity
         self.max_accel = max_accel
 
-        self.center_circle_radius = 1/6+3.5/144 # Circle surrounding the center obstacles of the field
+        self.center_circle_radius = 1/6+3.5/INCHES_PER_FIELD # Circle surrounding the center obstacles of the field
     
     def initialize(self, num_steps):
         self.num_steps = max(num_steps, 3)
@@ -110,7 +113,7 @@ class PathPlanner:
 
     def Solve(self, start_point, end_point, obstacles):
         inches_per_step = 6
-        inches = int(np.linalg.norm(np.array(start_point) - np.array(end_point)) * 144)
+        inches = int(np.linalg.norm(np.array(start_point) - np.array(end_point)) * INCHES_PER_FIELD)
         steps = int(inches / inches_per_step)
         self.initialize(steps)
 
@@ -280,8 +283,8 @@ class PathPlanner:
                 ay = (next_vy - vy) / optimized_time_step 
             else:
                 ax = ay = 0
-            print(f"{i:<5} ({px*144-72:.2f}, {py*144-72:.2f})\t\t({vx*144:.2f}, {vy*144:.2f})\t\t({ax*144:.2f}, {ay*144:.2f})")
-            lemlib_output_string += f"{px*144-72:.3f}, {py*144-72:.3f}\n"
+            print(f"{i:<5} ({px*INCHES_PER_FIELD-72:.2f}, {py*INCHES_PER_FIELD-72:.2f})\t\t({vx*INCHES_PER_FIELD:.2f}, {vy*INCHES_PER_FIELD:.2f})\t\t({ax*INCHES_PER_FIELD:.2f}, {ay*INCHES_PER_FIELD:.2f})")
+            lemlib_output_string += f"{px*INCHES_PER_FIELD-72:.3f}, {py*INCHES_PER_FIELD-72:.3f}\n"
         print(f"\nFinal cost: {final_cost:.2f}")
         print(f"\nTime step: {optimized_time_step:.2f}")
         print(f"Path time: {optimized_time_step * self.num_steps:.2f}")
@@ -356,21 +359,21 @@ class PathPlanner:
 # =============================================================================
 
 if __name__ == "__main__":
-    obstacles = [Obstacle(3/6, 2/6, 3.5/144, False),
-                Obstacle(3/6, 4/6, 3.5/144, False),
-                Obstacle(2/6, 3/6, 3.5/144, False),
-                Obstacle(4/6, 3/6, 3.5/144, False)]
+    obstacles = [Obstacle(3/6, 2/6, 3.5/INCHES_PER_FIELD, False),
+                Obstacle(3/6, 4/6, 3.5/INCHES_PER_FIELD, False),
+                Obstacle(2/6, 3/6, 3.5/INCHES_PER_FIELD, False),
+                Obstacle(4/6, 3/6, 3.5/INCHES_PER_FIELD, False)]
     for i in range(5):
-        obstacles.append(Obstacle(random.uniform(.0, 1), random.uniform(.0, 1), 5.75/144, True))
+        obstacles.append(Obstacle(random.uniform(.0, 1), random.uniform(.0, 1), 5.75/INCHES_PER_FIELD, True))
 
     start_point = [random.uniform(0, 1), random.uniform(0, 1)]
     end_point = [random.uniform(0, 1), random.uniform(0, 1)]
 
-    robot_length = 15/144
-    robot_width = 15/144
-    buffer_radius = 2/144
-    max_velocity = 70/144
-    max_accel = 70/144
+    robot_length = 15/INCHES_PER_FIELD
+    robot_width = 15/INCHES_PER_FIELD
+    buffer_radius = 2/INCHES_PER_FIELD
+    max_velocity = 70/INCHES_PER_FIELD
+    max_accel = 70/INCHES_PER_FIELD
 
     planner = PathPlanner(robot_length, robot_width, buffer_radius, max_velocity, max_accel)
 
