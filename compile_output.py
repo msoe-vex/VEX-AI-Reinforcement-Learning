@@ -1,4 +1,5 @@
 import argparse
+import numpy as np
 
 # -----------------------------------------------------------------------------
 # Description: Generate the beginning of the file
@@ -32,14 +33,15 @@ class {name} {{
 # -----------------------------------------------------------------------------
 # Description: Generate the beginning of the run() method
 # -----------------------------------------------------------------------------
-def begin_run_method(drive_names=["leftDrive", "rightDrive", "centerDrive"], brake_styles=["brake", "brake", "brake"]):
+def begin_run_method(initial_pos=[0, 0], initial_angle=0, \
+                     drive_names=["leftDrive", "rightDrive", "centerDrive"], \
+                     brake_styles=["brake", "brake", "brake"]):
     # Start run method definition
     ret = r'''    static void run() {
 '''
 
     # Set tracker position
-    # TODO: Initial position?
-    ret += set_position()
+    ret += set_position(x=initial_pos[0], y=initial_pos[1], angle=initial_angle)
 
     # Set stopping brake styles
     num_drives = len(drive_names)
@@ -52,8 +54,9 @@ def begin_run_method(drive_names=["leftDrive", "rightDrive", "centerDrive"], bra
 # Description: Generate code setting the position for the tracker
 # -----------------------------------------------------------------------------
 def set_position(x=0, y=0, angle=0, tracker_name="tracker"):
-    ret = r'''        {tracker}.setPosition({x}, {y}, {angle});
-'''.format(tracker=tracker_name, x=x, y=y, angle=angle)
+    new_x, new_y = x * 144 / 12 - 72, y * 144 / 12 - 72
+    ret = r'''        {tracker}.setPosition({x:.2f}, {y:.2f}, {angle:.2f});
+'''.format(tracker=tracker_name, x=new_x, y=new_y, angle=angle)
     return ret
 
 # -----------------------------------------------------------------------------
@@ -188,8 +191,35 @@ def parse_unified(lines):
     # Generate the beginning of the output file
     output = begin_file()
 
+    # Find initial position and heading
+    initial_pos = None
+    initial_angle = None
+    for line in lines:
+        # Get action from line
+        fields = [f.strip() for f in line.split(',')]
+        fields = [f for f in fields if f != '']
+        action_name = fields[0]
+
+        # Extract points
+        if action_name == 'FORWARD' or action_name == 'BACKWARD':
+            start_idx = 1
+            while start_idx <= len(fields) - 2:
+                curr_pos = [float(n) for n in fields[start_idx:start_idx+2]]
+                if initial_pos is None:
+                    initial_pos = curr_pos
+                else:
+                    if curr_pos[0] != initial_pos[0] or curr_pos[1] != initial_pos[1]:
+                        initial_angle_rad = np.atan2(curr_pos[1] - initial_pos[1], curr_pos[0] - initial_pos[0])
+                        initial_angle = initial_angle_rad * 180 / np.pi
+                        break
+                start_idx += 2
+    if initial_pos is None:
+        initial_pos = [2.67, 1]
+    if initial_angle is None:
+        initial_angle = 83
+
     # Start the run() method
-    output += begin_run_method()
+    output += begin_run_method(initial_pos=initial_pos, initial_angle=initial_angle)
 
     # Iterate through source file's lines
     curr_path_id = 0
