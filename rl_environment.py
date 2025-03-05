@@ -35,7 +35,7 @@ BUFFER_RADIUS = 2 # buffer around robot for collision detection
 NUM_WALL_STAKES = 4
 NUM_GOALS = 5
 NUM_RINGS = 24
-TIME_LIMIT = 120
+TIME_LIMIT = 60
 DEFAULT_PENALTY = -1
 
 # =============================================================================
@@ -348,36 +348,41 @@ class VEXHighStakesEnv(gym.Env):
         # Drives the robot to the target corner and adjusts orientation to face the corner diagonally.
         # -----------------------------------------------------------------------------
         elif Actions.DRIVE_TO_CORNER_BL.value <= action <= Actions.DRIVE_TO_CORNER_TR.value:
-            old_position = self.robot_position
-            target_position = self.corner_positions[action - Actions.DRIVE_TO_CORNER_BL.value]
-            distance = np.linalg.norm(target_position - old_position)
-
-            if self.realistic_pathing:
-                planned_x, planned_y, time = self.calculate_path(self.robot_position / ENV_FIELD_SIZE, target_position / ENV_FIELD_SIZE)
-                time_cost = float(time)
-            else:
-                time_cost = distance / 2 + 0.1
-            
-            if distance == 0:
-                penalty = DEFAULT_PENALTY
+            if (self.robot_num == 1 and action in [Actions.DRIVE_TO_CORNER_BL.value, Actions.DRIVE_TO_CORNER_BR.value]) or \
+               (self.robot_num == 2 and action in [Actions.DRIVE_TO_CORNER_TL.value, Actions.DRIVE_TO_CORNER_TR.value]):
+                penalty = -1000
                 self.last_action_success = False
             else:
-                self.robot_position = target_position
-                if action == Actions.DRIVE_TO_CORNER_TL.value:
-                    self.robot_orientation = 3 * np.pi / 4  # Facing top-left
-                elif action == Actions.DRIVE_TO_CORNER_TR.value:
-                    self.robot_orientation = np.pi / 4  # Facing top-right
-                elif action == Actions.DRIVE_TO_CORNER_BL.value:
-                    self.robot_orientation = 5 * np.pi / 4  # Facing bottom-left
-                elif action == Actions.DRIVE_TO_CORNER_BR.value:
-                    self.robot_orientation = 7 * np.pi / 4  # Facing bottom-right
-                self.last_action_success = True
-            
-            for goal_pos in self.mobile_goal_positions:
-                if np.linalg.norm(goal_pos - target_position) < 0.5:
+                old_position = self.robot_position
+                target_position = self.corner_positions[action - Actions.DRIVE_TO_CORNER_BL.value]
+                distance = np.linalg.norm(target_position - old_position)
+
+                if self.realistic_pathing:
+                    planned_x, planned_y, time = self.calculate_path(self.robot_position / ENV_FIELD_SIZE, target_position / ENV_FIELD_SIZE)
+                    time_cost = float(time)
+                else:
+                    time_cost = distance / 2 + 0.1
+                
+                if distance == 0:
                     penalty = DEFAULT_PENALTY
                     self.last_action_success = False
-                    break
+                else:
+                    self.robot_position = target_position
+                    if action == Actions.DRIVE_TO_CORNER_TL.value:
+                        self.robot_orientation = 3 * np.pi / 4  # Facing top-left
+                    elif action == Actions.DRIVE_TO_CORNER_TR.value:
+                        self.robot_orientation = np.pi / 4  # Facing top-right
+                    elif action == Actions.DRIVE_TO_CORNER_BL.value:
+                        self.robot_orientation = 5 * np.pi / 4  # Facing bottom-left
+                    elif action == Actions.DRIVE_TO_CORNER_BR.value:
+                        self.robot_orientation = 7 * np.pi / 4  # Facing bottom-right
+                    self.last_action_success = True
+                
+                for goal_pos in self.mobile_goal_positions:
+                    if np.linalg.norm(goal_pos - target_position) < 0.5:
+                        penalty = DEFAULT_PENALTY
+                        self.last_action_success = False
+                        break
 
         # ----------------------------------------------------------------------------- 
         # ADD_RING_TO_GOAL (Restrictions: robot has a goal; robot has rings)
@@ -404,32 +409,37 @@ class VEXHighStakesEnv(gym.Env):
         # Drives the robot to the target wall stake.
         # -----------------------------------------------------------------------------
         elif Actions.DRIVE_TO_WALL_STAKE_L.value <= action <= Actions.DRIVE_TO_WALL_STAKE_T.value:
-            stake_idx = action - Actions.DRIVE_TO_WALL_STAKE_L.value
-            old_position = self.robot_position
-            target_position = self.wall_stakes_drive_positions[stake_idx]
-
-            distance = np.linalg.norm(target_position - old_position)
-
-            if self.realistic_pathing:
-                planned_x, planned_y, time = self.calculate_path(self.robot_position / ENV_FIELD_SIZE, target_position / ENV_FIELD_SIZE)
-                time_cost = float(time)
-            else:
-                time_cost = distance / 2 + 0.1
-
-            if distance == 0:
-                penalty = DEFAULT_PENALTY
+            if(self.robot_num == 1 and action in [Actions.DRIVE_TO_WALL_STAKE_R.value, Actions.DRIVE_TO_WALL_STAKE_B.value]) or \
+                (self.robot_num == 2 and action in [Actions.DRIVE_TO_WALL_STAKE_L.value, Actions.DRIVE_TO_WALL_STAKE_T.value]):
+                penalty = -1000
                 self.last_action_success = False
             else:
-                self.robot_position = target_position
-                if action == Actions.DRIVE_TO_WALL_STAKE_R.value:
-                    self.robot_orientation = 0  # Facing right
-                elif action == Actions.DRIVE_TO_WALL_STAKE_L.value:
-                    self.robot_orientation = np.pi  # Facing left
-                elif action == Actions.DRIVE_TO_WALL_STAKE_T.value:
-                    self.robot_orientation = np.pi / 2  # Facing up
-                elif action == Actions.DRIVE_TO_WALL_STAKE_B.value:
-                    self.robot_orientation = -np.pi / 2  # Facing down
-                self.last_action_success = True
+                stake_idx = action - Actions.DRIVE_TO_WALL_STAKE_L.value
+                old_position = self.robot_position
+                target_position = self.wall_stakes_drive_positions[stake_idx]
+
+                distance = np.linalg.norm(target_position - old_position)
+
+                if self.realistic_pathing:
+                    planned_x, planned_y, time = self.calculate_path(self.robot_position / ENV_FIELD_SIZE, target_position / ENV_FIELD_SIZE)
+                    time_cost = float(time)
+                else:
+                    time_cost = distance / 2 + 0.1
+
+                if distance == 0:
+                    penalty = DEFAULT_PENALTY
+                    self.last_action_success = False
+                else:
+                    self.robot_position = target_position
+                    if action == Actions.DRIVE_TO_WALL_STAKE_R.value:
+                        self.robot_orientation = 0  # Facing right
+                    elif action == Actions.DRIVE_TO_WALL_STAKE_L.value:
+                        self.robot_orientation = np.pi  # Facing left
+                    elif action == Actions.DRIVE_TO_WALL_STAKE_T.value:
+                        self.robot_orientation = np.pi / 2  # Facing up
+                    elif action == Actions.DRIVE_TO_WALL_STAKE_B.value:
+                        self.robot_orientation = -np.pi / 2  # Facing down
+                    self.last_action_success = True
 
         # ----------------------------------------------------------------------------- 
         # ADD_RING_TO_WALL_STAKE (Restrictions: robot is at and facing a stake; robot has rings; stake is not full)
