@@ -93,10 +93,33 @@ class VEXHighStakesEnv(gym.Env):
         self.save_path = save_path
         self.steps_save_path = f"{save_path}/steps"
 
-        self.permanent_obstacles = [Obstacle(3/6, 2/6, 3.5/INCHES_PER_FIELD, False),
-                     Obstacle(3/6, 4/6, 3.5/INCHES_PER_FIELD, False),
-                     Obstacle(2/6, 3/6, 3.5/INCHES_PER_FIELD, False),
-                     Obstacle(4/6, 3/6, 3.5/INCHES_PER_FIELD, False)]
+        self.permanent_obstacles = [
+                    Obstacle(3/6, 2/6, 3.5/INCHES_PER_FIELD, False), # Bottom
+                    Obstacle(3/6, 4/6, 3.5/INCHES_PER_FIELD, False), # Top
+                    Obstacle(2/6, 3/6, 3.5/INCHES_PER_FIELD, False), # Left
+                    Obstacle(4/6, 3/6, 3.5/INCHES_PER_FIELD, False) # Right
+                    ]
+        self.climb_positions = np.array([
+            [(self.permanent_obstacles[0].x + self.permanent_obstacles[2].x) / 2 * ENV_FIELD_SIZE,
+             (self.permanent_obstacles[0].y + self.permanent_obstacles[2].y) / 2 * ENV_FIELD_SIZE],
+            [(self.permanent_obstacles[0].x + self.permanent_obstacles[3].x) / 2 * ENV_FIELD_SIZE,
+             (self.permanent_obstacles[0].y + self.permanent_obstacles[3].y) / 2 * ENV_FIELD_SIZE],
+            [(self.permanent_obstacles[1].x + self.permanent_obstacles[2].x) / 2 * ENV_FIELD_SIZE,
+             (self.permanent_obstacles[1].y + self.permanent_obstacles[2].y) / 2 * ENV_FIELD_SIZE],
+            [(self.permanent_obstacles[1].x + self.permanent_obstacles[3].x) / 2 * ENV_FIELD_SIZE,
+             (self.permanent_obstacles[1].y + self.permanent_obstacles[3].y) / 2 * ENV_FIELD_SIZE]
+        ])
+        self.initial_climb_positions = self.climb_positions + np.array([
+            [np.cos(np.arctan2(self.permanent_obstacles[2].y - self.permanent_obstacles[1].y, self.permanent_obstacles[2].x - self.permanent_obstacles[1].x)) * 1,
+             np.sin(np.arctan2(self.permanent_obstacles[2].y - self.permanent_obstacles[1].y, self.permanent_obstacles[2].x - self.permanent_obstacles[1].x)) * 1],
+            [np.cos(np.arctan2(self.permanent_obstacles[3].y - self.permanent_obstacles[1].y, self.permanent_obstacles[3].x - self.permanent_obstacles[1].x)) * 1,
+             np.sin(np.arctan2(self.permanent_obstacles[3].y - self.permanent_obstacles[1].y, self.permanent_obstacles[3].x - self.permanent_obstacles[1].x)) * 1],
+            [np.cos(np.arctan2(self.permanent_obstacles[2].y - self.permanent_obstacles[0].y, self.permanent_obstacles[2].x - self.permanent_obstacles[0].x)) * 1,
+             np.sin(np.arctan2(self.permanent_obstacles[2].y - self.permanent_obstacles[0].y, self.permanent_obstacles[2].x - self.permanent_obstacles[0].x)) * 1],
+            [np.cos(np.arctan2(self.permanent_obstacles[3].y - self.permanent_obstacles[0].y, self.permanent_obstacles[3].x - self.permanent_obstacles[0].x)) * 1,
+             np.sin(np.arctan2(self.permanent_obstacles[3].y - self.permanent_obstacles[0].y, self.permanent_obstacles[3].x - self.permanent_obstacles[0].x)) * 1]
+        ])
+
         self.path_planner = PathPlanner(
             robot_length=self.robot_length/INCHES_PER_FIELD,
             robot_width=self.robot_width/INCHES_PER_FIELD,
@@ -255,16 +278,33 @@ class VEXHighStakesEnv(gym.Env):
         # Sets the climbed flag to True and ends the episode.
         # -----------------------------------------------------------------------------
         elif action == Actions.CLIMB.value:
-            if self.time_remaining > 5:
+            old_position = robot_position
+            target_position = self.climb_positions[np.argmin(np.linalg.norm(self.climb_positions - self.robot_position, axis=1))]
+            
+            distance = np.linalg.norm(target_position - old_position)
+
+            if self.realistic_pathing:
+                planned_x, planned_y, time = self.calculate_path(robot_position / ENV_FIELD_SIZE, target_position / ENV_FIELD_SIZE)
+                path_time = float(time)
+            else:
+                path_time = distance / 2 + 0.1
+
+            time_needed = path_time + 1
+
+            if self.time_remaining > time_needed:
                 penalty = 0
                 if self.time_remaining > 20:
-                    penalty = -1000
+                    penalty = -1000 # Too much time remaining
                 
                 self.climbed = True
                 self.last_action_success = True
+                robot_position = target_position
+                direction_to_center = np.array([ENV_FIELD_SIZE / 2, ENV_FIELD_SIZE / 2]) - target_position
+                robot_orientation = np.arctan2(direction_to_center[1], direction_to_center[0])
+                time_cost = self.time_remaining
             else:
-                penalty = DEFAULT_PENALTY
-            time_cost = self.time_remaining
+                penalty = DEFAULT_PENALTY # Not enough time to climb
+                time_cost = path_time
 
         # ----------------------------------------------------------------------------- 
         # DROP_GOAL (Restrictions: holding goal, area around bot is clear)
@@ -299,7 +339,6 @@ class VEXHighStakesEnv(gym.Env):
         elif Actions.DRIVE_TO_CORNER_BL.value <= action <= Actions.DRIVE_TO_CORNER_TR.value:
             old_position = robot_position
             target_position = self.corner_positions[action - Actions.DRIVE_TO_CORNER_BL.value]
-            direction = target_position - old_position
             distance = np.linalg.norm(target_position - old_position)
 
             if self.realistic_pathing:
@@ -358,7 +397,6 @@ class VEXHighStakesEnv(gym.Env):
             stake_idx = action - Actions.DRIVE_TO_WALL_STAKE_L.value
             old_position = robot_position
             target_position = self.wall_stakes_positions[stake_idx]
-            direction = target_position - old_position
 
             distance = np.linalg.norm(target_position - old_position)
 
@@ -576,13 +614,29 @@ class VEXHighStakesEnv(gym.Env):
         print(f"Step: {step_num:<3} | {action_str:<25} | {('Valid' if self.last_action_success else 'Invalid'):<8} | Reward: {reward:<5} | Score: {self.total_score:<3} | Time: {self.time_remaining:<7.2f}")
         
         # Generate path
-        if not np.array_equal(self.robot_position, self.last_robot_position):
-            planned_x, planned_y, time = self.calculate_path(self.last_robot_position / ENV_FIELD_SIZE, self.robot_position / ENV_FIELD_SIZE)
-            planned_x *= ENV_FIELD_SIZE
-            planned_y *= ENV_FIELD_SIZE
+        if action == Actions.CLIMB.value and self.last_action_success:
+            # Path from last robot position to nearest initial climb position
+            nearest_initial_climb_position = self.initial_climb_positions[np.argmin(np.linalg.norm(self.initial_climb_positions - self.robot_position, axis=1))]
+            planned_x1, planned_y1, time1 = self.calculate_path(self.last_robot_position / ENV_FIELD_SIZE, nearest_initial_climb_position / ENV_FIELD_SIZE)
+            planned_x1 *= ENV_FIELD_SIZE
+            planned_y1 *= ENV_FIELD_SIZE
+
+            # Path from initial climb position to corresponding climb position
+            corresponding_climb_position = self.climb_positions[np.argmin(np.linalg.norm(self.initial_climb_positions - nearest_initial_climb_position, axis=1))]
+            planned_x2, planned_y2, time2 = self.calculate_path(nearest_initial_climb_position / ENV_FIELD_SIZE, corresponding_climb_position / ENV_FIELD_SIZE)
+            planned_x2 *= ENV_FIELD_SIZE
+            planned_y2 *= ENV_FIELD_SIZE
+
+            planned_x = np.concatenate((planned_x1, planned_x2))
+            planned_y = np.concatenate((planned_y1, planned_y2))
         else:
-            planned_x = [self.robot_position[0]]
-            planned_y = [self.robot_position[1]]
+            if not np.array_equal(self.robot_position, self.last_robot_position):
+                planned_x, planned_y, time = self.calculate_path(self.last_robot_position / ENV_FIELD_SIZE, self.robot_position / ENV_FIELD_SIZE)
+                planned_x *= ENV_FIELD_SIZE
+                planned_y *= ENV_FIELD_SIZE
+            else:
+                planned_x = [self.robot_position[0]]
+                planned_y = [self.robot_position[1]]
 
         # Add data to CSV
         FORWARD = "FORWARD"
@@ -603,7 +657,15 @@ class VEXHighStakesEnv(gym.Env):
                     f.write(f"\n")
                     f.write(f"PICKUP_RING\n")
                 if Actions.CLIMB.value == action:
-                    f.write("CLIMB\n")
+                    # Write paths to file
+                    f.write(f"{FORWARD}, ")
+                    for x, y in zip(planned_x1, planned_y1):
+                        f.write(f"{x:.2f},{y:.2f}, ")
+                    f.write(f"\n")
+                    f.write(f"{FORWARD}, ")
+                    for x, y in zip(planned_x2, planned_y2):
+                        f.write(f"{x:.2f},{y:.2f}, ")
+                    f.write(f"\n")
                 if Actions.DROP_GOAL.value == action:
                     f.write("DROP_GOAL\n")
                 if Actions.DRIVE_TO_CORNER_BL.value <= action <= Actions.DRIVE_TO_CORNER_TR.value:
