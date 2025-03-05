@@ -74,6 +74,8 @@ def do_action(action_name, path_name=None, extra_params=None):
             # Account for any actions that require asynchronous movement
             if extra_params[0] == 'PICKUP_GOAL':
                 asynch = True
+            elif extra_params[0] == 'CLIMB':
+                asynch = True
         follow_func = 'startFollow' if asynch else 'follow'
 
         # Direction of the robot?
@@ -115,6 +117,16 @@ def do_action(action_name, path_name=None, extra_params=None):
         ret += r'''
         transfer.spin(forward, 12, volt);
 '''
+
+    # Generate code for the robot to climb
+    # TODO: Should we get the RL output to generate a path to wherever we need to go to climb before this?
+    elif action_name == 'CLIMB' and extra_params is not None and len(extra_params) >= 1:
+        ret += r'''
+        ladyBrownToPosition(250);
+        robotController->follow({path_name});
+        ladyBrownToPosition(200);
+        robotController->waitForCompletion();
+'''.format(path_name=extra_params[0])
 
     # Currently unsupported action, print so user knows
     else:
@@ -247,6 +259,10 @@ def parse_unified(lines):
             path_actions.append(action_name)
             call_path_id = curr_path_id
             call_extra_params = [next_action_name]
+        
+        # Pass path name to CLIMB
+        elif action_name == 'CLIMB':
+            call_extra_params = None if curr_path_id == 0 else [f'Path{curr_path_id}']
 
         # Get extra parameters if they exist
         elif len(fields) > 1:
