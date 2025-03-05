@@ -22,6 +22,7 @@ while [[ "$#" -gt 0 ]]; do
         --no-realistic-pathing) REALISTIC_PATHING="--no-realistic-pathing"; shift ;;
         --realistic-vision) REALISTIC_VISION="--realistic-vision"; shift ;;
         --no-realistic-vision) REALISTIC_VISION="--no-realistic-vision"; shift ;;
+        --robot-num) ROBOT_NUM="$2"; shift 2 ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
 done
@@ -39,4 +40,5 @@ python train_models.py \
     --num-layers ${NUM_LAYERS:-2} \
     --num-nodes ${NUM_NODES:-64} \
     ${REALISTIC_PATHING:-"--no-realistic-pathing"} \
-    ${REALISTIC_VISION:-"--realistic-vision"}
+    ${REALISTIC_VISION:-"--realistic-vision"} \
+    --robot-num ${ROBOT_NUM:-0}
