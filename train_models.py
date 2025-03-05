@@ -17,8 +17,8 @@ from rl_environment import VEXHighStakesEnv
 # Evaluate Agent
 # Runs one episode with the trained model and returns its total score.
 # ---------------------------------------------------------------------------
-def evaluate_agent(model, env_class, save_path, randomize_positions, realistic_pathing, realistic_vision):
-    env = env_class(save_path, randomize_positions=randomize_positions, realistic_pathing=realistic_pathing, realistic_vision=realistic_vision)
+def evaluate_agent(model, env_class, save_path, randomize_positions, realistic_pathing, realistic_vision, robot_num):
+    env = env_class(save_path, randomize_positions=randomize_positions, realistic_pathing=realistic_pathing, realistic_vision=realistic_vision, robot_num=robot_num)
     obs, _ = env.reset()
     done = False
     while not done:
@@ -32,8 +32,8 @@ def evaluate_agent(model, env_class, save_path, randomize_positions, realistic_p
 # Train Agent
 # Trains a single agent and saves the best model.
 # ---------------------------------------------------------------------------
-def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, discount_factor, model_path, randomize_positions, num_layers, num_nodes, realistic_pathing, realistic_vision):
-    env = env_class(save_path, randomize_positions=randomize_positions, realistic_pathing=realistic_pathing, realistic_vision=realistic_vision)
+def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, discount_factor, model_path, randomize_positions, num_layers, num_nodes, realistic_pathing, realistic_vision, robot_num):
+    env = env_class(save_path, randomize_positions=randomize_positions, realistic_pathing=realistic_pathing, realistic_vision=realistic_vision, robot_num=robot_num)
     check_env(env, warn=True)
     device = th.device("cuda" if th.cuda.is_available() else "cpu")
     
@@ -57,14 +57,14 @@ def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, d
     while n_steps < total_timesteps:
         model.learn(total_timesteps=check_steps, reset_num_timesteps=False)
         n_steps = model.num_timesteps - initial_timesteps
-        score = evaluate_agent(model, env_class, save_path, randomize_positions, realistic_pathing, realistic_vision)
+        score = evaluate_agent(model, env_class, save_path, randomize_positions, realistic_pathing, realistic_vision, robot_num)
         print(f"Score: {score}")
         if score > best_score:
             best_score = score
             model.save(save_path)
             print(f"Model saved to {save_path}.")
         print(f"Best Score: {best_score} | {n_steps}/{total_timesteps} timesteps")
-    score = evaluate_agent(model, env_class, save_path, randomize_positions, realistic_pathing, realistic_vision)
+    score = evaluate_agent(model, env_class, save_path, randomize_positions, realistic_pathing, realistic_vision, robot_num)
     model.save(save_path+"_final")
     print("Training complete.")
     print(f"Final model saved to {save_path}_final with score {score}")
@@ -89,6 +89,7 @@ if __name__ == "__main__":
     parser.add_argument('--no-realistic-pathing', action='store_false', dest='realistic_pathing', help='Do not use realistic pathing')
     parser.add_argument('--realistic-vision', action='store_true', help='Use realistic vision')
     parser.add_argument('--no-realistic-vision', action='store_false', dest='realistic_vision', help='Do not use realistic vision')
+    parser.add_argument('--robot-num', type=int, choices=[0, 1, 2], required=True, help='Specify which robot to use (0-2)')
     parser.set_defaults(realistic_pathing=False, realistic_vision=True, randomize=True)
     args = parser.parse_args()
 
@@ -104,11 +105,12 @@ if __name__ == "__main__":
     print(f"Layers: {args.num_layers}, Nodes: {args.num_nodes}")
     print(f"Use realistic pathing: {args.realistic_pathing}")
     print(f"Use realistic vision: {args.realistic_vision}")
+    print(f"Robot number: {args.robot_num}")
 
     processes = []
     for i in range(args.agents):
         save_path = f"job_results/job_{args.job_id}/models/model_{i}"
-        p = Process(target=train_agent, args=(VEXHighStakesEnv, args.timesteps, save_path, args.entropy, args.learning_rate, args.discount_factor, args.model_path, args.randomize, args.num_layers, args.num_nodes, args.realistic_pathing, args.realistic_vision))
+        p = Process(target=train_agent, args=(VEXHighStakesEnv, args.timesteps, save_path, args.entropy, args.learning_rate, args.discount_factor, args.model_path, args.randomize, args.num_layers, args.num_nodes, args.realistic_pathing, args.realistic_vision, args.robot_num))
         p.start()
         processes.append(p)
 

@@ -8,9 +8,9 @@ from rl_environment import VEXHighStakesEnv
 # -----------------------------------------------------------------------------
 # Description: Run a PPO agent on the VEXHighStakesEnv.
 # -----------------------------------------------------------------------------
-def run_agent(model_path, save_path, randomize_positions, realistic_pathing, realistic_vision):
+def run_agent(model_path, save_path, randomize_positions, realistic_pathing, realistic_vision, robot_num):
     # Check if the environment follows Gymnasium API
-    env = VEXHighStakesEnv(save_path=save_path, randomize_positions=randomize_positions, realistic_pathing=realistic_pathing, realistic_vision=realistic_vision)
+    env = VEXHighStakesEnv(save_path=save_path, randomize_positions=randomize_positions, realistic_pathing=realistic_pathing, realistic_vision=realistic_vision, robot_num=robot_num)
     check_env(env, warn=True)
 
     model = PPO.load(model_path)
@@ -51,6 +51,7 @@ if __name__ == "__main__":
     parser.add_argument('--no-realistic-pathing', action='store_false', dest='realistic_pathing', help='Do not use realistic pathing')
     parser.add_argument('--realistic-vision', action='store_true', help='Use realistic vision')
     parser.add_argument('--no-realistic-vision', action='store_false', dest='realistic_vision', help='Do not use realistic vision')
+    parser.add_argument('--robot-num', type=int, choices=[0, 1, 2], default=0, help='Specify which robot to use (0-2)')
     parser.set_defaults(realistic_pathing=False, realistic_vision=True, randomize=True)
     args = parser.parse_args()
 
@@ -58,7 +59,7 @@ if __name__ == "__main__":
 
     if args.train:
         # Check if the environment follows Gymnasium API
-        env = VEXHighStakesEnv(save_path=save_path, randomize_positions=args.randomize, realistic_pathing=args.realistic_pathing, realistic_vision=args.realistic_vision)
+        env = VEXHighStakesEnv(save_path=save_path, randomize_positions=args.randomize, realistic_pathing=args.realistic_pathing, realistic_vision=args.realistic_vision, robot_num=args.robot_num)
         check_env(env, warn=True)
 
         # Train a PPO agent on the environment
@@ -79,8 +80,8 @@ if __name__ == "__main__":
 
         env.close()
 
-        run_agent(model_save_path, save_path, args.randomize, args.realistic_pathing, args.realistic_vision)
+        run_agent(model_save_path, save_path, args.randomize, args.realistic_pathing, args.realistic_vision, args.robot_num)
     elif args.model_path:
-        run_agent(args.model_path, save_path, args.randomize, args.realistic_pathing, args.realistic_vision)
+        run_agent(args.model_path, save_path, args.randomize, args.realistic_pathing, args.realistic_vision, args.robot_num)
     else:
         print("Please specify --train to train a new model or provide a --model_path to run an existing model.")

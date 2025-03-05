@@ -5,9 +5,9 @@ from rl_environment import VEXHighStakesEnv, Actions
 # -----------------------------------------------------------------------------
 # Description: Run the VEXHighStakesEnv based on a list of custom actions.
 # -----------------------------------------------------------------------------
-def run_instructions(instructions_path, save_path, randomize_positions, realistic_pathing, realistic_vision):
+def run_instructions(instructions_path, save_path, randomize_positions, realistic_pathing, realistic_vision, robot_num):
     # Check if the environment follows Gymnasium API
-    env = VEXHighStakesEnv(save_path=save_path, randomize_positions=randomize_positions, realistic_pathing=realistic_pathing, realistic_vision=realistic_vision)
+    env = VEXHighStakesEnv(save_path=save_path, randomize_positions=randomize_positions, realistic_pathing=realistic_pathing, realistic_vision=realistic_vision, robot_num=robot_num)
 
     done = False
     obs, _ = env.reset()
@@ -49,9 +49,10 @@ if __name__ == "__main__":
     parser.add_argument('--no-realistic-pathing', action='store_false', dest='realistic_pathing', help='Do not use realistic pathing')
     parser.add_argument('--realistic-vision', action='store_true', help='Use realistic vision')
     parser.add_argument('--no-realistic-vision', action='store_false', dest='realistic_vision', help='Do not use realistic vision')
+    parser.add_argument('--robot-num', type=int, choices=[0, 1, 2], default=0, help='Specify which robot to use (0-2)')
     parser.set_defaults(realistic_pathing=False, realistic_vision=True, randomize=True)
     args = parser.parse_args()
 
     save_path = "run_instructions_results"
 
-    run_instructions(args.instructions_path, save_path, args.randomize, args.realistic_pathing, args.realistic_vision)
+    run_instructions(args.instructions_path, save_path, args.randomize, args.realistic_pathing, args.realistic_vision, args.robot_num)
