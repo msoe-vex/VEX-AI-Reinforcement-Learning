@@ -83,4 +83,4 @@ if __name__ == "__main__":
     elif args.model_path:
         run_agent(args.model_path, save_path, args.randomize, args.realistic_pathing, args.realistic_vision)
     else:
-        print("Please specify --train to train a new model or provide a --model_path to run an existing model.")
+        print("Please specify --train to train a new model or provide a --model-path to run an existing model.")
