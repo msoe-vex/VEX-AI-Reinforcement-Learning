@@ -701,10 +701,12 @@ class VEXHighStakesEnv(gym.Env):
                     for x, y in zip(planned_x1, planned_y1):
                         f.write(f"{x:.2f},{y:.2f}, ")
                     f.write(f"\n")
+                    f.write(f"START_CLIMB\n")
                     f.write(f"{FORWARD}, ")
                     for x, y in zip(planned_x2, planned_y2):
                         f.write(f"{x:.2f},{y:.2f}, ")
                     f.write(f"\n")
+                    f.write(f"END_CLIMB\n")
                 if Actions.DROP_GOAL.value == action:
                     f.write("DROP_GOAL\n")
                 if Actions.DRIVE_TO_CORNER_BL.value <= action <= Actions.DRIVE_TO_CORNER_TR.value:
