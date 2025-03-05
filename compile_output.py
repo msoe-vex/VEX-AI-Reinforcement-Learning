@@ -213,7 +213,7 @@ def parse_unified(lines):
                     initial_pos = curr_pos
                 else:
                     if curr_pos[0] != initial_pos[0] or curr_pos[1] != initial_pos[1]:
-                        initial_angle_rad = np.atan2(curr_pos[1] - initial_pos[1], curr_pos[0] - initial_pos[0])
+                        initial_angle_rad = np.arctan2(curr_pos[1] - initial_pos[1], curr_pos[0] - initial_pos[0])
                         initial_angle = initial_angle_rad * 180 / np.pi
                         break
                 start_idx += 2

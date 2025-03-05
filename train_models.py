@@ -1,8 +1,6 @@
-import gymnasium as gym
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
 from multiprocessing import Process
-import os
 import argparse
 import numpy as np
 import torch as th
