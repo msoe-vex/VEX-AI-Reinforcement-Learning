@@ -2,7 +2,6 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 import matplotlib.pyplot as plt
-import imageio.v2 as imageio
 import os
 import matplotlib.patches as patches
 from enum import Enum
@@ -16,17 +15,18 @@ class Actions(Enum):
     PICK_UP_NEAREST_RING = 1
     CLIMB = 2
     DROP_GOAL = 3
-    DRIVE_TO_CORNER_0 = 4
-    DRIVE_TO_CORNER_1 = 5
-    DRIVE_TO_CORNER_2 = 6
-    DRIVE_TO_CORNER_3 = 7
+    DRIVE_TO_CORNER_BL = 4
+    DRIVE_TO_CORNER_BR = 5
+    DRIVE_TO_CORNER_TL = 6
+    DRIVE_TO_CORNER_TR = 7
     ADD_RING_TO_GOAL = 8
-    DRIVE_TO_WALL_STAKE_0 = 9
-    DRIVE_TO_WALL_STAKE_1 = 10
-    DRIVE_TO_WALL_STAKE_2 = 11
-    DRIVE_TO_WALL_STAKE_3 = 12
+    DRIVE_TO_WALL_STAKE_L = 9
+    DRIVE_TO_WALL_STAKE_R = 10
+    DRIVE_TO_WALL_STAKE_B = 11
+    DRIVE_TO_WALL_STAKE_T = 12
     ADD_RING_TO_WALL_STAKE = 13
     TURN_TOWARDS_CENTER = 14
+    PICK_UP_NEXT_NEAREST_GOAL = 15
 
 # Constants
 INCHES_PER_FIELD = 144
@@ -113,10 +113,11 @@ class VEXHighStakesEnv(gym.Env):
         self.padded_goals[:self.mobile_goal_positions.size] = self.mobile_goal_positions.flatten()
         self.padded_rings[:self.ring_positions.size] = self.ring_positions.flatten()
         self.update_visible_objects()
+        normalized_orientation = (self.robot_orientation + np.pi) % (2 * np.pi) - np.pi
         return {
             "robot_x": np.array([self.robot_position[0]], dtype=np.float32),
             "robot_y": np.array([self.robot_position[1]], dtype=np.float32),
-            "robot_orientation": np.array([self.robot_orientation], dtype=np.float32),
+            "robot_orientation": np.array([normalized_orientation], dtype=np.float32),
             "holding_goal": self.holding_goal,
             "holding_rings": int(np.sum(self.ring_status == 1)),
             "rings": self.padded_rings,
@@ -276,7 +277,11 @@ class VEXHighStakesEnv(gym.Env):
                 drop_position = robot_position
                 other_goals = np.delete(mobile_goal_positions, self.holding_goal_index, axis=0)
                 goal_distances = np.linalg.norm(other_goals - drop_position, axis=1)
-                ring_distances = np.linalg.norm(ring_positions - drop_position, axis=1)
+                
+                # Filter out rings that are on goals
+                rings_not_on_goals = ring_positions[ring_status == 0]
+                ring_distances = np.linalg.norm(rings_not_on_goals - drop_position, axis=1)
+                
                 if np.all(goal_distances >= 1.0) and np.all(ring_distances >= 1.0):
                     mobile_goal_positions[self.holding_goal_index] = drop_position
                     goal_available[self.holding_goal_index] = True
@@ -288,12 +293,12 @@ class VEXHighStakesEnv(gym.Env):
                     self.last_action_success = True
 
         # ----------------------------------------------------------------------------- 
-        # DRIVE_TO_CORNER (Restrictions: robot is not at the corner; no goals are int the corner)
-        # Drives the robot to the target corner.
+        # DRIVE_TO_CORNER (Restrictions: robot is not at the corner; no goals are in the corner)
+        # Drives the robot to the target corner and adjusts orientation to face the corner diagonally.
         # -----------------------------------------------------------------------------
-        elif Actions.DRIVE_TO_CORNER_0.value <= action <= Actions.DRIVE_TO_CORNER_3.value:
+        elif Actions.DRIVE_TO_CORNER_BL.value <= action <= Actions.DRIVE_TO_CORNER_TR.value:
             old_position = robot_position
-            target_position = self.corner_positions[action - Actions.DRIVE_TO_CORNER_0.value]
+            target_position = self.corner_positions[action - Actions.DRIVE_TO_CORNER_BL.value]
             direction = target_position - old_position
             distance = np.linalg.norm(target_position - old_position)
 
@@ -308,7 +313,14 @@ class VEXHighStakesEnv(gym.Env):
                 self.last_action_success = False
             else:
                 robot_position = target_position
-                robot_orientation = np.arctan2(direction[1], direction[0])
+                if action == Actions.DRIVE_TO_CORNER_TL.value:
+                    robot_orientation = 3 * np.pi / 4  # Facing top-left
+                elif action == Actions.DRIVE_TO_CORNER_TR.value:
+                    robot_orientation = np.pi / 4  # Facing top-right
+                elif action == Actions.DRIVE_TO_CORNER_BL.value:
+                    robot_orientation = 5 * np.pi / 4  # Facing bottom-left
+                elif action == Actions.DRIVE_TO_CORNER_BR.value:
+                    robot_orientation = 7 * np.pi / 4  # Facing bottom-right
                 self.last_action_success = True
             
             for goal_pos in mobile_goal_positions:
@@ -342,8 +354,8 @@ class VEXHighStakesEnv(gym.Env):
         # DRIVE_TO_WALL_STAKE (Restrictions: robot is not at the target stake)
         # Drives the robot to the target wall stake.
         # -----------------------------------------------------------------------------
-        elif Actions.DRIVE_TO_WALL_STAKE_0.value <= action <= Actions.DRIVE_TO_WALL_STAKE_3.value:
-            stake_idx = action - Actions.DRIVE_TO_WALL_STAKE_0.value
+        elif Actions.DRIVE_TO_WALL_STAKE_L.value <= action <= Actions.DRIVE_TO_WALL_STAKE_T.value:
+            stake_idx = action - Actions.DRIVE_TO_WALL_STAKE_L.value
             old_position = robot_position
             target_position = self.wall_stakes_positions[stake_idx]
             direction = target_position - old_position
@@ -361,7 +373,14 @@ class VEXHighStakesEnv(gym.Env):
                 self.last_action_success = False
             else:
                 robot_position = target_position
-                robot_orientation = np.arctan2(direction[1], direction[0])
+                if action == Actions.DRIVE_TO_WALL_STAKE_R.value:
+                    robot_orientation = 0  # Facing right
+                elif action == Actions.DRIVE_TO_WALL_STAKE_L.value:
+                    robot_orientation = np.pi  # Facing left
+                elif action == Actions.DRIVE_TO_WALL_STAKE_T.value:
+                    robot_orientation = np.pi / 2  # Facing up
+                elif action == Actions.DRIVE_TO_WALL_STAKE_B.value:
+                    robot_orientation = -np.pi / 2  # Facing down
                 self.last_action_success = True
 
         # ----------------------------------------------------------------------------- 
@@ -402,6 +421,36 @@ class VEXHighStakesEnv(gym.Env):
                 penalty = 0
                 self.last_action_success = True
             time_cost = 0.5
+
+        # ----------------------------------------------------------------------------- 
+        # PICK_UP_NEXT_NEAREST_GOAL (Restrictions: not holding a goal; at least two goals are visible)
+        # Drives the robot to the next nearest visible goal and picks it up.
+        # -----------------------------------------------------------------------------
+        elif action == Actions.PICK_UP_NEXT_NEAREST_GOAL.value:
+            penalty = DEFAULT_PENALTY
+            if holding_goal == 0:
+                candidate = np.where(goal_available)[0]
+                visible_candidates = [i for i in candidate if self.is_visible(mobile_goal_positions[i])]
+                if len(visible_candidates) > 1:
+                    goals = mobile_goal_positions[visible_candidates]
+                    distances = np.linalg.norm(goals - robot_position, axis=1)
+                    sorted_indices = np.argsort(distances)
+                    next_nearest_index = sorted_indices[1]  # Get the second nearest goal
+                    target_position = mobile_goal_positions[visible_candidates[next_nearest_index]]
+                    old_position = robot_position
+                    robot_position = target_position
+                    robot_orientation = np.arctan2(target_position[1] - old_position[1],
+                                                   target_position[0] - old_position[0])
+                    time_cost = distances[next_nearest_index] / 2 + 0.5
+
+                    penalty = 0
+                    self.last_action_success = True
+
+                    chosen_idx = visible_candidates[next_nearest_index]
+                    holding_goal = 1
+                    self.holding_goal_index = chosen_idx
+                    goal_available[chosen_idx] = False
+                    self.holding_goal_full = 1 if np.sum(ring_status == (chosen_idx + 2)) == 6 else 0
 
         self.time_remaining = np.clip(self.time_remaining - time_cost, 0, TIME_LIMIT)
         if self.time_remaining <= 0:
@@ -541,7 +590,7 @@ class VEXHighStakesEnv(gym.Env):
 
         if self.last_action_success:
             with open(f'{self.save_path}/auton.csv', 'a') as f:
-                if Actions.PICK_UP_NEAREST_GOAL.value == action:
+                if Actions.PICK_UP_NEAREST_GOAL.value == action or Actions.PICK_UP_NEXT_NEAREST_GOAL.value == action:
                     f.write(f"{BACKWARD}, ")
                     for x, y in zip(planned_x, planned_y):
                         f.write(f"{x:.2f},{y:.2f}, ")
@@ -557,22 +606,25 @@ class VEXHighStakesEnv(gym.Env):
                     f.write("CLIMB\n")
                 if Actions.DROP_GOAL.value == action:
                     f.write("DROP_GOAL\n")
-                if Actions.DRIVE_TO_CORNER_0.value <= action <= Actions.DRIVE_TO_CORNER_3.value:
+                if Actions.DRIVE_TO_CORNER_BL.value <= action <= Actions.DRIVE_TO_CORNER_TR.value:
                     f.write(f"{BACKWARD}, ")
                     for x, y in zip(planned_x, planned_y):
                         f.write(f"{x:.2f},{y:.2f}, ")
                     f.write(f"\n")
+                    f.write(f"TURN_TO, {self.robot_orientation:.2f}\n")
                 if Actions.ADD_RING_TO_GOAL.value == action:
                     f.write("ADD_RING_TO_GOAL\n")
-                if Actions.DRIVE_TO_WALL_STAKE_0.value <= action <= Actions.DRIVE_TO_WALL_STAKE_3.value:
+                if Actions.DRIVE_TO_WALL_STAKE_L.value <= action <= Actions.DRIVE_TO_WALL_STAKE_T.value:
                     f.write(f"{BACKWARD}, ")
                     for x, y in zip(planned_x, planned_y):
                         f.write(f"{x:.2f},{y:.2f}, ")
                     f.write(f"\n")
+                    f.write(f"TURN_TO, {self.robot_orientation:.2f}\n")
                 if Actions.ADD_RING_TO_WALL_STAKE.value == action:
                     f.write("ADD_RING_TO_WALL_STAKE\n")
                 if Actions.TURN_TOWARDS_CENTER.value == action:
-                    f.write(f"TURN_TO, {self.robot_orientation:.2f}\n")
+                    pass # Don't write anything to the auton, this action is irrevelant for pre-planned routes
+                    # f.write(f"TURN_TO, {self.robot_orientation:.2f}\n")
 
         # Create visualization
         fig, ax = plt.subplots(figsize=(10,8))
