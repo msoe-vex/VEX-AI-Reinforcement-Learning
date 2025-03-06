@@ -46,7 +46,7 @@ class VEXHighStakesEnv(gym.Env):
     # -----------------------------------------------------------------------------
     # Initialize environment settings and spaces.
     # -----------------------------------------------------------------------------
-    def __init__(self, save_path, randomize_positions=True, realistic_pathing=False, realistic_vision=True, robot_num=2):
+    def __init__(self, save_path, randomize_positions=True, realistic_pathing=False, realistic_vision=True, robot_num=0):
         super(VEXHighStakesEnv, self).__init__()
         self.randomize_positions = randomize_positions
         self.realistic_pathing = realistic_pathing
@@ -59,6 +59,9 @@ class VEXHighStakesEnv(gym.Env):
                                 (self.robot_length*(ENV_FIELD_SIZE/INCHES_PER_FIELD))**2 + \
                                 (self.robot_width*(ENV_FIELD_SIZE/INCHES_PER_FIELD))**2
                             ) / 2 + BUFFER_RADIUS*(ENV_FIELD_SIZE/INCHES_PER_FIELD)
+        
+        self.initial_robot_position = np.array([1, 6.0], dtype=np.float32)
+        self.initial_robot_orientation = 0.0
 
         self.wall_stakes_positions = np.array([
             [0, ENV_FIELD_SIZE/2],  # Actual positions
@@ -174,13 +177,13 @@ class VEXHighStakesEnv(gym.Env):
     def reset(self, seed=None):
         super().reset(seed=seed)
         if self.randomize_positions:
-            self.mobile_goal_positions = np.random.uniform(0.5, 11.5, size=(NUM_GOALS, 2)).astype(np.float32)
-            self.ring_positions = np.random.uniform(0.5, 11.5, size=(NUM_RINGS, 2)).astype(np.float32)
-            self.robot_position = np.random.uniform(0.5, 11.5, size=(2,)).astype(np.float32)
+            self.mobile_goal_positions = np.random.uniform(1, 11, size=(NUM_GOALS, 2)).astype(np.float32)
+            self.ring_positions = np.random.uniform(1, 11, size=(NUM_RINGS, 2)).astype(np.float32)
+            self.robot_position = np.random.uniform(1, 11, size=(2,)).astype(np.float32)
             self.robot_orientation = np.random.uniform(-np.pi, np.pi)
         else:
-            self.robot_position = np.array([0.5, 6.0], dtype=np.float32)
-            self.robot_orientation = 0.0
+            self.robot_position = self.initial_robot_position
+            self.robot_orientation = self.initial_robot_orientation
             self.mobile_goal_positions = np.array([[4.0, 2.0], [4.0, 10.0], [8.0, 4.0], [8.0, 8.0], [10.0, 6.0]], dtype=np.float32)
             self.ring_positions = np.array([
                 [6.0, 1.0], [6.0, 11.0],
@@ -202,13 +205,6 @@ class VEXHighStakesEnv(gym.Env):
         self.padded_goals = np.full((NUM_GOALS * 2,), -1, dtype=np.float32)
         self.padded_rings = np.full((NUM_RINGS * 2,), -1, dtype=np.float32)
         self.last_action_success = False
-
-        if self.robot_num == 1:
-            self.mobile_goal_positions = self.mobile_goal_positions[self.mobile_goal_positions[:, 1] >= ENV_FIELD_SIZE / 2]
-            self.ring_positions = self.ring_positions[self.ring_positions[:, 1] >= ENV_FIELD_SIZE / 2]
-        elif self.robot_num == 2:
-            self.mobile_goal_positions = self.mobile_goal_positions[self.mobile_goal_positions[:, 1] < ENV_FIELD_SIZE / 2]
-            self.ring_positions = self.ring_positions[self.ring_positions[:, 1] < ENV_FIELD_SIZE / 2]
 
         self.ring_status = np.zeros(self.ring_positions.shape[0], dtype=np.int32)
 
@@ -286,37 +282,41 @@ class VEXHighStakesEnv(gym.Env):
                     self.holding_rings += 1
 
         # ----------------------------------------------------------------------------- 
-        # CLIMB (Restrictions: more than 5 seconds remaining; less than 20 seconds remaining)
+        # CLIMB (Restrictions: more than needed time remaining; less than needed time + 3 seconds remaining, not holding a goal)
         # Sets the climbed flag to True and ends the episode.
         # -----------------------------------------------------------------------------
         elif action == Actions.CLIMB.value:
-            old_position = self.robot_position
-            target_position = self.climb_positions[np.argmin(np.linalg.norm(self.climb_positions - self.robot_position, axis=1))]
-            
-            distance = np.linalg.norm(target_position - old_position)
-
-            if self.realistic_pathing:
-                planned_x, planned_y, time = self.calculate_path(self.robot_position / ENV_FIELD_SIZE, target_position / ENV_FIELD_SIZE)
-                path_time = float(time)
+            if self.holding_goal == 1:
+                penalty = DEFAULT_PENALTY
+                self.last_action_success = False
             else:
-                path_time = distance / 2 + 0.1
-
-            time_needed = path_time + 1
-
-            if self.time_remaining > time_needed:
-                penalty = 0
-                if self.time_remaining > 20:
-                    penalty = -1000 # Too much time remaining
+                old_position = self.robot_position
+                target_position = self.climb_positions[np.argmin(np.linalg.norm(self.climb_positions - self.robot_position, axis=1))]
                 
-                self.climbed = True
-                self.last_action_success = True
-                self.robot_position = target_position
-                direction_to_center = np.array([ENV_FIELD_SIZE / 2, ENV_FIELD_SIZE / 2]) - target_position
-                self.robot_orientation = np.arctan2(direction_to_center[1], direction_to_center[0])
-                time_cost = self.time_remaining
-            else:
-                penalty = DEFAULT_PENALTY # Not enough time to climb
-                time_cost = path_time
+                distance = np.linalg.norm(target_position - old_position)
+
+                if self.realistic_pathing:
+                    planned_x, planned_y, time = self.calculate_path(self.robot_position / ENV_FIELD_SIZE, target_position / ENV_FIELD_SIZE)
+                    path_time = float(time)
+                else:
+                    path_time = distance / 2 + 0.1
+
+                time_needed = path_time + 1
+
+                if self.time_remaining > time_needed:
+                    penalty = 0
+                    if self.time_remaining > time_needed + 3:
+                        penalty = -1000 # Too much time remaining
+                    
+                    self.climbed = True
+                    self.last_action_success = True
+                    self.robot_position = target_position
+                    direction_to_center = np.array([ENV_FIELD_SIZE / 2, ENV_FIELD_SIZE / 2]) - target_position
+                    self.robot_orientation = np.arctan2(direction_to_center[1], direction_to_center[0])
+                    time_cost = self.time_remaining
+                else:
+                    penalty = DEFAULT_PENALTY # Not enough time to climb
+                    time_cost = path_time
 
         # ----------------------------------------------------------------------------- 
         # DROP_GOAL (Restrictions: holding goal, area around bot is clear)
@@ -409,8 +409,8 @@ class VEXHighStakesEnv(gym.Env):
         # Drives the robot to the target wall stake.
         # -----------------------------------------------------------------------------
         elif Actions.DRIVE_TO_WALL_STAKE_L.value <= action <= Actions.DRIVE_TO_WALL_STAKE_T.value:
-            if(self.robot_num == 1 and action in [Actions.DRIVE_TO_WALL_STAKE_R.value, Actions.DRIVE_TO_WALL_STAKE_B.value]) or \
-                (self.robot_num == 2 and action in [Actions.DRIVE_TO_WALL_STAKE_L.value, Actions.DRIVE_TO_WALL_STAKE_T.value]):
+            if(self.robot_num == 1 and action in [Actions.DRIVE_TO_WALL_STAKE_R.value, Actions.DRIVE_TO_WALL_STAKE_B.value, Actions.DRIVE_TO_WALL_STAKE_L.value]) or \
+                (self.robot_num == 2 and action in [Actions.DRIVE_TO_WALL_STAKE_T.value]):
                 penalty = -1000
                 self.last_action_success = False
             else:
@@ -538,17 +538,25 @@ class VEXHighStakesEnv(gym.Env):
         return obs, reward, done, truncated, {}
 
     # -----------------------------------------------------------------------------
-    # Check if a given goal is available (visible and not held).
+    # Check if a given goal is available (visible, not held, and in the correct half of the field).
     # -----------------------------------------------------------------------------
     def is_goal_available(self, goal_index):
         goal_position = self.mobile_goal_positions[goal_index]
+        if self.robot_num == 1 and goal_position[1] < ENV_FIELD_SIZE / 2:
+            return False
+        if self.robot_num == 2 and goal_position[1] >= ENV_FIELD_SIZE / 2:
+            return False
         return self.is_visible(goal_position) and (self.holding_goal_index != goal_index)
 
     # -----------------------------------------------------------------------------
-    # Check if a given ring is available (visible and not held).
+    # Check if a given ring is available (visible, not held, and in the correct half of the field).
     # -----------------------------------------------------------------------------
     def is_ring_available(self, ring_index):
         ring_position = self.ring_positions[ring_index]
+        if self.robot_num == 1 and ring_position[1] < ENV_FIELD_SIZE / 2:
+            return False
+        if self.robot_num == 2 and ring_position[1] >= ENV_FIELD_SIZE / 2:
+            return False
         return self.is_visible(ring_position) and self.ring_status[ring_index] == 0
 
     # -----------------------------------------------------------------------------
@@ -683,6 +691,9 @@ class VEXHighStakesEnv(gym.Env):
 
         if self.last_action_success:
             with open(f'{self.save_path}/auton.csv', 'a') as f:
+                if(step_num == 0):
+                    f.write(f"{self.initial_robot_position[0]:.2f},{self.initial_robot_position[1]:.2f},{self.initial_robot_orientation:.2f}\n")
+
                 if Actions.PICK_UP_NEAREST_GOAL.value == action or Actions.PICK_UP_NEXT_NEAREST_GOAL.value == action:
                     f.write(f"{BACKWARD}, ")
                     for x, y in zip(planned_x, planned_y):
