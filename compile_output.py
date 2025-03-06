@@ -90,8 +90,10 @@ def do_action(action_name, path_name=None, extra_params=None):
 '''.format(path_name=path_name, rev_bool=str(reverse).lower(), follow_func=follow_func)
 
     # Used so the robot can see more of the field
+    # TODO: Need to implement this for turning to align with wall stake and corners
     elif action_name == 'TURN_TO':
-        ret += '\n'  # Ignored, should be irrelevant for autonomous
+        print(f'TODO - ACTION - {action_name} - {path_name} - {extra_params}')
+        ret += '\n'
 
     # Generate code to grab a goal once the robot arrives
     elif action_name == 'PICKUP_GOAL':
@@ -120,14 +122,14 @@ def do_action(action_name, path_name=None, extra_params=None):
 '''
 
     # Generate code for the robot to climb
-    # TODO: Should we get the RL output to generate a path to wherever we need to go to climb before this?
-    elif action_name == 'CLIMB' and extra_params is not None and len(extra_params) >= 1:
+    elif action_name == 'START_CLIMB':
         ret += r'''
         ladyBrownToPosition(250);
-        robotController->follow({path_name});
+'''
+    elif action_name == 'END_CLIMB':
+        ret += r'''
         ladyBrownToPosition(200);
-        robotController->waitForCompletion();
-'''.format(path_name=extra_params[0])
+'''
 
     # Currently unsupported action, print so user knows
     else:
@@ -261,10 +263,6 @@ def parse_unified(lines):
             call_path_id = curr_path_id
             call_extra_params = [next_action_name]
         
-        # Pass path name to CLIMB
-        elif action_name == 'CLIMB':
-            call_extra_params = None if curr_path_id == 0 else [f'Path{curr_path_id}']
-
         # Get extra parameters if they exist
         elif len(fields) > 1:
             call_extra_params = fields[1:]
