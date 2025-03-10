@@ -83,7 +83,8 @@ def do_action(action_name, path_name=None, extra_params=None):
 
         # Make the code
         ret += r'''
-        robotController->setReverse({rev_bool});
+        {path_name}->setMaxSpeed(80.0);
+        {path_name}->setReverse({rev_bool});
         robotController->startHeading({path_name});
         robotController->{follow_func}({path_name});
 '''.format(path_name=path_name, rev_bool=str(reverse).lower(), follow_func=follow_func)
