@@ -4,6 +4,9 @@ from multiprocessing import Process
 import argparse
 import numpy as np
 import torch as th
+import csv
+import os
+import time
 
 # Check for null bytes in the rl_environment.py file
 with open('rl_environment.py', 'rb') as f:
@@ -54,16 +57,37 @@ def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, d
     best_score = -np.inf
     initial_timesteps = model.num_timesteps
     n_steps = 0
+
+    # Ensure the directory exists
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    # Open CSV file for writing
+    csv_file = open(f"{save_path}_scores.csv", mode='w', newline='')
+    csv_writer = csv.writer(csv_file)
+    csv_writer.writerow(['Time Elapsed', 'Timesteps', 'Score', 'Best Score'])
+
+    start_time = time.time()
+
     while n_steps < total_timesteps:
         model.learn(total_timesteps=check_steps, reset_num_timesteps=False)
         n_steps = model.num_timesteps - initial_timesteps
         score = evaluate_agent(model, env_class, save_path, randomize_positions, realistic_pathing, realistic_vision, robot_num)
+        elapsed_time = time.time() - start_time
         print(f"Score: {score}")
+        
         if score > best_score:
             best_score = score
             model.save(save_path)
             print(f"Model saved to {save_path}.")
+        
+        csv_writer.writerow([elapsed_time, n_steps, score, best_score])
+        csv_file.flush()  # Ensure data is written to the file
+
         print(f"Best Score: {best_score} | {n_steps}/{total_timesteps} timesteps")
+    
+    # Close CSV file
+    csv_file.close()
+
     score = evaluate_agent(model, env_class, save_path, randomize_positions, realistic_pathing, realistic_vision, robot_num)
     model.save(save_path+"_final")
     print("Training complete.")
