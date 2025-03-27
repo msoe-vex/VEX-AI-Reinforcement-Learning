@@ -1,5 +1,6 @@
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
+from stable_baselines3.common.vec_env import SubprocVecEnv
 from multiprocessing import Process
 import argparse
 import numpy as np
@@ -7,6 +8,7 @@ import torch as th
 import csv
 import os
 import time
+import multiprocessing
 
 # Check for null bytes in the rl_environment.py file
 with open('rl_environment.py', 'rb') as f:
@@ -36,8 +38,18 @@ def evaluate_agent(model, env_class, save_path, randomize_positions, realistic_p
 # Trains a single agent and saves the best model.
 # ---------------------------------------------------------------------------
 def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, discount_factor, model_path, randomize_positions, num_layers, num_nodes, realistic_pathing, realistic_vision, robot_num):
-    env = env_class(save_path, randomize_positions=randomize_positions, realistic_pathing=realistic_pathing, realistic_vision=realistic_vision, robot_num=robot_num)
-    check_env(env, warn=True)
+    def make_env():
+        return env_class(save_path, randomize_positions=randomize_positions, realistic_pathing=realistic_pathing, realistic_vision=realistic_vision, robot_num=robot_num)
+
+    # Validate the environment with a single instance
+    single_env = make_env()
+    check_env(single_env, warn=True)
+    single_env.close()  # Close the single environment instance
+
+    # Create SubprocVecEnv for parallel environments
+    num_cpus = min(max(1, multiprocessing.cpu_count()), 8)
+    print(f"Creating {num_cpus} parallel environments")
+    env = SubprocVecEnv([make_env for _ in range(num_cpus)])  # Use 4 parallel environments
     device = th.device("cuda" if th.cuda.is_available() else "cpu")
     print(f"Training agent with device {device}")
     
