@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from matplotlib.transforms import Affine2D
 import random
 from math import sqrt, exp  # Added missing imports if needed
+import time
 
 # =============================================================================
 # Obstacle Definitions
@@ -112,6 +113,8 @@ class PathPlanner:
         return (init_x, init_y)
 
     def Solve(self, start_point, end_point, obstacles):
+        start_time = time.time()
+
         inches_per_step = 6
         inches = int(np.linalg.norm(np.array(start_point) - np.array(end_point)) * INCHES_PER_FIELD)
         steps = int(inches / inches_per_step)
@@ -255,7 +258,11 @@ class PathPlanner:
         opts = {"ipopt.print_level": 0, "print_time": 0, 'ipopt.tol': 1e-6, "ipopt.sb": "yes"}
         solver = nlpsol('solver', 'ipopt', nlp, opts)
         res = solver(x0=x_, lbx=x_lowerbound_, ubx=x_upperbound_, lbg=g_lowerbound_, ubg=g_upperbound_)
-        self.status = solver.stats()['return_status']
+        solver_stats = solver.stats()
+        self.status = solver_stats['return_status']
+        
+        self.solve_time = time.time() - start_time
+
         return res
 
     def print_trajectory_details(self, res, save_path):
@@ -289,6 +296,7 @@ class PathPlanner:
         print(f"\nTime step: {optimized_time_step:.2f}")
         print(f"Path time: {optimized_time_step * self.num_steps:.2f}")
         print(f"\nStatus: {self.status}")
+        print(f"Solve time: {self.solve_time:.3f} seconds")
         lemlib_output_string += "endData"
         if save_path:
             with open(save_path, 'w') as file:
@@ -359,16 +367,6 @@ class PathPlanner:
 # =============================================================================
 
 if __name__ == "__main__":
-    obstacles = [Obstacle(3/6, 2/6, 3.5/INCHES_PER_FIELD, False),
-                Obstacle(3/6, 4/6, 3.5/INCHES_PER_FIELD, False),
-                Obstacle(2/6, 3/6, 3.5/INCHES_PER_FIELD, False),
-                Obstacle(4/6, 3/6, 3.5/INCHES_PER_FIELD, False)]
-    for i in range(5):
-        obstacles.append(Obstacle(random.uniform(.0, 1), random.uniform(.0, 1), 5.75/INCHES_PER_FIELD, True))
-
-    start_point = [random.uniform(0, 1), random.uniform(0, 1)]
-    end_point = [random.uniform(0, 1), random.uniform(0, 1)]
-
     robot_length = 15/INCHES_PER_FIELD
     robot_width = 15/INCHES_PER_FIELD
     buffer_radius = 2/INCHES_PER_FIELD
@@ -377,12 +375,43 @@ if __name__ == "__main__":
 
     planner = PathPlanner(robot_length, robot_width, buffer_radius, max_velocity, max_accel)
 
-    for i in range(100):
+    total_solve_time = 0
+    successful_solve_time = 0
+    unsuccessful_solve_time = 0
+    successful_trials = 0
+    unsuccessful_trials = 0
+    total_trials = 1000
+
+    for i in range(total_trials):
         start_point = [np.random.uniform(0.1, 0.9), np.random.uniform(0.1, 0.9)]
         end_point = [np.random.uniform(0.1, 0.9), np.random.uniform(0.1, 0.9)]
+
+
+        obstacles = [Obstacle(3/6, 2/6, 3.5/INCHES_PER_FIELD, False),
+                     Obstacle(3/6, 4/6, 3.5/INCHES_PER_FIELD, False),
+                     Obstacle(2/6, 3/6, 3.5/INCHES_PER_FIELD, False),
+                     Obstacle(4/6, 3/6, 3.5/INCHES_PER_FIELD, False)]
+        for i in range(5):
+            obstacles.append(Obstacle(random.uniform(.0, 1), random.uniform(.0, 1), 5.75/INCHES_PER_FIELD, False))
+
         sol = planner.Solve(start_point=start_point, end_point=end_point, obstacles=obstacles)
+
+        if planner.status == 'Solve_Succeeded':
+            successful_trials += 1
+            successful_solve_time += planner.solve_time
+        else:
+            unsuccessful_trials += 1
+            unsuccessful_solve_time += planner.solve_time
+
+        total_solve_time += planner.solve_time
 
         planner.print_trajectory_details(sol, None)
         planner.plotResults(sol)
 
         input()
+
+    print(f"Average solve time (successful): {successful_solve_time / successful_trials:.3f} seconds" if successful_trials > 0 else "No successful trials")
+    print(f"Average solve time (unsuccessful): {unsuccessful_solve_time / unsuccessful_trials:.3f} seconds" if unsuccessful_trials > 0 else "No unsuccessful trials")
+    print(f"Average solve time (overall): {total_solve_time / total_trials:.3f} seconds")
+    print(f"Successful trials: {successful_trials}")
+    print(f"Success rate: {successful_trials / total_trials * 100:.2f}%")

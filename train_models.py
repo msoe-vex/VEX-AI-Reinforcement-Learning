@@ -39,6 +39,7 @@ def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, d
     env = env_class(save_path, randomize_positions=randomize_positions, realistic_pathing=realistic_pathing, realistic_vision=realistic_vision, robot_num=robot_num)
     check_env(env, warn=True)
     device = th.device("cuda" if th.cuda.is_available() else "cpu")
+    print(f"Training agent with device {device}")
     
     # Define network architecture and policy parameters.
     net_arch = [num_nodes] * num_layers

@@ -34,7 +34,7 @@ def run_agent(model_path, save_path, randomize_positions, realistic_pathing, rea
 
     print(f"Total score: {env.total_score}")
     print("Creating GIF...")
-    imageio.mimsave(f'{save_path}/simulation.gif', images, fps=10)
+    imageio.mimsave(f'{save_path}/simulation.gif', images, fps=3)
     env.close()
 
 # -----------------------------------------------------------------------------
