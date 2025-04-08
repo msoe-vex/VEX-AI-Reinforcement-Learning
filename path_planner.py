@@ -110,6 +110,12 @@ class PathPlanner:
         else:
             init_x = np.linspace(x1+0.5, x2+0.5, self.num_steps)
             init_y = np.linspace(y1+0.5, y2+0.5, self.num_steps)
+
+        # # Add random perturbations to the initial path to encourage exploration
+        # perturbation_scale = 0.1  # Adjust the scale of perturbations as needed
+        # init_x += np.random.uniform(-perturbation_scale, perturbation_scale, self.num_steps)
+        # init_y += np.random.uniform(-perturbation_scale, perturbation_scale, self.num_steps)
+    
         return (init_x, init_y)
 
     def Solve(self, start_point, end_point, obstacles):
@@ -137,19 +143,41 @@ class PathPlanner:
         self.indexes.dt = self.num_of_x_ - 1
 
         w_time_step = 100.0  # Cost weight on time step
+        w_obstacle_penalty = 1000.0  # Weight for obstacle penalty
         cost = 0.0
 
-        # Build initial guess using an initial path and zero velocity
-        init_x, init_y = self.get_initial_path(start_point[0], start_point[1], end_point[0], end_point[1], self.center_circle_radius)
+        # Perform A* search to get an initial path
+        a_star_path = self.a_star_search(start_point, end_point, obstacles)
+        if a_star_path:
+            # Interpolate the A* path to match the number of steps
+            a_star_path = np.array(a_star_path)
+            init_x = np.interp(np.linspace(0, 1, self.num_steps), np.linspace(0, 1, len(a_star_path)), a_star_path[:, 0])
+            init_y = np.interp(np.linspace(0, 1, self.num_steps), np.linspace(0, 1, len(a_star_path)), a_star_path[:, 1])
+        else:
+            # Fall back to the default initial path if A* fails
+            init_x, init_y = self.get_initial_path(start_point[0], start_point[1], end_point[0], end_point[1], self.center_circle_radius)
+
         self.init_x = init_x  # For plotting
         self.init_y = init_y
 
-        init_v = [self.max_velocity/2] * ((self.num_steps - 1) * self.NUM_OF_ACTS)
-        init_time_step = self.initial_time_step 
+        # Build initial guess using the A* path and zero velocity
+        init_v = [self.max_velocity / 2] * ((self.num_steps - 1) * self.NUM_OF_ACTS)
+        init_time_step = self.initial_time_step
         x_ = np.concatenate((init_x, init_y, init_v, [init_time_step]))
 
         time_step = x[self.indexes.dt]
         cost += w_time_step * time_step * self.num_steps
+
+        # Add obstacle penalty to the cost function
+        for i in range(self.num_steps):
+            curr_px_index = i + self.indexes.px
+            curr_py_index = i + self.indexes.py
+            curr_px = x[curr_px_index]
+            curr_py = x[curr_py_index]
+            for obstacle in obstacles:
+                distance_squared = (curr_px - obstacle.x)**2 + (curr_py - obstacle.y)**2
+                penalty = w_obstacle_penalty / (distance_squared + 1e-6)  # Add a small value to avoid division by zero
+                cost += penalty/(1e4) #if not obstacle.ignore_collision else 0
 
         # Define variable bounds
         x_lowerbound_ = [-exp(10)] * self.num_of_x_
@@ -353,14 +381,128 @@ class PathPlanner:
         ax.set_aspect('equal', adjustable='box')
         ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.grid()
         plt.savefig('path.png')
+        plt.close(fig)  # Close the figure to free memory
 
         print("Path saved to path.png")
+
+        
     
     def getPath(self, sol):
         planned_px = np.array(sol['x'][self.indexes.px:self.indexes.py]).flatten()
         planned_py = np.array(sol['x'][self.indexes.py:self.indexes.vx]).flatten()
         total_path_time = sol['x'][self.indexes.dt] * self.num_steps
         return planned_px, planned_py, total_path_time
+
+    def a_star_search(self, start_point, end_point, obstacles):
+        """
+        Perform A* search on a 48x48 grid.
+        """
+        grid_size = 48
+        grid = np.zeros((grid_size, grid_size), dtype=int)
+
+        # Block grid cells based on obstacles
+        for obstacle in obstacles:
+            cx, cy = int(obstacle.x * grid_size), int(obstacle.y * grid_size)
+            radius = int((obstacle.radius + self.robot_radius + self.buffer_radius) * grid_size)
+            for x in range(max(0, cx - radius), min(grid_size, cx + radius + 1)):
+                for y in range(max(0, cy - radius), min(grid_size, cy + radius + 1)):
+                    if (x - cx)**2 + (y - cy)**2 <= radius**2:
+                        grid[x, y] = 1  # Mark as blocked
+
+        # Convert start and end points to grid coordinates
+        start = (int(start_point[0] * grid_size), int(start_point[1] * grid_size))
+        end = (int(end_point[0] * grid_size), int(end_point[1] * grid_size))
+
+        # A* search
+        from heapq import heappop, heappush
+        open_set = []
+        heappush(open_set, (0, start))
+        came_from = {}
+        g_score = {start: 0}
+        f_score = {start: self.heuristic(start, end)}
+
+        while open_set:
+            _, current = heappop(open_set)
+
+            if current == end:
+                return self.reconstruct_path(came_from, current, grid_size)
+
+            for neighbor in self.get_neighbors(current, grid_size):
+                if grid[neighbor[0], neighbor[1]] == 1:  # Skip blocked cells
+                    continue
+
+                tentative_g_score = g_score[current] + 1
+                if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
+                    came_from[neighbor] = current
+                    g_score[neighbor] = tentative_g_score
+                    f_score[neighbor] = tentative_g_score + self.heuristic(neighbor, end)
+                    heappush(open_set, (f_score[neighbor], neighbor))
+
+        return None  # No path found
+
+    def heuristic(self, a, b):
+        # """
+        # Heuristic function for A* (Manhattan distance).
+        # """
+        # return abs(a[0] - b[0]) + abs(a[1] - b[1])
+        return sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2)  # Euclidean distance
+
+    def get_neighbors(self, node, grid_size):
+        """
+        Get valid neighbors for a node in the grid.
+        """
+        x, y = node
+        neighbors = [(x + dx, y + dy) for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]]
+        return [(nx, ny) for nx, ny in neighbors if 0 <= nx < grid_size and 0 <= ny < grid_size]
+
+    def reconstruct_path(self, came_from, current, grid_size):
+        """
+        Reconstruct the path from the A* search.
+        """
+        path = []
+        while current in came_from:
+            path.append((current[0] / grid_size, current[1] / grid_size))
+            current = came_from[current]
+        path.append((current[0] / grid_size, current[1] / grid_size))
+        return path[::-1]
+
+    def generate_grid_png(self, obstacles, start_point, end_point, filename="grid.png"):
+        """
+        Generate a PNG of the grid based on obstacles, swap black/white, and add dots for start and end points.
+        """
+        grid_size = 48
+        grid = np.ones((grid_size, grid_size), dtype=int)  # Initialize grid with 1s (white)
+
+        # Block grid cells based on obstacles
+        for obstacle in obstacles:
+            cx, cy = int(obstacle.x * grid_size), int(obstacle.y * grid_size)
+            radius = int((obstacle.radius + self.robot_radius + self.buffer_radius) * grid_size)
+            for x in range(max(0, cx - radius), min(grid_size, cx + radius + 1)):
+                for y in range(max(0, cy - radius), min(grid_size, cy + radius + 1)):
+                    if (x - cx)**2 + (y - cy)**2 <= radius**2:
+                        grid[y, x] = 0  # Mark as blocked (black)
+
+        # Convert start and end points to grid coordinates
+        start = (int(start_point[1] * grid_size), int(start_point[0] * grid_size))
+        end = (int(end_point[1] * grid_size), int(end_point[0] * grid_size))
+
+        # Plot the grid
+        fig, ax = plt.subplots(figsize=(6, 6))
+        ax.imshow(grid, cmap="gray", origin="lower")  # Use 'upper' to fix flipping
+        ax.set_title("Grid Visualization")
+        ax.set_xticks([]); ax.set_yticks([])
+
+        # Add dots for start and end points
+        ax.plot(start[1], start[0], 'go', label="Start")  # Green dot for start
+        ax.plot(end[1], end[0], 'ro', label="End")  # Red dot for end
+        ax.legend(loc="upper right")
+
+        plt.tight_layout()
+
+        # Save the grid as a PNG
+        plt.savefig(filename)
+        plt.close(fig)
+        print(f"Grid PNG saved as {filename}")
 
 # =============================================================================
 # Main Execution
@@ -383,16 +525,37 @@ if __name__ == "__main__":
     total_trials = 1000
 
     for i in range(total_trials):
-        start_point = [np.random.uniform(0.1, 0.9), np.random.uniform(0.1, 0.9)]
-        end_point = [np.random.uniform(0.1, 0.9), np.random.uniform(0.1, 0.9)]
+        # start_point = [np.random.uniform(0.1, 0.9), np.random.uniform(0.1, 0.9)]
+        # end_point = [np.random.uniform(0.1, 0.9), np.random.uniform(0.1, 0.9)]
+
+        start_point = [0.45, 0.15]
+        end_point = [0.50, 0.85]
 
 
         obstacles = [Obstacle(3/6, 2/6, 3.5/INCHES_PER_FIELD, False),
                      Obstacle(3/6, 4/6, 3.5/INCHES_PER_FIELD, False),
                      Obstacle(2/6, 3/6, 3.5/INCHES_PER_FIELD, False),
                      Obstacle(4/6, 3/6, 3.5/INCHES_PER_FIELD, False)]
+        radius = 5.75 / INCHES_PER_FIELD
+        # obstacles.append(Obstacle(.1, .4, radius, True))
+        # obstacles.append(Obstacle(.2, .9, radius, True))
+        # obstacles.append(Obstacle(.4, .7, radius, True))
+        # obstacles.append(Obstacle(.7, .8, radius, True))
+        # obstacles.append(Obstacle(.8, .4, radius, True))   
+
         for i in range(5):
-            obstacles.append(Obstacle(random.uniform(.0, 1), random.uniform(.0, 1), 5.75/INCHES_PER_FIELD, False))
+            while True:
+                x = random.uniform(0.1, 0.9)
+                y = random.uniform(0.1, 0.9)
+                center_x, center_y = 0.5, 0.5
+                center_radius = 1/6 + 3.5 / INCHES_PER_FIELD
+
+                # Ensure the obstacle is outside the center circle
+                if (x - center_x)**2 + (y - center_y)**2 > center_radius**2:
+                    # Ensure the obstacle does not touch any other obstacle
+                    if all((x - obs.x)**2 + (y - obs.y)**2 > (radius + obs.radius)**2 for obs in obstacles):
+                        obstacles.append(Obstacle(x, y, radius, True))
+                        break
 
         sol = planner.Solve(start_point=start_point, end_point=end_point, obstacles=obstacles)
 
@@ -407,6 +570,7 @@ if __name__ == "__main__":
 
         planner.print_trajectory_details(sol, None)
         planner.plotResults(sol)
+        planner.generate_grid_png(obstacles, start_point, end_point)
 
         input()
 

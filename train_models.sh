@@ -3,7 +3,8 @@
 #SBATCH --output=job_results/job_%j/output.txt      # Output file (%j will be replaced with the job ID)
 #SBATCH --error=job_results/job_%j/error.txt        # Error file (%j will be replaced with the job ID)
 #SBATCH --time=0-6:0                                # Time limit (DD-HH:MM)
-#SBATCH --partition=teaching --gpus=0               # Partition to submit to. `teaching` (for the T4 GPUs) is default on Rosie, but it's still being specified here
+#SBATCH --partition=teaching --gpus=1               # Partition to submit to. `teaching` (for the T4 GPUs) is default on Rosie, but it's still being specified here
+#SBATCH --cpus-per-task=32 --tasks=1                # Number of CPU cores to use
 
 # Parse command line arguments
 while [[ "$#" -gt 0 ]]; do
@@ -23,6 +24,7 @@ while [[ "$#" -gt 0 ]]; do
         --realistic-vision) REALISTIC_VISION="--realistic-vision"; shift ;;
         --no-realistic-vision) REALISTIC_VISION="--no-realistic-vision"; shift ;;
         --robot-num) ROBOT_NUM="$2"; shift 2 ;;
+        --algorithm) ALGORITHM="$2"; shift 2 ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
 done
@@ -41,4 +43,8 @@ python train_models.py \
     --num-nodes ${NUM_NODES:-64} \
     ${REALISTIC_PATHING:-"--no-realistic-pathing"} \
     ${REALISTIC_VISION:-"--realistic-vision"} \
-    --robot-num ${ROBOT_NUM:-0}
+    --robot-num ${ROBOT_NUM:-0} \
+    --num-gpus $SLURM_GPUS \
+    --cpus-per-task $SLURM_CPUS_PER_TASK \
+    --partition $SLURM_JOB_PARTITION \
+    --algorithm ${ALGORITHM:-PPO}

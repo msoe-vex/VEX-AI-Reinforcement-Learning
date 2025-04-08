@@ -1,4 +1,4 @@
-from stable_baselines3 import PPO
+from stable_baselines3 import PPO, DQN
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from multiprocessing import Process
@@ -37,7 +37,7 @@ def evaluate_agent(model, env_class, save_path, randomize_positions, realistic_p
 # Train Agent
 # Trains a single agent and saves the best model.
 # ---------------------------------------------------------------------------
-def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, discount_factor, model_path, randomize_positions, num_layers, num_nodes, realistic_pathing, realistic_vision, robot_num):
+def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, discount_factor, model_path, randomize_positions, num_layers, num_nodes, realistic_pathing, realistic_vision, robot_num, algorithm):
     def make_env():
         return env_class(save_path, randomize_positions=randomize_positions, realistic_pathing=realistic_pathing, realistic_vision=realistic_vision, robot_num=robot_num)
 
@@ -47,9 +47,9 @@ def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, d
     single_env.close()  # Close the single environment instance
 
     # Create SubprocVecEnv for parallel environments
-    num_cpus = min(max(1, multiprocessing.cpu_count()), 8)
+    num_cpus = min(max(1, multiprocessing.cpu_count()), 32)
     print(f"Creating {num_cpus} parallel environments")
-    env = SubprocVecEnv([make_env for _ in range(num_cpus)])  # Use 4 parallel environments
+    env = SubprocVecEnv([make_env for _ in range(num_cpus)])
     device = th.device("cuda" if th.cuda.is_available() else "cpu")
     print(f"Training agent with device {device}")
     
@@ -59,13 +59,18 @@ def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, d
     
     if model_path:
         print(f"Loading model from {model_path}")
-        model = PPO.load(model_path, env=env, verbose=1, ent_coef=entropy, learning_rate=learning_rate, gamma=discount_factor, device=device)
+        if algorithm == "PPO":
+            model = PPO.load(model_path, env=env, verbose=1, ent_coef=entropy, learning_rate=learning_rate, gamma=discount_factor, device=device)
+        elif algorithm == "DQN":
+            model = DQN.load(model_path, env=env, verbose=1, learning_rate=learning_rate, gamma=discount_factor, device=device)
     else:
         print("Creating new model")
-        model = PPO("MultiInputPolicy", env, verbose=1, ent_coef=entropy, learning_rate=learning_rate,
-                    gamma=discount_factor, device=device, policy_kwargs=policy_kwargs)
-    
-    check_steps = 10000
+        if algorithm == "PPO":
+            model = PPO("MultiInputPolicy", env, verbose=1, ent_coef=entropy, learning_rate=learning_rate, gamma=discount_factor, device=device, policy_kwargs=policy_kwargs)
+        elif algorithm == "DQN":
+            model = DQN("MultiInputPolicy", env, verbose=1, learning_rate=learning_rate, gamma=discount_factor, device=device)
+
+    check_steps = int(16384/num_cpus)  # Number of steps to check the model
     print(f"Evaluating every {check_steps} timesteps; saving to {save_path}")
     best_score = -np.inf
     initial_timesteps = model.num_timesteps
@@ -111,22 +116,26 @@ def train_agent(env_class, total_timesteps, save_path, entropy, learning_rate, d
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train multiple agents concurrently.")
-    parser.add_argument('--agents', type=int, required=True, help='Number of agents to train')
-    parser.add_argument('--timesteps', type=int, required=True, help='Total timesteps for training each agent')
-    parser.add_argument('--entropy', type=float, required=True, help='Entropy coefficient')
-    parser.add_argument('--learning-rate', type=float, required=True, help='Learning rate')
-    parser.add_argument('--discount-factor', type=float, required=True, help='Discount factor')
+    parser.add_argument('--agents', type=int, default=1, help='Number of agents to train')  # Default: 1
+    parser.add_argument('--timesteps', type=int, default=1000000, help='Total timesteps for training each agent')  # Default: 1000000
+    parser.add_argument('--entropy', type=float, default=0.01, help='Entropy coefficient')  # Default: 0.01
+    parser.add_argument('--learning-rate', type=float, default=0.0005, help='Learning rate')  # Default: 0.0005
+    parser.add_argument('--discount-factor', type=float, default=0.99, help='Discount factor')  # Default: 0.99
     parser.add_argument('--job-id', type=str, required=True, help='Job ID for saving models')
-    parser.add_argument('--model-path', type=str, required=True, help='Path to a pretrained model')
+    parser.add_argument('--model-path', type=str, default="", help='Path to a pretrained model')  # Default: ""
     parser.add_argument('--randomize', action='store_true', help='Randomize positions')
     parser.add_argument('--no-randomize', action='store_false', dest='randomize', help='Do not randomize positions')
-    parser.add_argument('--num-layers', type=int, required=True, help='Number of network layers')
-    parser.add_argument('--num-nodes', type=int, required=True, help='Nodes per layer')
+    parser.add_argument('--num-layers', type=int, default=2, help='Number of network layers')  # Default: 2
+    parser.add_argument('--num-nodes', type=int, default=64, help='Nodes per layer')  # Default: 64
     parser.add_argument('--realistic-pathing', action='store_true', help='Use realistic pathing')
     parser.add_argument('--no-realistic-pathing', action='store_false', dest='realistic_pathing', help='Do not use realistic pathing')
     parser.add_argument('--realistic-vision', action='store_true', help='Use realistic vision')
     parser.add_argument('--no-realistic-vision', action='store_false', dest='realistic_vision', help='Do not use realistic vision')
-    parser.add_argument('--robot-num', type=int, choices=[0, 1, 2], required=True, help='Specify which robot to use (0-2)')
+    parser.add_argument('--robot-num', type=int, choices=[0, 1, 2], default=0, help='Specify which robot to use (0-2)')  # Default: 0
+    parser.add_argument('--num-gpus', type=int, default=0, help='Number of GPUs to use')  # Default: 0
+    parser.add_argument('--cpus-per-task', type=int, default=32, help='Number of CPUs per task')  # Default: 32
+    parser.add_argument('--partition', type=str, default='teaching', help='Partition to use for training')  # Default: teaching
+    parser.add_argument('--algorithm', type=str, choices=['PPO', 'DQN'], default='PPO', help='Algorithm to use for training (PPO or DQN)')  # Default: PPO
     parser.set_defaults(realistic_pathing=False, realistic_vision=True, randomize=True)
     args = parser.parse_args()
 
@@ -143,11 +152,15 @@ if __name__ == "__main__":
     print(f"Use realistic pathing: {args.realistic_pathing}")
     print(f"Use realistic vision: {args.realistic_vision}")
     print(f"Robot number: {args.robot_num}")
+    print(f"Number of GPUs: {args.num_gpus}")
+    print(f"CPUs per task: {args.cpus_per_task}")
+    print(f"Partition: {args.partition}")
+    print(f"Algorithm: {args.algorithm}")
 
     processes = []
     for i in range(args.agents):
         save_path = f"job_results/job_{args.job_id}/models/model_{i}"
-        p = Process(target=train_agent, args=(VEXHighStakesEnv, args.timesteps, save_path, args.entropy, args.learning_rate, args.discount_factor, args.model_path, args.randomize, args.num_layers, args.num_nodes, args.realistic_pathing, args.realistic_vision, args.robot_num))
+        p = Process(target=train_agent, args=(VEXHighStakesEnv, args.timesteps, save_path, args.entropy, args.learning_rate, args.discount_factor, args.model_path, args.randomize, args.num_layers, args.num_nodes, args.realistic_pathing, args.realistic_vision, args.robot_num, args.algorithm))
         p.start()
         processes.append(p)
 
