@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import os
 import matplotlib.patches as patches
 from enum import Enum
+import copy
 from path_planner import PathPlanner, Obstacle
 
 # =============================================================================
@@ -170,6 +171,58 @@ class VEXHighStakesEnv(gym.Env):
             "visible_rings_count": self.visible_rings_count,
             "visible_goals_count": self.visible_goals_count
         }
+
+    # -----------------------------------------------------------------------------
+    # Set environment state from external observation
+    # -----------------------------------------------------------------------------
+    def set_state(self, obs):
+        # Avoid referencing anything shared from this object
+        obs = copy.deepcopy(obs)
+
+        self.last_robot_position = copy.deepcopy(self.robot_position)
+
+        self.robot_position[0] = obs['robot_x'][0]
+        self.robot_position[1] = obs['robot_y'][0]
+        self.robot_orientation = obs['robot_orientation'][0]
+
+        # TODO Check that the goal & ring stuff matches what comes from the RealSense code
+        self.holding_goal = obs['holding_goal']
+        # This assumes the goal being held is at the beginning of the goals list
+        self.holding_goal_index = 0 if self.holding_goal == 1 else -1
+        # This assumes the rings being held are at the beginning of the rings list
+        for i in range(len(self.ring_status)):
+            self.ring_status[i] = 1 if i < obs['holding_rings'] else 0
+            # TODO Handle rings on goals
+
+        padded_rings = obs['rings']
+        ring_list = []
+        for i in range(0, len(padded_rings), 2):
+            if padded_rings[i] != -1 and padded_rings[i + 1] != -1:
+                ring_list.append([padded_rings[i], padded_rings[i + 1]])
+        self.ring_positions = np.array(ring_list, dtype=np.float32)
+
+        padded_goals = obs['goals']
+        goal_list = []
+        for i in range(0, len(padded_goals), 2):
+            if padded_goals[i] != -1 and padded_goals[i + 1] != -1:
+                goal_list.append([padded_goals[i], padded_goals[i + 1]])
+        self.mobile_goal_positions = np.array(goal_list, dtype=np.float32)
+
+        self.wall_stakes = obs['wall_stakes']
+        self.holding_goal_full = obs['holding_goal_full']
+        self.time_remaining = obs['time_remaining'][0]
+        self.visible_rings_count = obs['visible_rings_count']
+        self.visible_goals_count = obs['visible_goals_count']
+
+        # TODO Okay to hardcode these?
+        self.last_action_success = True
+        self.climbed = False
+
+        self.update_available_objects()
+
+        # Keep array sizes in order (code can break otherwise)
+        self.ring_positions = self.padded_rings.reshape((-1, 2))
+        self.mobile_goal_positions = self.padded_goals.reshape((-1, 2))
 
     # -----------------------------------------------------------------------------
     # Reset environment to its initial state.
