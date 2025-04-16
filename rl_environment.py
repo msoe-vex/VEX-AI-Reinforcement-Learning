@@ -701,6 +701,121 @@ class VEXHighStakesEnv(gym.Env):
             os.makedirs(self.steps_save_path, exist_ok=True)
 
     # -----------------------------------------------------------------------------
+    # Compute the robot's path for the given action
+    # -----------------------------------------------------------------------------
+    def generate_path(self, action):
+        if not self.last_action_success:
+            return False, False, None, None
+
+        # Generate path
+        if action == Actions.CLIMB.value:
+            # Path from last robot position to nearest initial climb position
+            nearest_initial_climb_position = self.initial_climb_positions[np.argmin(np.linalg.norm(self.initial_climb_positions - self.robot_position, axis=1))]
+            planned_x1, planned_y1, time1 = self.calculate_path(self.last_robot_position / ENV_FIELD_SIZE, nearest_initial_climb_position / ENV_FIELD_SIZE)
+            planned_x1 *= ENV_FIELD_SIZE
+            planned_y1 *= ENV_FIELD_SIZE
+
+            # Path from initial climb position to corresponding climb position
+            corresponding_climb_position = self.climb_positions[np.argmin(np.linalg.norm(self.initial_climb_positions - nearest_initial_climb_position, axis=1))]
+            planned_x2, planned_y2, time2 = self.calculate_path(nearest_initial_climb_position / ENV_FIELD_SIZE, corresponding_climb_position / ENV_FIELD_SIZE)
+            planned_x2 *= ENV_FIELD_SIZE
+            planned_y2 *= ENV_FIELD_SIZE
+
+        else:
+            if not np.array_equal(self.robot_position, self.last_robot_position):
+                planned_x, planned_y, time = self.calculate_path(self.last_robot_position / ENV_FIELD_SIZE, self.robot_position / ENV_FIELD_SIZE)
+                planned_x *= ENV_FIELD_SIZE
+                planned_y *= ENV_FIELD_SIZE
+            else:
+                planned_x = np.array([self.robot_position[0]])
+                planned_y = np.array([self.robot_position[1]])
+        
+        forward_actions = [
+            Actions.PICK_UP_NEAREST_RING.value,
+            Actions.CLIMB.value,
+        ]
+        reverse_actions = [
+            Actions.PICK_UP_NEAREST_GOAL.value,
+            Actions.PICK_UP_NEXT_NEAREST_GOAL.value,
+            Actions.DRIVE_TO_CORNER_BL.value,
+            Actions.DRIVE_TO_CORNER_BR.value,
+            Actions.DRIVE_TO_CORNER_TL.value,
+            Actions.DRIVE_TO_CORNER_TR.value,
+            Actions.DRIVE_TO_WALL_STAKE_L.value,
+            Actions.DRIVE_TO_WALL_STAKE_R.value,
+            Actions.DRIVE_TO_WALL_STAKE_B.value,
+            Actions.DRIVE_TO_WALL_STAKE_T.value,
+        ]
+        has_path = action in forward_actions or action in reverse_actions
+        reverse = action in reverse_actions
+
+        if action == Actions.CLIMB.value:
+            return has_path, reverse, [planned_x1, planned_x2], [planned_y1, planned_y2]
+        elif has_path:
+            return has_path, reverse, planned_x, planned_y
+        else:
+            return has_path, reverse, None, None
+
+    # -----------------------------------------------------------------------------
+    # Break down an action into lower-level commands
+    # -----------------------------------------------------------------------------
+    def break_down_action(self, action, generate_path_output=None):
+        if not self.last_action_success:
+            return []
+
+        if generate_path_output is None:
+            has_path, reverse, planned_x, planned_y = self.generate_path(action)
+        else:
+            has_path, reverse, planned_x, planned_y = generate_path_output
+
+        broken_down_actions = []
+        path_action = 'BACKWARD' if reverse else 'FORWARD'
+
+        # Treat CLIMB specially, it has two paths
+        if action == Actions.CLIMB.value:
+            path_1 = []
+            for x, y in zip(planned_x[0], planned_y[0]):
+                path_1.append(x)
+                path_1.append(y)
+            path_2 = []
+            for x, y in zip(planned_x[1], planned_y[1]):
+                path_2.append(x)
+                path_2.append(y)
+
+            broken_down_actions.append((path_action, path_1))
+            broken_down_actions.append(('START_CLIMB', None))
+            broken_down_actions.append((path_action, path_2))
+            broken_down_actions.append(('END_CLIMB', None))
+            
+            return broken_down_actions
+
+        if has_path:
+            path = []
+            for x, y in zip(planned_x, planned_y):
+                path.append(x)
+                path.append(y)
+            broken_down_actions.append((path_action, path))
+
+        if Actions.PICK_UP_NEAREST_GOAL.value == action or Actions.PICK_UP_NEXT_NEAREST_GOAL.value == action:
+            broken_down_actions.append(('PICKUP_GOAL', None))
+        elif Actions.PICK_UP_NEAREST_RING.value == action:
+            broken_down_actions.append(('PICKUP_RING', None))
+        elif Actions.DROP_GOAL.value == action:
+            broken_down_actions.append(('DROP_GOAL', None))
+        elif Actions.DRIVE_TO_CORNER_BL.value <= action <= Actions.DRIVE_TO_CORNER_TR.value:
+            broken_down_actions.append(('TURN_TO', [self.robot_orientation]))
+        elif Actions.ADD_RING_TO_GOAL.value == action:
+            broken_down_actions.append(('ADD_RING_TO_GOAL', None))
+        elif Actions.DRIVE_TO_WALL_STAKE_L.value <= action <= Actions.DRIVE_TO_WALL_STAKE_T.value:
+            broken_down_actions.append(('TURN_TO', [self.robot_orientation]))
+        elif Actions.ADD_RING_TO_WALL_STAKE.value == action:
+            broken_down_actions.append(('ADD_RING_TO_WALL_STAKE', None))
+        elif Actions.TURN_TOWARDS_CENTER.value == action:
+            broken_down_actions.append(('TURN_TO', [self.robot_orientation]))
+
+        return broken_down_actions
+
+    # -----------------------------------------------------------------------------
     # Create a visual representation of the environment.
     # -----------------------------------------------------------------------------
     def render(self, step_num=0, action=None, reward=None):
@@ -714,84 +829,41 @@ class VEXHighStakesEnv(gym.Env):
         self.print_observation(self._get_observation())
 
         # Generate path
-        if action == Actions.CLIMB.value and self.last_action_success:
-            # Path from last robot position to nearest initial climb position
-            nearest_initial_climb_position = self.initial_climb_positions[np.argmin(np.linalg.norm(self.initial_climb_positions - self.robot_position, axis=1))]
-            planned_x1, planned_y1, time1 = self.calculate_path(self.last_robot_position / ENV_FIELD_SIZE, nearest_initial_climb_position / ENV_FIELD_SIZE)
-            planned_x1 *= ENV_FIELD_SIZE
-            planned_y1 *= ENV_FIELD_SIZE
-
-            # Path from initial climb position to corresponding climb position
-            corresponding_climb_position = self.climb_positions[np.argmin(np.linalg.norm(self.initial_climb_positions - nearest_initial_climb_position, axis=1))]
-            planned_x2, planned_y2, time2 = self.calculate_path(nearest_initial_climb_position / ENV_FIELD_SIZE, corresponding_climb_position / ENV_FIELD_SIZE)
-            planned_x2 *= ENV_FIELD_SIZE
-            planned_y2 *= ENV_FIELD_SIZE
-
-            planned_x = np.concatenate((planned_x1, planned_x2))
-            planned_y = np.concatenate((planned_y1, planned_y2))
+        if self.last_action_success:
+            gen_path_result = self.generate_path(action)
+            broken_down_actions = self.break_down_action(action, gen_path_result)
+            has_path, reverse, planned_x, planned_y = gen_path_result
         else:
-            if not np.array_equal(self.robot_position, self.last_robot_position):
-                planned_x, planned_y, time = self.calculate_path(self.last_robot_position / ENV_FIELD_SIZE, self.robot_position / ENV_FIELD_SIZE)
-                planned_x *= ENV_FIELD_SIZE
-                planned_y *= ENV_FIELD_SIZE
-            else:
-                planned_x = [self.robot_position[0]]
-                planned_y = [self.robot_position[1]]
+            planned_x = None
+            planned_y = None
+        
+        # Make the types of planned_x and planned_y consistent for the code below
+        if planned_x is None:
+            planned_x = np.array([self.robot_position[0]])
+        elif type(planned_x) == 'list':
+            planned_x1 = planned_x[0]
+            planned_x2 = planned_x[1]
+            planned_x = np.concatenate((planned_x1, planned_x2))
+        if planned_y is None:
+            planned_y = np.array([self.robot_position[1]])
+        elif type(planned_y) == 'list':
+            planned_y1 = planned_y[0]
+            planned_y2 = planned_y[1]
+            planned_y = np.concatenate((planned_y1, planned_y2))
 
         # Add data to CSV
-        FORWARD = "FORWARD"
-        BACKWARD = "BACKWARD"
-
         if self.last_action_success:
             with open(f'{self.save_path}/auton.csv', 'a') as f:
-                if(step_num == 0):
-                    f.write(f"{self.initial_robot_position[0]:.2f},{self.initial_robot_position[1]:.2f},{self.initial_robot_orientation:.2f}\n")
-
-                if Actions.PICK_UP_NEAREST_GOAL.value == action or Actions.PICK_UP_NEXT_NEAREST_GOAL.value == action:
-                    f.write(f"{BACKWARD}, ")
-                    for x, y in zip(planned_x, planned_y):
-                        f.write(f"{x:.2f},{y:.2f}, ")
-                    f.write(f"\n")
-                    f.write(f"PICKUP_GOAL\n")
-                if Actions.PICK_UP_NEAREST_RING.value == action:
-                    f.write(f"{FORWARD}, ")
-                    for x, y in zip(planned_x, planned_y):
-                        f.write(f"{x:.2f},{y:.2f}, ")
-                    f.write(f"\n")
-                    f.write(f"PICKUP_RING\n")
-                if Actions.CLIMB.value == action:
-                    # Write paths to file
-                    f.write(f"{FORWARD}, ")
-                    for x, y in zip(planned_x1, planned_y1):
-                        f.write(f"{x:.2f},{y:.2f}, ")
-                    f.write(f"\n")
-                    f.write(f"START_CLIMB\n")
-                    f.write(f"{FORWARD}, ")
-                    for x, y in zip(planned_x2, planned_y2):
-                        f.write(f"{x:.2f},{y:.2f}, ")
-                    f.write(f"\n")
-                    f.write(f"END_CLIMB\n")
-                if Actions.DROP_GOAL.value == action:
-                    f.write("DROP_GOAL\n")
-                if Actions.DRIVE_TO_CORNER_BL.value <= action <= Actions.DRIVE_TO_CORNER_TR.value:
-                    f.write(f"{BACKWARD}, ")
-                    for x, y in zip(planned_x, planned_y):
-                        f.write(f"{x:.2f},{y:.2f}, ")
-                    f.write(f"\n")
-                    f.write(f"TURN_TO, {self.robot_orientation:.2f}\n")
-                if Actions.ADD_RING_TO_GOAL.value == action:
-                    f.write("ADD_RING_TO_GOAL\n")
-                if Actions.DRIVE_TO_WALL_STAKE_L.value <= action <= Actions.DRIVE_TO_WALL_STAKE_T.value:
-                    f.write(f"{BACKWARD}, ")
-                    for x, y in zip(planned_x, planned_y):
-                        f.write(f"{x:.2f},{y:.2f}, ")
-                    f.write(f"\n")
-                    f.write(f"TURN_TO, {self.robot_orientation:.2f}\n")
-                if Actions.ADD_RING_TO_WALL_STAKE.value == action:
-                    f.write("ADD_RING_TO_WALL_STAKE\n")
-                if Actions.TURN_TOWARDS_CENTER.value == action:
-                    pass # Don't write anything to the auton, this action is irrevelant for pre-planned routes
-                    # f.write(f"TURN_TO, {self.robot_orientation:.2f}\n")
+                for action, params in broken_down_actions:
+                    f.write(action)
+                    if params is not None:
+                        for param in params:
+                            f.write(',')
+                            if isinstance(param, (float, np.floating)):
+                                f.write(f'{param:.2f}')
+                            else:
+                                f.write(str(param))
+                    f.write('\n')
 
         # Create visualization
         fig, ax = plt.subplots(figsize=(10,8))
