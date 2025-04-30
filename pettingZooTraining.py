@@ -2,15 +2,15 @@ import ray
 from ray.tune.registry import register_env
 from ray.rllib.algorithms.ppo import PPOConfig
 
-from pettingZooEnv import parallel_env
+from pettingZooEnv import High_Stakes_Multi_Agent_Env
 
 # Environment creator function that returns the raw PettingZoo parallel env
 def env_creator(_):
     # Wrap the PettingZoo parallel environment in an RLlib-compatible multi-agent environment
-    return (parallel_env(render_mode=None))
+    return (High_Stakes_Multi_Agent_Env(render_mode=None))
 
 # Register your environment with RLlib so it can be created by name
-register_env("custom_pettingzoo_env", env_creator)
+register_env("High_Stakes_Multi_Agent_Env", env_creator)
 
 # Create a temporary instance to retrieve observation and action spaces for a sample agent.
 temp_env = env_creator(None)
@@ -30,7 +30,7 @@ def policy_mapping_fn(agent_id, episode, worker, **kwargs):
 # Configure the RLlib Trainer using PPO (you can switch to another algorithm if desired)
 config = (
     PPOConfig()
-    .environment(env="custom_pettingzoo_env")
+    .environment(env="High_Stakes_Multi_Agent_Env")
     .framework("torch")  # change to "tf" if you prefer TensorFlow
     .rollouts(num_rollout_workers=1)  # adjust number of workers as needed
     .multi_agent(
@@ -47,7 +47,7 @@ if __name__ == "__main__":
     trainer = config.build()
 
     # Training loop
-    NUM_ITERS = 3  # Set the number of iterations for training
+    NUM_ITERS = 10  # Set the number of iterations for training
     for i in range(NUM_ITERS):
         result = trainer.train()
         print(f"Iteration {i}: mean episode reward = {result['episode_reward_mean']}")
