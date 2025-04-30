@@ -7,6 +7,8 @@ from pettingzoo import ParallelEnv
 from pettingzoo.utils import parallel_to_aec, wrappers
 from pettingzoo.test import parallel_api_test
 from ray.rllib.env import MultiAgentEnv
+from ray.rllib.utils.typing import MultiAgentDict
+
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from path_planner import PathPlanner, Obstacle
@@ -43,7 +45,7 @@ NUM_WALL_STAKES = 4
 NUM_GOALS = 5
 NUM_RINGS = 24
 TIME_LIMIT = 60
-DEFAULT_PENALTY = -1
+DEFAULT_PENALTY = -0.1
 
 def env(render_mode=None):
     """
@@ -69,12 +71,12 @@ def raw_env(render_mode=None):
     To support the AEC API, the raw_env() function just uses the from_parallel
     function to convert from a ParallelEnv to an AEC env
     """
-    env = parallel_env(render_mode=render_mode)
-    env = parallel_to_aec(env)
+    env = High_Stakes_Multi_Agent_Env(render_mode=render_mode)
+    # env = parallel_to_aec(env)
     return env
 
 
-class parallel_env(MultiAgentEnv, ParallelEnv):
+class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
     metadata = {"render_modes": ["human"], "name": "vex_high_stakes"}
 
     def __init__(self, render_mode=None):
@@ -144,15 +146,15 @@ class parallel_env(MultiAgentEnv, ParallelEnv):
     @functools.lru_cache(maxsize=None)
     def observation_space(self, agent):
         return spaces.Dict({
-            "position": spaces.Box(low=0, high=ENV_FIELD_SIZE, shape=(2,), dtype=np.float32),
-            "robot_orientation": spaces.Box(low=-np.pi, high=np.pi, shape=(1,), dtype=np.float32),
+            "position": spaces.Box(low=np.float32(0), high=np.float32(ENV_FIELD_SIZE), shape=(2,), dtype=np.float32),
+            "robot_orientation": spaces.Box(low=np.float32(-np.pi), high=np.float32(np.pi), shape=(1,), dtype=np.float32),
             "holding_goal": spaces.Discrete(2),
             "holding_rings": spaces.Discrete(3),
-            "rings": spaces.Box(low=-1, high=ENV_FIELD_SIZE, shape=(NUM_RINGS * 2,), dtype=np.float32),
-            "goals": spaces.Box(low=-1, high=ENV_FIELD_SIZE, shape=(NUM_GOALS * 2,), dtype=np.float32),
-            "wall_stake_ring_count": spaces.Box(low=0, high=6, shape=(NUM_WALL_STAKES,), dtype=np.int32),
+            "rings": spaces.Box(low=np.float32(-1), high=np.float32(ENV_FIELD_SIZE), shape=(NUM_RINGS * 2,), dtype=np.float32),
+            "goals": spaces.Box(low=np.float32(-1), high=np.float32(ENV_FIELD_SIZE), shape=(NUM_GOALS * 2,), dtype=np.float32),
+            "wall_stake_ring_count": spaces.Box(low=np.int32(0), high=np.int32(6), shape=(NUM_WALL_STAKES,), dtype=np.int32),
             "holding_goal_full": spaces.Discrete(2),
-            "time_remaining": spaces.Box(low=0, high=TIME_LIMIT, shape=(1,), dtype=np.float32),
+            "time_remaining": spaces.Box(low=np.float32(0), high=np.float32(TIME_LIMIT), shape=(1,), dtype=np.float32),
             "visible_rings_count": spaces.Discrete(NUM_RINGS + 1),
             "visible_goals_count": spaces.Discrete(NUM_GOALS + 1)
         })
@@ -161,12 +163,35 @@ class parallel_env(MultiAgentEnv, ParallelEnv):
     def action_space(self, agent):
         return spaces.Discrete(len(Actions))
 
+    def observation_space_sample(self, agent_ids=None):
+        agent_ids = agent_ids or self.get_agent_ids()
+        return {agent_id: self.observation_space(agent_id).sample() for agent_id in agent_ids}
+
+    def action_space_sample(self, agent_ids=None):
+        agent_ids = agent_ids or self.get_agent_ids()
+        return {agent_id: self.action_space(agent_id).sample() for agent_id in agent_ids}
+
+    def observation_space_contains(self, observations):
+        return all(
+            agent_id in self.get_agent_ids() and
+            self.observation_space(agent_id).contains(obs)
+            for agent_id, obs in observations.items()
+        )
+
+    def action_space_contains(self, actions):
+        return all(
+            agent_id in self.get_agent_ids() and
+            self.action_space(agent_id).contains(action)
+            for agent_id, action in actions.items()
+        )
+
     def reset(self, seed=None, options=None):
         self.agents = self.possible_agents[:]  # Reset agents to all possible agents
         self.num_moves = 0
         self.environment_state = self._get_initial_environment_state()
-        observations = {agent: self._get_initial_observation(agent) for agent in self.agents}
+        observations = {agent: self.get_observation(agent) for agent in self.agents}
         infos = {agent: {} for agent in self.agents}
+
         return observations, infos
 
     def _get_initial_environment_state(self):
@@ -199,6 +224,8 @@ class parallel_env(MultiAgentEnv, ParallelEnv):
                 "holding_goal_index": -1,
                 "held_rings": 0,
                 "size": 15,
+                "climbed": False,
+                "gameTime": 0,
             }
             for agent in self.agents
             },
@@ -206,23 +233,27 @@ class parallel_env(MultiAgentEnv, ParallelEnv):
             "rings": ring_positions,
         }
 
-
-    def _get_initial_observation(self, agent):
+    def get_observation(self, agent):
         agent_state = self.environment_state["agents"][agent]
         rings = self.get_available_rings(agent_state)
         goals = self.get_available_goals(agent_state)
         return {
-            "position": agent_state["position"],
-            "robot_orientation": agent_state["orientation"],
-            "holding_goal": 0,
-            "holding_rings": 0,
-            "rings": np.array(rings).flatten(),
-            "goals":  np.array(goals).flatten(),
-            "wall_stake_ring_count": np.zeros(NUM_WALL_STAKES, dtype=np.int32),
-            "holding_goal_full": 0,
-            "time_remaining": np.array([TIME_LIMIT], dtype=np.float32),
-            "visible_rings_count": np.count_nonzero(rings != -1) // 2,
-            "visible_goals_count": np.count_nonzero(goals != -1) // 2
+            "position": np.clip(agent_state["position"].astype(np.float32), 0, np.float32(ENV_FIELD_SIZE)),
+            "robot_orientation": np.clip(agent_state["orientation"].astype(np.float32), np.float32(-np.pi), np.float32(np.pi)),
+            "holding_goal": np.int32(0) if agent_state["holding_goal_index"] == -1 else np.int32(1),
+            "holding_rings": np.int32(agent_state["held_rings"]),
+            "rings": np.clip(np.array(rings, dtype=np.float32).flatten(), np.float32(-1), np.float32(ENV_FIELD_SIZE)),
+            "goals": np.clip(np.array(goals, dtype=np.float32).flatten(), np.float32(-1), np.float32(ENV_FIELD_SIZE)),
+            "wall_stake_ring_count": np.array([
+            np.int32(sum(1 for ring in self.environment_state["rings"] if ring["status"] == stake_index + 7))
+            for stake_index in range(NUM_WALL_STAKES)
+            ], dtype=np.int32),
+            "holding_goal_full": np.int32(0) if np.int32(sum(
+            1 for ring in self.environment_state["rings"] if ring["status"] == agent_state["holding_goal_index"] + 2
+            )) < 6 else np.int32(1),
+            "time_remaining": np.clip(np.array([TIME_LIMIT - agent_state["gameTime"]], dtype=np.float32), np.float32(0), np.float32(TIME_LIMIT)),
+            "visible_rings_count": np.int32(np.count_nonzero(rings != -1) // 2),
+            "visible_goals_count": np.int32(np.count_nonzero(goals != -1) // 2)
         }
 
     def step(self, actions):
@@ -230,24 +261,38 @@ class parallel_env(MultiAgentEnv, ParallelEnv):
         if not actions:
             self.agents = []
             return {}, {}, {}, {}, {}
-
-        # TODO: Implement the logic for calculating rewards
-        rewards = {agent: 0 for agent in self.agents}
-
+        
         # Increment move counter
         self.num_moves += 1
 
+        rewards = {agent: 0 for agent in self.agents} # Initialize rewards for each agent
+
         # TODO: Implement logic for terminating the episode
-        terminations = {agent: self.num_moves >= NUM_ITERS for agent in self.agents}
+        # Initialize terminations and truncations
+        terminations = {agent: self.num_moves > NUM_ITERS for agent in self.agents}
         terminations["__all__"] = all(terminations.values())
 
         truncations = {agent: False for agent in self.agents}
         truncations["__all__"] = all(truncations.values())
         
+        minGameTime = min([self.environment_state["agents"][agent]["gameTime"] for agent in self.agents])
+
         # Perform actions for each agent
+        # TODO: penalize robot for colliding with other robot
         for agent, action in actions.items():
             agent_state = self.environment_state["agents"][agent]
+
+            if agent_state["climbed"]:
+                # If the robot has climbed, it cannot perform any actions
+                rewards[agent] = DEFAULT_PENALTY
+                continue
+            if agent_state["gameTime"] > minGameTime:
+                continue # skip this agent if it is ahead of the others
+
+            initial_score = self.compute_field_score()
             
+            penalty = 0
+            duration = 0.1
             if action == Actions.PICK_UP_NEAREST_GOAL.value:
                 if agent_state["holding_goal_index"] == -1:
                     # Find the nearest available goal
@@ -270,8 +315,16 @@ class parallel_env(MultiAgentEnv, ParallelEnv):
                         direction_vector = goal_position - agent_state["position"]
                         agent_state["orientation"] = np.array([np.arctan2(direction_vector[1], direction_vector[0])], dtype=np.float32)
 
+                        # Calculate distance traveled and update duration
+                        distance = np.linalg.norm(direction_vector)
+                        duration += distance
+
                         # Update robot position to the goal's position
                         agent_state["position"] = self.environment_state["goals"][nearest_goal]["position"].copy()
+                    else:
+                        penalty = DEFAULT_PENALTY  # No available goal to pick up
+                else:
+                    penalty = DEFAULT_PENALTY  # Already holding a goal
 
             elif action == Actions.PICK_UP_NEAREST_RING.value:
                 # Check if the robot can hold more rings
@@ -296,45 +349,61 @@ class parallel_env(MultiAgentEnv, ParallelEnv):
                         direction_vector = ring_position - agent_state["position"]
                         agent_state["orientation"] = np.array([np.arctan2(direction_vector[1], direction_vector[0])], dtype=np.float32)
                         
+                        # Calculate distance traveled and update duration
+                        distance = np.linalg.norm(direction_vector)
+                        duration += distance
+
                         # Update robot position to the ring's position
                         agent_state["position"] = self.environment_state["rings"][nearest_ring]["position"].copy()
+                    else:
+                        penalty = DEFAULT_PENALTY  # No available ring to pick up
+                else:
+                    penalty = DEFAULT_PENALTY # Already holding maximum rings
 
+            # TODO: Implement other climbing logic
             elif action == Actions.CLIMB.value:
                 if agent_state["holding_goal_index"] != -1:
-                    reward = DEFAULT_PENALTY
+                    penalty = DEFAULT_PENALTY # Cannot climb while holding a goal
                 else:
                     # Find the nearest climb position
                     nearest_climb_position = self.climb_positions[np.argmin(np.linalg.norm(self.climb_positions - agent_state["position"], axis=1))]
+                    
+                    # Calculate distance traveled and update duration
+                    distance = np.linalg.norm(nearest_climb_position - agent_state["position"])
+                    duration += distance
+                    
                     agent_state["position"] = nearest_climb_position
                     direction_to_center = np.array([ENV_FIELD_SIZE / 2, ENV_FIELD_SIZE / 2]) - nearest_climb_position
                     agent_state["orientation"] = np.array([np.arctan2(direction_to_center[1], direction_to_center[0])], dtype=np.float32)
-                    reward = 3  # Reward for climbing
-                    # terminations[agent] = True # TODO: Figure out how to handle terminations with agents
+                    agent_state["climbed"] = True
             
             elif action == Actions.DROP_GOAL.value:
                 if agent_state["holding_goal_index"] != -1:
                     goal_index = agent_state["holding_goal_index"]
                     self.environment_state["goals"][goal_index]["status"] = 0  # Goal is now available
                     agent_state["holding_goal_index"] = -1
-                    reward = 1  # Reward for dropping goal
+                    duration += 0.5  # Add duration for dropping the goal
                 else:
-                    reward = DEFAULT_PENALTY  # No goal to drop
+                    penalty = DEFAULT_PENALTY  # No goal to drop
 
             elif Actions.DRIVE_TO_CORNER_BL.value <= action <= Actions.DRIVE_TO_CORNER_TR.value:
                 corner_index = action - Actions.DRIVE_TO_CORNER_BL.value
                 if corner_index == 0:  # BL
-                    agent_state["position"] = np.array([1.0, 1.0], dtype=np.float32)
-                    agent_state["orientation"] = np.array([np.arctan2(1.0 - agent_state["position"][1], 1.0 - agent_state["position"][0])], dtype=np.float32)
+                    target_position = np.array([1.0, 1.0], dtype=np.float32)
                 elif corner_index == 1:  # BR
-                    agent_state["position"] = np.array([ENV_FIELD_SIZE - 1.0, 1.0], dtype=np.float32)
-                    agent_state["orientation"] = np.array([np.arctan2(1.0 - agent_state["position"][1], ENV_FIELD_SIZE - agent_state["position"][0])], dtype=np.float32)
+                    target_position = np.array([ENV_FIELD_SIZE - 1.0, 1.0], dtype=np.float32)
                 elif corner_index == 2:  # TL
-                    agent_state["position"] = np.array([1.0, ENV_FIELD_SIZE - 1.0], dtype=np.float32)
-                    agent_state["orientation"] = np.array([np.arctan2(ENV_FIELD_SIZE - agent_state["position"][1], 1.0 - agent_state["position"][0])], dtype=np.float32)
+                    target_position = np.array([1.0, ENV_FIELD_SIZE - 1.0], dtype=np.float32)
                 elif corner_index == 3:  # TR
-                    agent_state["position"] = np.array([ENV_FIELD_SIZE - 1.0, ENV_FIELD_SIZE - 1.0], dtype=np.float32)
-                    agent_state["orientation"] = np.array([np.arctan2(ENV_FIELD_SIZE - agent_state["position"][1], ENV_FIELD_SIZE - agent_state["position"][0])], dtype=np.float32)
-                reward = 0  # No immediate reward for driving to corner
+                    target_position = np.array([ENV_FIELD_SIZE - 1.0, ENV_FIELD_SIZE - 1.0], dtype=np.float32)
+
+                # Calculate distance traveled and update duration
+                distance = np.linalg.norm(target_position - agent_state["position"])
+                duration += distance
+
+                # Update agent position and orientation
+                agent_state["position"] = target_position
+                agent_state["orientation"] = np.array([np.arctan2(target_position[1] - agent_state["position"][1], target_position[0] - agent_state["position"][0])], dtype=np.float32)
 
             elif action == Actions.ADD_RING_TO_GOAL.value:
                 if agent_state["holding_goal_index"] != -1 and agent_state["held_rings"] > 0:
@@ -342,28 +411,34 @@ class parallel_env(MultiAgentEnv, ParallelEnv):
                     # Find a ring held by the agent
                     for i, ring in enumerate(self.environment_state["rings"]):
                         if ring["status"] - 1 == self.agent_name_mapping[agent]:
-                            ring["status"] = 0 # Remove ring from agent
+                            ring["status"] = goal_index + 2
                             agent_state["held_rings"] -= 1
-                            reward = 2 # Reward for adding ring to goal
                             break
+                    duration += 0.5  # Add duration for adding ring to goal
                 else:
-                    reward = DEFAULT_PENALTY  # No goal or rings to add
+                    penalty = DEFAULT_PENALTY  # No goal or rings to add
 
             elif Actions.DRIVE_TO_WALL_STAKE_L.value <= action <= Actions.DRIVE_TO_WALL_STAKE_T.value:
                 stake_index = action - Actions.DRIVE_TO_WALL_STAKE_L.value
                 if stake_index == 0:  # L
-                    agent_state["position"] = np.array([1.0, ENV_FIELD_SIZE / 2], dtype=np.float32)
+                    target_position = np.array([1.0, ENV_FIELD_SIZE / 2], dtype=np.float32)
                     agent_state["orientation"] = np.array([np.pi], dtype=np.float32)
                 elif stake_index == 1:  # R
-                    agent_state["position"] = np.array([ENV_FIELD_SIZE - 1.0, ENV_FIELD_SIZE / 2], dtype=np.float32)
+                    target_position = np.array([ENV_FIELD_SIZE - 1.0, ENV_FIELD_SIZE / 2], dtype=np.float32)
                     agent_state["orientation"] = np.array([0.0], dtype=np.float32)
                 elif stake_index == 2:  # B
-                    agent_state["position"] = np.array([ENV_FIELD_SIZE / 2, 1.0], dtype=np.float32)
+                    target_position = np.array([ENV_FIELD_SIZE / 2, 1.0], dtype=np.float32)
                     agent_state["orientation"] = np.array([-np.pi / 2], dtype=np.float32)
                 elif stake_index == 3:  # T
-                    agent_state["position"] = np.array([ENV_FIELD_SIZE / 2, ENV_FIELD_SIZE - 1.0], dtype=np.float32)
+                    target_position = np.array([ENV_FIELD_SIZE / 2, ENV_FIELD_SIZE - 1.0], dtype=np.float32)
                     agent_state["orientation"] = np.array([np.pi / 2], dtype=np.float32)
-                reward = 0  # No immediate reward for driving to wall stake
+
+                # Calculate distance traveled and update duration
+                distance = np.linalg.norm(target_position - agent_state["position"])
+                duration += distance
+
+                # Update agent position
+                agent_state["position"] = target_position
 
             elif action == Actions.ADD_RING_TO_WALL_STAKE.value:
                  # Check if the robot is near a wall stake and has rings to add
@@ -378,47 +453,56 @@ class parallel_env(MultiAgentEnv, ParallelEnv):
                         for i, ring in enumerate(self.environment_state["rings"]):
                             if ring["status"] - 1 == self.agent_name_mapping[agent]:
                                 # Add ring to the wall stake
-                                ring["status"] = 0  # Remove ring from agent
+                                ring["status"] = closest_stake_index + 7  # Assign ring to the closest wall stake
                                 agent_state["held_rings"] -= 1
-                                reward = 3  # Reward for adding ring to wall stake
                                 break
+                        duration += 1  # Add duration for adding ring to wall stake
                     else:
-                        reward = DEFAULT_PENALTY  # Not close enough to a wall stake
+                        penalty = DEFAULT_PENALTY  # Not close enough to a wall stake
                 else:
-                    reward = DEFAULT_PENALTY  # No rings to add
+                    penalty = DEFAULT_PENALTY  # No rings to add
 
             elif action == Actions.TURN_TOWARDS_CENTER.value:
                 center = np.array([ENV_FIELD_SIZE / 2, ENV_FIELD_SIZE / 2], dtype=np.float32)
                 direction_vector = center - agent_state["position"]
                 agent_state["orientation"] = np.array([np.arctan2(direction_vector[1], direction_vector[0])], dtype=np.float32)
-                reward = 0  # No immediate reward for turning
+                duration += 1  # Add duration for turning towards center
 
             elif action == Actions.PICK_UP_NEXT_NEAREST_GOAL.value:
-                # Find the next nearest available goal
-                available_goals = []
-                for i, goal in enumerate(self.environment_state["goals"]):
-                    if self.is_goal_available(i, agent_state):  # Check if the goal is available
-                        available_goals.append((i, np.linalg.norm(agent_state["position"] - goal["position"])))
+                if agent_state["holding_goal_index"] != -1:
+                    # Find the next nearest available goal
+                    available_goals = []
+                    for i, goal in enumerate(self.environment_state["goals"]):
+                        if self.is_goal_available(i, agent_state):  # Check if the goal is available
+                            available_goals.append((i, np.linalg.norm(agent_state["position"] - goal["position"])))
 
-                if len(available_goals) > 1:
-                    # Sort goals by distance
-                    available_goals = sorted(available_goals, key=lambda x: x[1])
-                    next_nearest_goal_index = available_goals[1][0]  # Get the second nearest goal
+                    if len(available_goals) > 1:
+                        # Sort goals by distance
+                        available_goals = sorted(available_goals, key=lambda x: x[1])
+                        next_nearest_goal_index = available_goals[1][0]  # Get the second nearest goal
 
-                    # Update agent state to pick up the next nearest goal
-                    agent_state["holding_goal_index"] = next_nearest_goal_index
-                    self.environment_state["goals"][next_nearest_goal_index]["status"] = self.agent_name_mapping[agent] + 1
+                        # Update agent state to pick up the next nearest goal
+                        agent_state["holding_goal_index"] = next_nearest_goal_index
+                        self.environment_state["goals"][next_nearest_goal_index]["status"] = self.agent_name_mapping[agent] + 1
 
-                    # Update robot orientation to face the goal
-                    goal_position = self.environment_state["goals"][next_nearest_goal_index]["position"]
-                    direction_vector = goal_position - agent_state["position"]
-                    agent_state["orientation"] = np.array([np.arctan2(direction_vector[1], direction_vector[0])], dtype=np.float32)
+                        # Update robot orientation to face the goal
+                        goal_position = self.environment_state["goals"][next_nearest_goal_index]["position"]
+                        direction_vector = goal_position - agent_state["position"]
+                        agent_state["orientation"] = np.array([np.arctan2(direction_vector[1], direction_vector[0])], dtype=np.float32)
 
-                    # Update robot position to the goal's position
-                    agent_state["position"] = self.environment_state["goals"][next_nearest_goal_index]["position"].copy()
-                    reward = 1  # Reward for picking up the next nearest goal
+                        # Calculate distance traveled and update duration
+                        distance = np.linalg.norm(direction_vector)
+                        duration += distance
+
+                        # Update robot position to the goal's position
+                        agent_state["position"] = self.environment_state["goals"][next_nearest_goal_index]["position"].copy()
+                    else:
+                        penalty = DEFAULT_PENALTY  # Not enough goals available
                 else:
-                    reward = DEFAULT_PENALTY  # Not enough goals available
+                    penalty = DEFAULT_PENALTY  # No goal to pick up
+            
+            agent_state["gameTime"] += duration
+            rewards[agent] = self.reward_function(initial_score, penalty)
             
             # Update agent state
             self.environment_state["agents"][agent] = agent_state
@@ -440,7 +524,7 @@ class parallel_env(MultiAgentEnv, ParallelEnv):
         infos = {agent: {} for agent in self.agents}
 
         # Update observations based on the updated environment state
-        observations = {agent: self._get_initial_observation(agent) for agent in self.agents}
+        observations = {agent: self.get_observation(agent) for agent in self.agents}
 
         # Remove agents if the environment is truncated or terminated
         if terminations["__all__"] or truncations["__all__"]:
@@ -451,31 +535,31 @@ class parallel_env(MultiAgentEnv, ParallelEnv):
 
         return observations, rewards, terminations, truncations, infos
 
-    def render(self, actions=None):
+    def render(self, actions=None, rewards=None):
         """
         Renders the environment. In human mode, it can print to terminal, open
         up a graphical window, or open up some other display that a human can see and understand.
         """
-        if self.render_mode is None:
+        mode = self.render_mode
+        if mode is None:
             gymnasium.logger.warn(
                 "You are calling render method without specifying any render mode."
             )
             return
 
-        if(self.render_mode == "terminal"):
-            if len(self.agents) >= 0:
-                positions = [
-                    "Agent{} (x: {}, y: {})".format(
-                        i + 1,
-                        self.environment_state["agents"][agent]["position"][0],
-                        self.environment_state["agents"][agent]["position"][1]
-                    )
-                    for i, agent in enumerate(self.agents)
-                ]
-                print("Robot positions: " + ", ".join(positions))
-            else:
-                print("Game over")
-        if self.render_mode == "image":
+        if mode == "terminal" or mode == "all":
+            if len(self.agents) > 0:
+                print("Step:", self.num_moves)
+            for agent in self.agents:
+                print(f"\t{agent}:")
+                if actions is not None:
+                    print(f"\t\tAction: {Actions(actions[agent]).name}")
+                if rewards is not None:
+                    print(f"\t\tReward: {rewards[agent]}")
+                for attribute, value in self.environment_state['agents'][agent].items():
+                    print(f"\t\t{attribute}: {value}")
+            print()
+        if mode == "image" or mode == "all":
             self.save_image(self.num_moves, actions)
     
     def save_image(self, step_num, actions=None):
@@ -606,10 +690,35 @@ class parallel_env(MultiAgentEnv, ParallelEnv):
         user is no longer using the environment.
         """
         pass
+
+    def reward_function(self, initial_score, penalty):
+        new_score = self.compute_field_score()
+        delta_score = new_score - initial_score
+        reward = delta_score + penalty
+        return reward
+
+    def compute_field_score(self, skills=True):
+        score = 0
+        for goal_idx, goal in enumerate(self.environment_state["goals"]):
+            rings_on_goal = sum(1 for ring in self.environment_state["rings"] if ring["status"] == goal_idx + 2)
+            if rings_on_goal > 0:
+                in_corner = any(np.linalg.norm(goal["position"] - corner) < 0.5 for corner in self.climb_positions)
+                if(skills):
+                    score += (3 + (rings_on_goal - 1)) + (5 if in_corner else 0)
+                else:
+                    score += (3 + (rings_on_goal - 1)) * (2 if in_corner else 1)
+
+        for stake_idx, stake_pos in enumerate(self.wall_stakes_positions):
+            rings_on_stake = sum(1 for ring in self.environment_state["rings"] if ring["status"] == stake_idx + 7)
+            if rings_on_stake > 0:
+                score += 3 + (rings_on_stake - 1)
+
+        if self.environment_state["agents"][self.agents[0]]["climbed"]:
+            score += 3
+
+        self.total_score = score
+        return score
     
-    # -----------------------------------------------------------------------------
-    # Check if a given goal is available (visible, not held, and in the correct half of the field).
-    # -----------------------------------------------------------------------------
     def is_goal_available(self, goal_index, agent_state):
         goal_position = self.environment_state["goals"][goal_index]["position"]
         if self.robot_num == 1 and goal_position[1] < ENV_FIELD_SIZE / 2:
@@ -618,9 +727,6 @@ class parallel_env(MultiAgentEnv, ParallelEnv):
             return False
         return self.is_visible(goal_position, agent_state) and self.environment_state["goals"][goal_index]["status"] == 0
 
-    # -----------------------------------------------------------------------------
-    # Check if a given ring is available (visible, not held, and in the correct half of the field).
-    # -----------------------------------------------------------------------------
     def is_ring_available(self, ring_index, agent_state):
         ring_position = self.environment_state["rings"][ring_index]["position"]
         if self.robot_num == 1 and ring_position[1] < ENV_FIELD_SIZE / 2:
@@ -629,9 +735,6 @@ class parallel_env(MultiAgentEnv, ParallelEnv):
             return False
         return self.is_visible(ring_position, agent_state) and self.environment_state["rings"][ring_index]["status"] == 0
 
-    # -----------------------------------------------------------------------------
-    # Check if a given position is visible from the robot.
-    # -----------------------------------------------------------------------------
     def is_visible(self, position, agent_state):
         if not self.realistic_vision:
             return True
@@ -642,9 +745,6 @@ class parallel_env(MultiAgentEnv, ParallelEnv):
         relative_angle = (angle - agent_state["orientation"] + np.pi) % (2 * np.pi) - np.pi
         return -np.pi / 4 <= relative_angle <= np.pi / 4
 
-    # -----------------------------------------------------------------------------
-    # Get visible goals padded with -1 at the ends.
-    # -----------------------------------------------------------------------------
     def get_available_goals(self, agent_state):
         padded_goals = np.full((NUM_GOALS * 2,), -1, dtype=np.float32)
         visible_goals = []
@@ -658,9 +758,6 @@ class parallel_env(MultiAgentEnv, ParallelEnv):
 
         return padded_goals
 
-    # -----------------------------------------------------------------------------
-    # Get visible rings padded with -1 at the ends.
-    # -----------------------------------------------------------------------------
     def get_available_rings(self, agent_state):
         padded_rings = np.full((NUM_RINGS * 2,), -1, dtype=np.float32)
         visible_rings = []
@@ -675,20 +772,20 @@ class parallel_env(MultiAgentEnv, ParallelEnv):
         return padded_rings
 
 if __name__ == "__main__":
-    env = parallel_env(render_mode="image")
-    parallel_api_test(env, num_cycles=1000)
+    env = High_Stakes_Multi_Agent_Env(render_mode="terminal")
+    parallel_api_test(env)
 
     observations, infos = env.reset()
 
     env.clearStepsDirectory()
 
     done = False
-    env.render(None)
+    env.render()
     while not done:
         # this is where you would insert your policy
         actions = {agent: env.action_space(agent).sample() for agent in env.agents}
 
         observations, rewards, terminations, truncations, infos = env.step(actions)
         done = all(terminations.values()) or all(truncations.values())
-        env.render(actions)
+        env.render(actions, rewards)
     env.close()
