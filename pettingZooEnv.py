@@ -17,8 +17,6 @@ import numpy as np
 from enum import Enum
 import os
 
-NUM_ITERS = 100
-
 class Actions(Enum):
     PICK_UP_NEAREST_GOAL = 0
     PICK_UP_NEAREST_RING = 1
@@ -124,24 +122,6 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
              np.sin(np.arctan2(self.permanent_obstacles[3].y - self.permanent_obstacles[0].y, self.permanent_obstacles[3].x - self.permanent_obstacles[0].x)) * 1]
         ])
         self.realistic_vision = True
-        self.robot_num = 0
-        self.robot_length = 15 # inches
-        self.robot_width = 15 # inches
-        self.robot_radius = np.sqrt( \
-                                (self.robot_length*(ENV_FIELD_SIZE/INCHES_PER_FIELD))**2 + \
-                                (self.robot_width*(ENV_FIELD_SIZE/INCHES_PER_FIELD))**2
-                            ) / 2 + BUFFER_RADIUS*(ENV_FIELD_SIZE/INCHES_PER_FIELD)
-        self.initial_robot_position = np.array([1, 6.0], dtype=np.float32)
-        self.initial_robot_orientation = 0.0
-        self.mobile_goal_positions = np.array([[4.0, 2.0], [4.0, 10.0], [8.0, 4.0], [8.0, 8.0], [10.0, 6.0]], dtype=np.float32)
-        self.ring_positions = np.array([
-            [6.0, 1.0], [6.0, 11.0],
-            [2.0, 2.0], [2.0, 6.0], [2.0, 10.0], [4.0, 4.0], [4.0, 8.0],
-            [5.7, 5.7], [5.7, 6.3], [6.3, 5.7], [6.3, 6.3],
-            [6.0, 2.0], [6.0, 10.0], [8.0, 2.0], [8.0, 10.0], [10.0, 2.0], [10.0, 10.0],
-            [1, 1], [11, 11], [11, 1], [1, 11],
-            [10.0, 4.0], [10.0, 8.0], [11.0, 6.0]
-        ], dtype=np.float32)
 
     @functools.lru_cache(maxsize=None)
     def observation_space(self, agent):
@@ -218,16 +198,16 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             ]
         return {
             "agents": {
-            agent: {
-                "position": np.array([1.0, 6.0], dtype=np.float32),
-                "orientation": np.array([0.0], dtype=np.float32),
-                "holding_goal_index": -1,
-                "held_rings": 0,
-                "size": 15,
-                "climbed": False,
-                "gameTime": 0,
-            }
-            for agent in self.agents
+                agent: {
+                    "position": np.array([1.0, 6.0], dtype=np.float32),
+                    "orientation": np.array([0.0], dtype=np.float32),
+                    "holding_goal_index": -1,
+                    "held_rings": 0,
+                    "size": 15,
+                    "climbed": False,
+                    "gameTime": 0,
+                }
+                for agent in self.agents
             },
             "goals": goal_positions,
             "rings": ring_positions,
@@ -260,22 +240,21 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         # Ensure actions are provided for all agents
         if not actions:
             self.agents = []
-            return {}, {}, {}, {}, {}
+            return {}, {}, {"__all__": True}, {"__all__": True}, {}
         
         # Increment move counter
         self.num_moves += 1
 
         rewards = {agent: 0 for agent in self.agents} # Initialize rewards for each agent
+        
+        minGameTime = min([self.environment_state["agents"][agent]["gameTime"] for agent in self.agents])
 
-        # TODO: Implement logic for terminating the episode
         # Initialize terminations and truncations
-        terminations = {agent: self.num_moves > NUM_ITERS for agent in self.agents}
+        terminations = {agent: minGameTime >= TIME_LIMIT for agent in self.agents}
         terminations["__all__"] = all(terminations.values())
 
         truncations = {agent: False for agent in self.agents}
         truncations["__all__"] = all(truncations.values())
-        
-        minGameTime = min([self.environment_state["agents"][agent]["gameTime"] for agent in self.agents])
 
         # Perform actions for each agent
         # TODO: penalize robot for colliding with other robot
@@ -283,9 +262,8 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             agent_state = self.environment_state["agents"][agent]
 
             if agent_state["climbed"]:
-                # If the robot has climbed, it cannot perform any actions
-                rewards[agent] = DEFAULT_PENALTY
-                continue
+                rewards[agent] = -1
+                continue # If the robot has climbed, skip the rest of the actions
             if agent_state["gameTime"] > minGameTime:
                 continue # skip this agent if it is ahead of the others
 
@@ -360,10 +338,11 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 else:
                     penalty = DEFAULT_PENALTY # Already holding maximum rings
 
-            # TODO: Implement other climbing logic
             elif action == Actions.CLIMB.value:
                 if agent_state["holding_goal_index"] != -1:
                     penalty = DEFAULT_PENALTY # Cannot climb while holding a goal
+                elif TIME_LIMIT - agent_state["gameTime"] < 10:
+                    penalty = DEFAULT_PENALTY # Not enough time to climb
                 else:
                     # Find the nearest climb position
                     nearest_climb_position = self.climb_positions[np.argmin(np.linalg.norm(self.climb_positions - agent_state["position"], axis=1))]
@@ -376,7 +355,8 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                     direction_to_center = np.array([ENV_FIELD_SIZE / 2, ENV_FIELD_SIZE / 2]) - nearest_climb_position
                     agent_state["orientation"] = np.array([np.arctan2(direction_to_center[1], direction_to_center[0])], dtype=np.float32)
                     agent_state["climbed"] = True
-            
+                    duration = TIME_LIMIT - agent_state["gameTime"]  # Set duration to time remaining
+
             elif action == Actions.DROP_GOAL.value:
                 if agent_state["holding_goal_index"] != -1:
                     goal_index = agent_state["holding_goal_index"]
@@ -501,6 +481,14 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 else:
                     penalty = DEFAULT_PENALTY  # No goal to pick up
             
+            # Check for collision with other agents
+            for other_agent, other_agent_state in self.environment_state["agents"].items():
+                if agent != other_agent:
+                    distance = np.linalg.norm(agent_state["position"] - other_agent_state["position"])
+                    combined_radius = (agent_state["size"] * np.sqrt(2) + other_agent_state["size"] * np.sqrt(2)) / 24  # Convert inches to feet
+                    if distance < combined_radius:
+                        penalty += -10  # Apply penalty for collision
+            
             agent_state["gameTime"] += duration
             rewards[agent] = self.reward_function(initial_score, penalty)
             
@@ -519,18 +507,17 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 if ring["status"] - 1 == self.agent_name_mapping[agent]:
                     ring["position"] = agent_state["position"].copy()
 
-        # TODO: Implement time synchronization issues
-
         infos = {agent: {} for agent in self.agents}
 
         # Update observations based on the updated environment state
         observations = {agent: self.get_observation(agent) for agent in self.agents}
 
+        self.score = self.compute_field_score() # Compute score before agents are removed
+
         # Remove agents if the environment is truncated or terminated
         if terminations["__all__"] or truncations["__all__"]:
             self.agents = []
         else:
-            # Filter out terminated agents # TODO: Figure out how to handle terminations with agents
             self.agents = [agent for agent in self.agents if not terminations[agent] and not truncations[agent]]
 
         return observations, rewards, terminations, truncations, infos
@@ -551,13 +538,20 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             if len(self.agents) > 0:
                 print("Step:", self.num_moves)
             for agent in self.agents:
+                agent_state = self.environment_state["agents"][agent]
                 print(f"\t{agent}:")
-                if actions is not None:
+                if (not agent_state["climbed"]) and (actions is not None):
                     print(f"\t\tAction: {Actions(actions[agent]).name}")
                 if rewards is not None:
                     print(f"\t\tReward: {rewards[agent]}")
-                for attribute, value in self.environment_state['agents'][agent].items():
+                for attribute, value in agent_state.items():
                     print(f"\t\t{attribute}: {value}")
+            print("Score:", self.score)
+            gameTimes = [self.environment_state["agents"][agent]["gameTime"] for agent in self.agents]
+            timeRemaining = 0
+            if len(gameTimes) > 0:
+                timeRemaining = TIME_LIMIT - min(gameTimes)
+            print("Time Remaining:", timeRemaining)            
             print()
         if mode == "image" or mode == "all":
             self.save_image(self.num_moves, actions)
@@ -713,26 +707,19 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             if rings_on_stake > 0:
                 score += 3 + (rings_on_stake - 1)
 
-        if self.environment_state["agents"][self.agents[0]]["climbed"]:
-            score += 3
+        for agent in self.agents:
+            if self.environment_state["agents"][agent]["climbed"]:
+                score += 3
 
         self.total_score = score
         return score
     
     def is_goal_available(self, goal_index, agent_state):
         goal_position = self.environment_state["goals"][goal_index]["position"]
-        if self.robot_num == 1 and goal_position[1] < ENV_FIELD_SIZE / 2:
-            return False
-        if self.robot_num == 2 and goal_position[1] >= ENV_FIELD_SIZE / 2:
-            return False
         return self.is_visible(goal_position, agent_state) and self.environment_state["goals"][goal_index]["status"] == 0
 
     def is_ring_available(self, ring_index, agent_state):
         ring_position = self.environment_state["rings"][ring_index]["position"]
-        if self.robot_num == 1 and ring_position[1] < ENV_FIELD_SIZE / 2:
-            return False
-        if self.robot_num == 2 and ring_position[1] >= ENV_FIELD_SIZE / 2:
-            return False
         return self.is_visible(ring_position, agent_state) and self.environment_state["rings"][ring_index]["status"] == 0
 
     def is_visible(self, position, agent_state):
@@ -786,6 +773,6 @@ if __name__ == "__main__":
         actions = {agent: env.action_space(agent).sample() for agent in env.agents}
 
         observations, rewards, terminations, truncations, infos = env.step(actions)
-        done = all(terminations.values()) or all(truncations.values())
+        done = terminations["__all__"] or truncations["__all__"]
         env.render(actions, rewards)
     env.close()
