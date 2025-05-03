@@ -8,10 +8,6 @@ from ray import tune
 
 from pettingZooEnv import High_Stakes_Multi_Agent_Env
 
-# Suppress NVML and GPU monitoring warnings
-# warnings.filterwarnings("ignore", message="Can't initialize NVML")
-# warnings.filterwarnings("ignore", message="Install gputil for GPU system monitoring.")
-
 # Environment creator function that returns the raw PettingZoo parallel env
 def env_creator(_):
     # Wrap the PettingZoo parallel environment in an RLlib-compatible multi-agent environment
