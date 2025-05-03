@@ -4,10 +4,9 @@ import gymnasium
 from gymnasium import spaces
 
 from pettingzoo import ParallelEnv
-from pettingzoo.utils import parallel_to_aec, wrappers
+from pettingzoo.utils import wrappers
 from pettingzoo.test import parallel_api_test
 from ray.rllib.env import MultiAgentEnv
-from ray.rllib.utils.typing import MultiAgentDict
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -540,7 +539,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             for agent in self.agents:
                 agent_state = self.environment_state["agents"][agent]
                 print(f"\t{agent}:")
-                if (not agent_state["climbed"]) and (actions is not None):
+                if actions is not None:
                     print(f"\t\tAction: {Actions(actions[agent]).name}")
                 if rewards is not None:
                     print(f"\t\tReward: {rewards[agent]}")

@@ -1,8 +1,18 @@
 # VEX AI Reinforcement Learning
 
-This project involves training and running reinforcement learning agents in a custom VEX environment using the Stable Baselines3 library.
+This project involves training and running reinforcement learning agents in a custom VEX environment using Gymnasium/PettingZoo and RlLib.
 
 ## Setup
+
+Use Python 3.8
+
+```bash
+pip install ray[tune] gymnasium pettingzoo dm-tree matplotlib casadi typer opencv-python scipy lz4 torch gputil
+```
+
+<!-- 
+
+Old Readme
 
 1. **Install Dependencies**:
     ```bash
@@ -167,4 +177,5 @@ python compile_output.py --sequence auton_sequence.txt --output auton1.h
 - `train_models.py`: Script to train multiple agents concurrently.
 - `train_models.sh`: SLURM job script to submit training jobs to a cluster.
 - `compile_output.py`: Script to translate an RL model's action sequence into C++ autonomous code.
-- `remove_null_bytes.py`: Script to remove null bytes from `rl_environment.py`.
+- `remove_null_bytes.py`: Script to remove null bytes from `rl_environment.py`. 
+-->

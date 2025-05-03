@@ -5,8 +5,6 @@ from ray.rllib.algorithms.ppo import PPOConfig
 from ray.tune.logger import JsonLoggerCallback, CSVLoggerCallback, TBXLoggerCallback
 from ray.rllib.utils import check_env
 from ray import tune
-import os
-import warnings
 
 from pettingZooEnv import High_Stakes_Multi_Agent_Env
 
