@@ -4,6 +4,7 @@ from ray.tune.registry import register_env
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.tune.logger import JsonLoggerCallback, CSVLoggerCallback, TBXLoggerCallback
 from ray.rllib.utils import check_env
+from ray.train import CheckpointConfig
 from ray import tune
 
 from pettingZooEnv import High_Stakes_Multi_Agent_Env
@@ -68,6 +69,12 @@ if __name__ == "__main__":
     tune.run(
         "PPO",
         config=config.to_dict(),
+        checkpoint_config=CheckpointConfig(
+            checkpoint_score_attribute="episode_reward_mean",
+            checkpoint_score_order="max",
+            num_to_keep=5,
+        ),
+        local_dir=os.path.join(os.getcwd(), "ray_results"),
         stop={"training_iteration": args.num_iters},
         callbacks=[
             JsonLoggerCallback(),
