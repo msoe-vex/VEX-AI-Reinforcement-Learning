@@ -126,19 +126,37 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
 
     @functools.lru_cache(maxsize=None)
     def observation_space(self, agent):
-        return spaces.Dict({
-            "position": spaces.Box(low=0, high=ENV_FIELD_SIZE, shape=(2,), dtype=np.float32),
-            "robot_orientation": spaces.Box(low=-np.pi, high=np.pi, shape=(1,), dtype=np.float32),
-            "holding_goal": spaces.Discrete(2),
-            "holding_rings": spaces.Discrete(3),
-            "rings": spaces.Box(low=-1, high=ENV_FIELD_SIZE, shape=(NUM_RINGS * 2,), dtype=np.float32),
-            "goals": spaces.Box(low=-1, high=ENV_FIELD_SIZE, shape=(NUM_GOALS * 2,), dtype=np.float32),
-            "wall_stake_ring_count": spaces.Box(low=0, high=6, shape=(NUM_WALL_STAKES,), dtype=np.int32),
-            "holding_goal_full": spaces.Discrete(2),
-            "time_remaining": spaces.Box(low=0, high=TIME_LIMIT, shape=(1,), dtype=np.float32),
-            "visible_rings_count": spaces.Discrete(NUM_RINGS + 1),
-            "visible_goals_count": spaces.Discrete(NUM_GOALS + 1)
-        })
+        # Observation structure:
+        # 1. Position (x, y): 2 elements
+        # 2. Orientation: 1 element
+        # 3. Holding Goal (boolean): 1 element
+        # 4. Held Rings (count): 1 element
+        # 5. Ring positions (x, y for each): NUM_RINGS * 2 elements
+        # 6. Goal positions (x, y for each): NUM_GOALS * 2 elements
+        # 7. Rings on wall stakes (count for each): NUM_WALL_STAKES elements
+        # 8. Holding Goal Full (boolean): 1 element
+        # 9. Time Remaining: 1 element
+        # 10. Visible Rings Count: 1 element
+        # 11. Visible Goals Count: 1 element
+        # Total elements = 2+1+1+1 + (NUM_RINGS*2) + (NUM_GOALS*2) + NUM_WALL_STAKES + 1+1+1+1 = 71
+
+        low = np.array(
+            [0.0, 0.0, -np.pi, 0.0, 0.0] +  # Pos(2), Orient(1), HoldGoal(1), HeldRings(1)
+            [-1.0] * (NUM_RINGS * 2) +
+            [-1.0] * (NUM_GOALS * 2) +
+            [0.0] * NUM_WALL_STAKES +
+            [0.0, 0.0, 0.0, 0.0],  # HoldGoalFull(1), TimeRem(1), VisRings(1), VisGoals(1)
+            dtype=np.float32
+        )
+        high = np.array(
+            [float(ENV_FIELD_SIZE), float(ENV_FIELD_SIZE), np.pi, 1.0, 2.0] +  # Pos(2), Orient(1), HoldGoal(1), HeldRings(1)
+            [float(ENV_FIELD_SIZE)] * (NUM_RINGS * 2) +
+            [float(ENV_FIELD_SIZE)] * (NUM_GOALS * 2) +
+            [6.0] * NUM_WALL_STAKES +
+            [1.0, float(TIME_LIMIT), float(NUM_RINGS), float(NUM_GOALS)],  # HoldGoalFull(1), TimeRem(1), VisRings(1), VisGoals(1)
+            dtype=np.float32
+        )
+        return spaces.Box(low=low, high=high, dtype=np.float32)
 
     @functools.lru_cache(maxsize=None)
     def action_space(self, agent):
@@ -219,24 +237,26 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         agent_state = self.environment_state["agents"][agent]
         rings = self.get_available_rings(agent_state)
         goals = self.get_available_goals(agent_state)
-        return {
-            "position": np.clip(agent_state["position"].astype(np.float32), 0, np.float32(ENV_FIELD_SIZE)),
-            "robot_orientation": np.clip(agent_state["orientation"].astype(np.float32), np.float32(-np.pi), np.float32(np.pi)),
-            "holding_goal": np.int32(0) if agent_state["holding_goal_index"] == -1 else np.int32(1),
-            "holding_rings": np.int32(agent_state["held_rings"]),
-            "rings": np.clip(np.array(rings, dtype=np.float32).flatten(), np.float32(-1), np.float32(ENV_FIELD_SIZE)),
-            "goals": np.clip(np.array(goals, dtype=np.float32).flatten(), np.float32(-1), np.float32(ENV_FIELD_SIZE)),
-            "wall_stake_ring_count": np.array([
-            np.int32(sum(1 for ring in self.environment_state["rings"] if ring["status"] == stake_index + 7))
-            for stake_index in range(NUM_WALL_STAKES)
-            ], dtype=np.int32),
-            "holding_goal_full": np.int32(0) if np.int32(sum(
-            1 for ring in self.environment_state["rings"] if ring["status"] == agent_state["holding_goal_index"] + 2
-            )) < 6 else np.int32(1),
-            "time_remaining": np.clip(np.array([TIME_LIMIT - agent_state["gameTime"]], dtype=np.float32), np.float32(0), np.float32(TIME_LIMIT)),
-            "visible_rings_count": np.int32(np.count_nonzero(rings != -1) // 2),
-            "visible_goals_count": np.int32(np.count_nonzero(goals != -1) // 2)
-        }
+        observation = np.concatenate([
+            np.clip(agent_state["position"], 0, ENV_FIELD_SIZE),
+            np.clip(agent_state["orientation"], -np.pi, np.pi),
+            [0 if agent_state["holding_goal_index"] == -1 else 1],
+            [np.clip(agent_state["held_rings"], 0, 2)],
+            np.clip(rings, -1, ENV_FIELD_SIZE),
+            np.clip(goals, -1, ENV_FIELD_SIZE),
+            np.clip(
+                np.array([
+                    sum(1 for ring in self.environment_state["rings"] if ring["status"] == stake_index + 7)
+                    for stake_index in range(NUM_WALL_STAKES)
+                ], dtype=np.float32),
+                0, 6
+            ),
+            [0 if sum(1 for ring in self.environment_state["rings"] if ring["status"] == agent_state["holding_goal_index"] + 2) < 6 else 1],
+            [np.clip(TIME_LIMIT - agent_state["gameTime"], 0, TIME_LIMIT)],
+            [np.clip(np.count_nonzero(rings != -1) // 2, 0, NUM_RINGS)],
+            [np.clip(np.count_nonzero(goals != -1) // 2, 0, NUM_GOALS)]
+        ])
+        return observation.astype(np.float32)
 
     def step(self, actions):
         # Ensure actions are provided for all agents
@@ -676,7 +696,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         Clear the steps directory to remove old images.
         """
         steps_dir = os.path.join(self.output_directory, "steps")
-        if os.path.exists(steps_dir):
+        if (os.path.exists(steps_dir)):
             for filename in os.listdir(steps_dir):
                 file_path = os.path.join(steps_dir, filename)
                 try:

@@ -80,6 +80,8 @@ if __name__ == "__main__":
             TBXLoggerCallback(),
         ],
     )
+
+    # TODO: Save the best checkpoint and compile a TorchScript model for faster inference
     
     # Shutdown Ray
     ray.shutdown()
