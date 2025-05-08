@@ -7,7 +7,7 @@ from ray.rllib.utils import check_env
 from ray.train import CheckpointConfig
 from ray import tune
 
-from pettingZooEnv import High_Stakes_Multi_Agent_Env
+from pettingZooEnv import High_Stakes_Multi_Agent_Env, POSSIBLE_AGENTS
 
 # Environment creator function that returns the raw PettingZoo parallel env
 def env_creator(_):
@@ -24,7 +24,7 @@ if __name__ == "__main__":
     parser.add_argument('--learning-rate', type=float, default=0.0005, help='Learning rate')  # Default: 0.0005
     parser.add_argument('--discount-factor', type=float, default=0.99, help='Discount factor')  # Default: 0.99
     parser.add_argument('--entropy', type=float, default=0.01, help='Entropy coefficient')  # Default: 0.01
-    parser.add_argument('--num-iters', type=int, default=10, help='Number of training iterations')  # Default: 10
+    parser.add_argument('--num-iters', type=int, default=1, help='Number of training iterations')  # Default: 10
 
     args = parser.parse_args()
 
@@ -34,8 +34,8 @@ if __name__ == "__main__":
     # Create a temporary instance to retrieve observation and action spaces for a sample agent.
     temp_env = env_creator(None)
     check_env(temp_env)  # Check if the environment is compatible with RLlib
-    obs_space = temp_env.observation_space("robot_0")
-    act_space = temp_env.action_space("robot_0")
+    obs_space = temp_env.observation_space(POSSIBLE_AGENTS[0])
+    act_space = temp_env.action_space(POSSIBLE_AGENTS[0])
 
     # Define a policy for each agent.
     policies = {
@@ -53,28 +53,26 @@ if __name__ == "__main__":
             policies=policies,
             policy_mapping_fn=policy_mapping_fn,
         )
+        .training(
+            lr=args.learning_rate,
+            gamma=args.discount_factor,
+            entropy_coeff=args.entropy,
+        )
     )
-    
+
     # Initialize Ray
     ray.init(ignore_reinit_error=True)
-
-    # Set the configuration for the training process.
-    config.training(
-        lr=args.learning_rate,
-        gamma=args.discount_factor,
-        entropy_coeff=args.entropy,
-    )
-
+    
     # Run the training process with logger callbacks
-    tune.run(
+    analysis = tune.run(
         "PPO",
         config=config.to_dict(),
         checkpoint_config=CheckpointConfig(
+            checkpoint_frequency=1,  # Save a checkpoint after every iteration
             checkpoint_score_attribute="episode_reward_mean",
             checkpoint_score_order="max",
-            num_to_keep=5,
+            num_to_keep=5,  # Keep the last 5 checkpoints
         ),
-        local_dir=os.path.join(os.getcwd(), "ray_results"),
         stop={"training_iteration": args.num_iters},
         callbacks=[
             JsonLoggerCallback(),
@@ -82,6 +80,6 @@ if __name__ == "__main__":
             TBXLoggerCallback(),
         ],
     )
-
+    
     # Shutdown Ray
     ray.shutdown()

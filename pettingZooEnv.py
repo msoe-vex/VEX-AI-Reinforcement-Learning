@@ -72,20 +72,21 @@ def raw_env(render_mode=None):
     # env = parallel_to_aec(env)
     return env
 
+POSSIBLE_AGENTS = ["robot_0", "robot_1"]  # Define all possible agents
 
 class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
     metadata = {"render_modes": ["human"], "name": "vex_high_stakes"}
 
-    def __init__(self, render_mode=None):
+    def __init__(self, render_mode=None, output_directory=""):
         super().__init__()
-        self.possible_agents = ["robot_0", "robot_1"]  # Define all possible agents
+        self.possible_agents = POSSIBLE_AGENTS
         self._agent_ids = self.possible_agents
         self.agent_name_mapping = {agent: i for i, agent in enumerate(self.possible_agents)}
         self.render_mode = render_mode
         self.agents = []  # Initialize as empty; will be set in reset()
         self.observation_spaces = {agent: self.observation_space(agent) for agent in self.possible_agents}
         self.action_spaces = {agent: self.action_space(agent) for agent in self.possible_agents}
-        self.output_directory = "run_petting_zoo"
+        self.output_directory = output_directory
 
         self.wall_stakes_positions = [
             np.array([0, ENV_FIELD_SIZE/2]),
@@ -121,19 +122,20 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
              np.sin(np.arctan2(self.permanent_obstacles[3].y - self.permanent_obstacles[0].y, self.permanent_obstacles[3].x - self.permanent_obstacles[0].x)) * 1]
         ])
         self.realistic_vision = True
+        self.score = 0
 
     @functools.lru_cache(maxsize=None)
     def observation_space(self, agent):
         return spaces.Dict({
-            "position": spaces.Box(low=np.float32(0), high=np.float32(ENV_FIELD_SIZE), shape=(2,), dtype=np.float32),
-            "robot_orientation": spaces.Box(low=np.float32(-np.pi), high=np.float32(np.pi), shape=(1,), dtype=np.float32),
+            "position": spaces.Box(low=0, high=ENV_FIELD_SIZE, shape=(2,), dtype=np.float32),
+            "robot_orientation": spaces.Box(low=-np.pi, high=np.pi, shape=(1,), dtype=np.float32),
             "holding_goal": spaces.Discrete(2),
             "holding_rings": spaces.Discrete(3),
-            "rings": spaces.Box(low=np.float32(-1), high=np.float32(ENV_FIELD_SIZE), shape=(NUM_RINGS * 2,), dtype=np.float32),
-            "goals": spaces.Box(low=np.float32(-1), high=np.float32(ENV_FIELD_SIZE), shape=(NUM_GOALS * 2,), dtype=np.float32),
-            "wall_stake_ring_count": spaces.Box(low=np.int32(0), high=np.int32(6), shape=(NUM_WALL_STAKES,), dtype=np.int32),
+            "rings": spaces.Box(low=-1, high=ENV_FIELD_SIZE, shape=(NUM_RINGS * 2,), dtype=np.float32),
+            "goals": spaces.Box(low=-1, high=ENV_FIELD_SIZE, shape=(NUM_GOALS * 2,), dtype=np.float32),
+            "wall_stake_ring_count": spaces.Box(low=0, high=6, shape=(NUM_WALL_STAKES,), dtype=np.int32),
             "holding_goal_full": spaces.Discrete(2),
-            "time_remaining": spaces.Box(low=np.float32(0), high=np.float32(TIME_LIMIT), shape=(1,), dtype=np.float32),
+            "time_remaining": spaces.Box(low=0, high=TIME_LIMIT, shape=(1,), dtype=np.float32),
             "visible_rings_count": spaces.Discrete(NUM_RINGS + 1),
             "visible_goals_count": spaces.Discrete(NUM_GOALS + 1)
         })
@@ -205,6 +207,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                     "size": 15,
                     "climbed": False,
                     "gameTime": 0,
+                    "active": True,
                 }
                 for agent in self.agents
             },
@@ -262,11 +265,15 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
 
             if agent_state["climbed"]:
                 rewards[agent] = -1
+                agent_state["active"] = False
                 continue # If the robot has climbed, skip the rest of the actions
             if agent_state["gameTime"] > minGameTime:
+                agent_state["active"] = False
                 continue # skip this agent if it is ahead of the others
 
             initial_score = self.compute_field_score()
+
+            agent_state["active"] = True
             
             penalty = 0
             duration = 0.1
@@ -381,8 +388,8 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 duration += distance
 
                 # Update agent position and orientation
-                agent_state["position"] = target_position
                 agent_state["orientation"] = np.array([np.arctan2(target_position[1] - agent_state["position"][1], target_position[0] - agent_state["position"][0])], dtype=np.float32)
+                agent_state["position"] = target_position
 
             elif action == Actions.ADD_RING_TO_GOAL.value:
                 if agent_state["holding_goal_index"] != -1 and agent_state["held_rings"] > 0:
@@ -480,13 +487,15 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 else:
                     penalty = DEFAULT_PENALTY  # No goal to pick up
             
-            # Check for collision with other agents
-            for other_agent, other_agent_state in self.environment_state["agents"].items():
-                if agent != other_agent:
-                    distance = np.linalg.norm(agent_state["position"] - other_agent_state["position"])
-                    combined_radius = (agent_state["size"] * np.sqrt(2) + other_agent_state["size"] * np.sqrt(2)) / 24  # Convert inches to feet
-                    if distance < combined_radius:
-                        penalty += -10  # Apply penalty for collision
+            # Removed collision detection, since no information is provided about the other robot's position
+            # 
+            # # Check for collision with other agents
+            # for other_agent, other_agent_state in self.environment_state["agents"].items():
+            #     if agent != other_agent:
+            #         distance = np.linalg.norm(agent_state["position"] - other_agent_state["position"])
+            #         combined_radius = (agent_state["size"] * np.sqrt(2) + other_agent_state["size"] * np.sqrt(2)) / 24  # Convert inches to feet
+            #         if distance < combined_radius:
+            #             penalty += -10  # Apply penalty for collision
             
             agent_state["gameTime"] += duration
             rewards[agent] = self.reward_function(initial_score, penalty)
@@ -602,9 +611,10 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 width = self.environment_state["agents"][agent]["size"] / 12  # Convert inches to feet
                 
                 # Draw the rectangle representing the robot
+                color = 'blue' if self.environment_state["agents"][agent]["active"] else 'gray'
                 rect = patches.Rectangle(
                     (x - width / 2, y - width / 2), width, width, 
-                    color='blue', alpha=0.5, ec='black'
+                    color=color, alpha=0.5, ec='black'
                 )
                 t = patches.transforms.Affine2D().rotate_deg_around(x, y, np.degrees(orientation)) + ax.transData
                 rect.set_transform(t)
@@ -657,18 +667,18 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 action_str = ", ".join([f"{agent}: {Actions(actions[agent]).name}" for agent in self.agents])
                 ax.text(6, -1, f"Actions: {action_str}", color='black', ha='center')
 
-            os.makedirs(self.output_directory+"/steps", exist_ok=True)
-            plt.savefig(f"{self.output_directory}/steps/step_{step_num}.png")
+            os.makedirs(os.path.join(self.output_directory, "steps"), exist_ok=True)
+            plt.savefig(os.path.join(self.output_directory, "steps", f"step_{step_num}.png"))
             plt.close()
     
     def clearStepsDirectory(self):
         """
         Clear the steps directory to remove old images.
         """
-        output_dir = "run_petting_zoo/steps"
-        if os.path.exists(output_dir):
-            for filename in os.listdir(output_dir):
-                file_path = os.path.join(output_dir, filename)
+        steps_dir = os.path.join(self.output_directory, "steps")
+        if os.path.exists(steps_dir):
+            for filename in os.listdir(steps_dir):
+                file_path = os.path.join(steps_dir, filename)
                 try:
                     if os.path.isfile(file_path):
                         os.remove(file_path)
@@ -758,7 +768,8 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         return padded_rings
 
 if __name__ == "__main__":
-    env = High_Stakes_Multi_Agent_Env(render_mode="terminal")
+    env = High_Stakes_Multi_Agent_Env(render_mode="terminal", output_directory="run_petting_zoo")
+    print("Testing the environment...")
     parallel_api_test(env)
 
     observations, infos = env.reset()
@@ -766,6 +777,7 @@ if __name__ == "__main__":
     env.clearStepsDirectory()
 
     done = False
+    print("Running the environment...")
     env.render()
     while not done:
         # this is where you would insert your policy

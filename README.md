@@ -7,7 +7,7 @@ This project involves training and running reinforcement learning agents in a cu
 Use Python 3.8
 
 ```bash
-pip install ray[tune] gymnasium pettingzoo dm-tree matplotlib casadi typer opencv-python scipy lz4 torch gputil
+pip install ray[default] gymnasium pettingzoo dm-tree matplotlib casadi typer opencv-python scipy lz4 torch gputil
 ```
 
 <!-- 
