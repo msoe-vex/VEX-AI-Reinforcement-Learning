@@ -7,7 +7,7 @@ from ray.rllib.utils.framework import try_import_torch
 import warnings
 
 # Ensure pettingZooEnv.py is accessible
-from pettingZooEnv import High_Stakes_Multi_Agent_Env, POSSIBLE_AGENTS, env_creator
+from pettingZooEnv import POSSIBLE_AGENTS, env_creator
 
 # Policy mapping function
 def policy_mapping_fn(agent_id, episode, worker, **kwargs):

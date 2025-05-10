@@ -4,13 +4,12 @@ import gymnasium
 from gymnasium import spaces
 
 from pettingzoo import ParallelEnv
-from pettingzoo.utils import wrappers
 from pettingzoo.test import parallel_api_test
 from ray.rllib.env import MultiAgentEnv
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from path_planner import PathPlanner, Obstacle
+from path_planner import Obstacle
 
 import numpy as np
 from enum import Enum

@@ -5,7 +5,7 @@ import numpy as np
 
 # Ensure pettingZooEnv.py is accessible
 # If runPettingZoo.py and pettingZooEnv.py are in the same directory, this should work.
-from pettingZooEnv import High_Stakes_Multi_Agent_Env, POSSIBLE_AGENTS
+from pettingZooEnv import High_Stakes_Multi_Agent_Env
 
 def run_simulation(model_path):
     """

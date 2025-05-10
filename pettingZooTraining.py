@@ -7,11 +7,8 @@ from ray.rllib.utils import check_env
 from ray.train import CheckpointConfig
 from ray import tune
 import warnings
-import os
 
-from pettingZooEnv import High_Stakes_Multi_Agent_Env, POSSIBLE_AGENTS, env_creator
-from ray.rllib.policy.policy import Policy
-from ray.rllib.utils.framework import try_import_torch
+from pettingZooEnv import POSSIBLE_AGENTS, env_creator
 
 from pettingZooCompile import compile_checkpoint_to_torchscript
 
@@ -66,7 +63,7 @@ if __name__ == "__main__":
 
     # Initialize Ray
     ray.init(ignore_reinit_error=True)
-    
+
     # Run the training process with logger callbacks
     analysis = tune.run(
         "PPO",
