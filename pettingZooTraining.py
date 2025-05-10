@@ -6,19 +6,23 @@ from ray.tune.logger import JsonLoggerCallback, CSVLoggerCallback, TBXLoggerCall
 from ray.rllib.utils import check_env
 from ray.train import CheckpointConfig
 from ray import tune
+import warnings
+import os
 
-from pettingZooEnv import High_Stakes_Multi_Agent_Env, POSSIBLE_AGENTS
+from pettingZooEnv import High_Stakes_Multi_Agent_Env, POSSIBLE_AGENTS, env_creator
+from ray.rllib.policy.policy import Policy
+from ray.rllib.utils.framework import try_import_torch
 
-# Environment creator function that returns the raw PettingZoo parallel env
-def env_creator(_):
-    # Wrap the PettingZoo parallel environment in an RLlib-compatible multi-agent environment
-    return (High_Stakes_Multi_Agent_Env(render_mode=None))
+from pettingZooCompile import compile_checkpoint_to_torchscript
 
 # Policy mapping function to assign agents to policies.
 def policy_mapping_fn(agent_id, episode, worker, **kwargs):
     return agent_id
 
 if __name__ == "__main__":
+    # Suppress all deprecation warnings
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
+
     # Get parameters from command line arguments
     parser = argparse.ArgumentParser(description="Train multiple agents concurrently.")
     parser.add_argument('--learning-rate', type=float, default=0.0005, help='Learning rate')  # Default: 0.0005
@@ -79,9 +83,15 @@ if __name__ == "__main__":
             CSVLoggerCallback(),
             TBXLoggerCallback(),
         ],
+        metric="episode_reward_mean",  # Metric to optimize
+        mode="max"  # Maximize the metric
     )
 
-    # TODO: Save the best checkpoint and compile a TorchScript model for faster inference
-    
+    # Use the best checkpoint directly from the analysis
+    best_checkpoint = analysis.best_checkpoint
+    best_checkpoint_path = best_checkpoint.path
+
+    compile_checkpoint_to_torchscript(best_checkpoint_path)
+
     # Shutdown Ray
     ray.shutdown()

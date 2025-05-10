@@ -44,33 +44,36 @@ NUM_RINGS = 24
 TIME_LIMIT = 60
 DEFAULT_PENALTY = -0.1
 
-def env(render_mode=None):
-    """
-    The env function often wraps the environment in wrappers by default.
-    You can find full documentation for these methods
-    elsewhere in the developer documentation.
-    """
-    internal_render_mode = render_mode if render_mode != "ansi" else "human"
-    env = raw_env(render_mode=internal_render_mode)
-    # This wrapper is only for environments which print results to the terminal
-    if (render_mode == "ansi"):
-        env = wrappers.CaptureStdoutWrapper(env)
-    # this wrapper helps error handling for discrete action spaces
-    env = wrappers.AssertOutOfBoundsWrapper(env)
-    # Provides a wide vareity of helpful user errors
-    # Strongly recommended
-    env = wrappers.OrderEnforcingWrapper(env)
-    return env
+def env_creator(_):
+    return High_Stakes_Multi_Agent_Env(render_mode=None)
+
+# def env(render_mode=None):
+#     """
+#     The env function often wraps the environment in wrappers by default.
+#     You can find full documentation for these methods
+#     elsewhere in the developer documentation.
+#     """
+#     internal_render_mode = render_mode if render_mode != "ansi" else "human"
+#     env = raw_env(render_mode=internal_render_mode)
+#     # This wrapper is only for environments which print results to the terminal
+#     if (render_mode == "ansi"):
+#         env = wrappers.CaptureStdoutWrapper(env)
+#     # this wrapper helps error handling for discrete action spaces
+#     env = wrappers.AssertOutOfBoundsWrapper(env)
+#     # Provides a wide vareity of helpful user errors
+#     # Strongly recommended
+#     env = wrappers.OrderEnforcingWrapper(env)
+#     return env
 
 
-def raw_env(render_mode=None):
-    """
-    To support the AEC API, the raw_env() function just uses the from_parallel
-    function to convert from a ParallelEnv to an AEC env
-    """
-    env = High_Stakes_Multi_Agent_Env(render_mode=render_mode)
-    # env = parallel_to_aec(env)
-    return env
+# def raw_env(render_mode=None):
+#     """
+#     To support the AEC API, the raw_env() function just uses the from_parallel
+#     function to convert from a ParallelEnv to an AEC env
+#     """
+#     env = High_Stakes_Multi_Agent_Env(render_mode=render_mode)
+#     # env = parallel_to_aec(env)
+#     return env
 
 POSSIBLE_AGENTS = ["robot_0", "robot_1"]  # Define all possible agents
 
