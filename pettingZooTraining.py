@@ -25,7 +25,7 @@ if __name__ == "__main__":
     parser.add_argument('--learning-rate', type=float, default=0.0005, help='Learning rate')  # Default: 0.0005
     parser.add_argument('--discount-factor', type=float, default=0.99, help='Discount factor')  # Default: 0.99
     parser.add_argument('--entropy', type=float, default=0.01, help='Entropy coefficient')  # Default: 0.01
-    parser.add_argument('--num-iters', type=int, default=1, help='Number of training iterations')  # Default: 10
+    parser.add_argument('--num-iters', type=int, default=10, help='Number of training iterations')  # Default: 10
 
     args = parser.parse_args()
 
@@ -72,7 +72,7 @@ if __name__ == "__main__":
             checkpoint_frequency=1,  # Save a checkpoint after every iteration
             checkpoint_score_attribute="episode_reward_mean",
             checkpoint_score_order="max",
-            num_to_keep=5,  # Keep the last 5 checkpoints
+            num_to_keep=1,  # Keep only the best checkpoint during training
         ),
         stop={"training_iteration": args.num_iters},
         callbacks=[

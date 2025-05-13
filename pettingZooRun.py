@@ -39,6 +39,7 @@ def run_simulation(model_path):
 
     print("Starting simulation...")
     observations, infos = env.reset()
+    env.clearStepsDirectory()
     
     env.render() # Initial render
 
@@ -89,7 +90,7 @@ def run_simulation(model_path):
         # Step the environment
         next_observations, step_rewards, terminations, truncations, infos = env.step(actions_to_take)
         
-        env.render() # Render after the step
+        env.render(actions=actions_to_take, rewards=step_rewards) # Render after the step
 
         observations = next_observations
         

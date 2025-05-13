@@ -2,9 +2,9 @@
 #SBATCH --job-name=vex_ai_reinforcement_learning    # Job name
 #SBATCH --output=job_results/job_%j/output.txt      # Output file (%j will be replaced with the job ID)
 #SBATCH --error=job_results/job_%j/error.txt        # Error file (%j will be replaced with the job ID)
-#SBATCH --time=0-6:0                                # Time limit (DD-HH:MM)
-#SBATCH --partition=teaching --gpus=1               # Partition to submit to. `teaching` (for the T4 GPUs) is default on Rosie, but it's still being specified here
-#SBATCH --cpus-per-task=32 --tasks=1                # Number of CPU cores to use
+#SBATCH --time=0-8:0                                # Time limit (DD-HH:MM)
+#SBATCH --partition=teaching --gpus=0               # Partition to submit to. `teaching` (for the T4 GPUs) is default on Rosie, but it's still being specified here
+#SBATCH --cpus-per-task=16 --tasks=1                # Number of CPU cores to use
 
 # Parse command line arguments
 while [[ "$#" -gt 0 ]]; do
@@ -22,6 +22,7 @@ while [[ "$#" -gt 0 ]]; do
         --realistic-pathing) REALISTIC_PATHING="--realistic-pathing"; shift ;;
         --no-realistic-pathing) REALISTIC_PATHING="--no-realistic-pathing"; shift ;;
         --realistic-vision) REALISTIC_VISION="--realistic-vision"; shift ;;
+        --num-iters) NUM_ITERS="$2"; shift 2 ;;
         --no-realistic-vision) REALISTIC_VISION="--no-realistic-vision"; shift ;;
         --robot-num) ROBOT_NUM="$2"; shift 2 ;;
         --algorithm) ALGORITHM="$2"; shift 2 ;;
@@ -30,13 +31,14 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 # Run your code here
-python train_models.py \
+python pettingZooTraining.py \
     --agents ${NUM_AGENTS:-1} \
     --timesteps ${TOTAL_TIMESTEPS:-1000000} \
     --entropy ${ENTROPY_I:-0.01} \
     --learning-rate ${LR_I:-0.0005} \
     --discount-factor ${DISCOUNT_I:-0.99} \
     --job-id $SLURM_JOB_ID \
+    --num-iters ${NUM_ITERS:-10} \
     --model-path ${MODEL_PATH:-""} \
     ${RANDOMIZE:-"--randomize"} \
     --num-layers ${NUM_LAYERS:-2} \
