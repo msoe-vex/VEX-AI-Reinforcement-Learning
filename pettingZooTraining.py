@@ -83,10 +83,10 @@ if __name__ == "__main__":
         "PPO",
         config=config.to_dict(),
         checkpoint_config=CheckpointConfig(
-            checkpoint_frequency=1,  # Save a checkpoint after every iteration
+            checkpoint_frequency=1,
             checkpoint_score_attribute="episode_reward_mean",
             checkpoint_score_order="max",
-            num_to_keep=1,  # Keep only the best checkpoint during training
+            num_to_keep=1,
         ),
         stop={"training_iteration": args.num_iters},
         callbacks=[
@@ -94,8 +94,9 @@ if __name__ == "__main__":
             CSVLoggerCallback(),
             TBXLoggerCallback(),
         ],
-        metric="episode_reward_mean",  # Metric to optimize
-        mode="max"  # Maximize the metric
+        metric="episode_reward_mean",
+        mode="max",
+        verbose=0  # Suppress Tune logs
     )
 
     print(f"Training completed at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
