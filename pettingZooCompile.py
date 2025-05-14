@@ -15,7 +15,7 @@ def policy_mapping_fn(agent_id, episode, worker, **kwargs):
 
 def compile_checkpoint_to_torchscript(checkpoint_path: str):
     """
-    Loads a PPO agent from a checkpoint and saves its model as a TorchScript file.
+    Loads a PPO agent from a checkpoint and saves its models as TorchScript files.
 
     Args:
         checkpoint_path (str): Path to the RLLib checkpoint directory.
@@ -46,76 +46,67 @@ def compile_checkpoint_to_torchscript(checkpoint_path: str):
         ray.shutdown()
         return
 
-    # Get the first policy name from the trainer's configuration
-    try:
-        policy_to_export = list(trainer.config.policies.keys())[0]  # Access policies directly
-        print(f"Exporting policy: {policy_to_export}")
-    except Exception as e:
-        print(f"Error retrieving policy name: {e}")
-        trainer.stop()
-        ray.shutdown()
-        return
-
-    try:
-        policy = trainer.get_policy(policy_to_export)
-        if policy is None:
-            print(f"Error: Could not get policy for agent {policy_to_export}")
+    for policy_id in trainer.config.policies:
+        print(f"Saving policy: {policy_id}")
+        try:
+            policy = trainer.get_policy(policy_id)
+            if policy is None:
+                print(f"Error: Could not get policy for agent {policy_id}")
+                trainer.stop()
+                ray.shutdown()
+                return
+        except Exception as e:
+            print(f"Error getting policy: {e}")
             trainer.stop()
             ray.shutdown()
             return
-    except Exception as e:
-        print(f"Error getting policy: {e}")
-        trainer.stop()
-        ray.shutdown()
-        return
-    
-    # Create a temporary environment to get observation and action spaces
-    # This is still needed for the dummy_input_dict for tracing.
-    temp_env = env_creator(None)
-    obs_space = temp_env.observation_space(policy_to_export)
-    temp_env.close()
+        
+        # Create a temporary environment to get observation and action spaces
+        # This is still needed for the dummy_input_dict for tracing.
+        temp_env = env_creator(None)
+        obs_space = temp_env.observation_space(policy_id)
+        temp_env.close()
 
-    # Extract the model from the policy
-    model = policy.model
-    model.eval()  # Set the model to evaluation mode
+        # Extract the model from the policy
+        model = policy.model
+        model.eval()  # Set the model to evaluation mode
 
-    # Create a dummy input_dict with the expected structure (only observation)
-    dummy_input_dict = {
-        "obs": torch.randn(1, *obs_space.shape).clone().detach(),
-    }
+        # Create a dummy input_dict with the expected structure (only observation)
+        dummy_input_dict = {
+            "obs": torch.randn(1, *obs_space.shape).clone().detach(),
+        }
 
-    # Wrap the model for tracing
-    class TracedModel(torch.nn.Module):
-        def __init__(self, original_model_ref):
-            super(TracedModel, self).__init__()
-            self.original_model_ref = original_model_ref
+        # Wrap the model for tracing
+        class TracedModel(torch.nn.Module):
+            def __init__(self, original_model_ref):
+                super(TracedModel, self).__init__()
+                self.original_model_ref = original_model_ref
 
-        def forward(self, obs):
-            input_dict_local = {"obs": obs}
-            # The model's forward pass returns (output_logits, state_list)
-            # We are interested in the logits for action selection.
-            return self.original_model_ref(input_dict_local)[0]
+            def forward(self, obs):
+                input_dict_local = {"obs": obs}
+                # The model's forward pass returns (output_logits, state_list)
+                # We are interested in the logits for action selection.
+                return self.original_model_ref(input_dict_local)[0]
 
-    traced_wrapper = TracedModel(model)
+        traced_wrapper = TracedModel(model)
 
-    # Trace the model
-    try:
-        final_traced_model = torch.jit.trace(traced_wrapper, (dummy_input_dict["obs"]))
-        print(f"Traced model output sample: {final_traced_model(dummy_input_dict['obs'])}")  # Log output for debugging
-    except Exception as e:
-        print(f"Error during model tracing: {e}")
-        trainer.stop()
-        ray.shutdown()
-        return
+        # Trace the model
+        try:
+            final_traced_model = torch.jit.trace(traced_wrapper, (dummy_input_dict["obs"]))
+        except Exception as e:
+            print(f"Error during model tracing: {e}")
+            trainer.stop()
+            ray.shutdown()
+            return
 
-    # Save the traced model
-    # The convention is to save it within the checkpoint directory itself
-    traced_model_path = os.path.join(checkpoint_path, "traced_model.pt")
-    try:
-        final_traced_model.save(traced_model_path)
-        print(f"Traced TorchScript model saved to: {traced_model_path}")
-    except Exception as e:
-        print(f"Error saving traced model: {e}")
+        # Save the traced model
+        # The convention is to save it within the checkpoint directory itself
+        traced_model_path = os.path.join(checkpoint_path, f"{policy_id}.pt")
+        try:
+            final_traced_model.save(traced_model_path)
+            print(f"Traced TorchScript model saved to: {traced_model_path}")
+        except Exception as e:
+            print(f"Error saving traced model: {e}")
 
     # Clean up
     trainer.stop()

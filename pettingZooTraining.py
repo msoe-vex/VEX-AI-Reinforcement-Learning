@@ -17,7 +17,7 @@ from pettingZooCompile import compile_checkpoint_to_torchscript
 # Policy mapping function to assign agents to policies.
 def policy_mapping_fn(agent_id, episode, worker, **kwargs):
     return "shared_policy" # Use the same policy for all agents
-    return agent_id
+    return agent_id # Change to agent_id if you want to use different policies for each agent
 
 if __name__ == "__main__":
     # Suppress excessive experiment checkpoint warnings

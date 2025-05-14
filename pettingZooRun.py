@@ -29,7 +29,7 @@ def run_simulation(model_path):
 
     # Initialize the environment
     # The render_mode "human" is assumed to be available in your High_Stakes_Multi_Agent_Env
-    env = High_Stakes_Multi_Agent_Env(render_mode="terminal", output_directory="pettingZooRun")
+    env = High_Stakes_Multi_Agent_Env(render_mode="all", output_directory="pettingZooRun")
     
     # Get observation and action space shapes for a sample agent
     # These are used to correctly shape tensors for the model
