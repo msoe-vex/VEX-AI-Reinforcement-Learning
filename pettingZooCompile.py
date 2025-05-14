@@ -7,7 +7,7 @@ from ray.rllib.utils.framework import try_import_torch
 import warnings
 
 # Ensure pettingZooEnv.py is accessible
-from pettingZooEnv import POSSIBLE_AGENTS, env_creator
+from pettingZooEnv import env_creator
 
 # Policy mapping function
 def policy_mapping_fn(agent_id, episode, worker, **kwargs):
@@ -36,12 +36,6 @@ def compile_checkpoint_to_torchscript(checkpoint_path: str):
     # Register the environment
     register_env("High_Stakes_Multi_Agent_Env", env_creator)
 
-    # Create a temporary environment to get observation and action spaces
-    # This is still needed for the dummy_input_dict for tracing.
-    temp_env = env_creator(None)
-    obs_space = temp_env.observation_space(POSSIBLE_AGENTS[0])
-    temp_env.close()
-
     # Restore the trainer from the checkpoint
     try:
         # Use PPO.from_checkpoint to load the trainer and its config
@@ -52,9 +46,16 @@ def compile_checkpoint_to_torchscript(checkpoint_path: str):
         ray.shutdown()
         return
 
-    # Get the policy for one of the agents (assuming homogeneous agents for model export)
-    # If policies are different, you might need to specify which one to export
-    policy_to_export = POSSIBLE_AGENTS[0] 
+    # Get the first policy name from the trainer's configuration
+    try:
+        policy_to_export = list(trainer.config.policies.keys())[0]  # Access policies directly
+        print(f"Exporting policy: {policy_to_export}")
+    except Exception as e:
+        print(f"Error retrieving policy name: {e}")
+        trainer.stop()
+        ray.shutdown()
+        return
+
     try:
         policy = trainer.get_policy(policy_to_export)
         if policy is None:
@@ -67,6 +68,12 @@ def compile_checkpoint_to_torchscript(checkpoint_path: str):
         trainer.stop()
         ray.shutdown()
         return
+    
+    # Create a temporary environment to get observation and action spaces
+    # This is still needed for the dummy_input_dict for tracing.
+    temp_env = env_creator(None)
+    obs_space = temp_env.observation_space(policy_to_export)
+    temp_env.close()
 
     # Extract the model from the policy
     model = policy.model
@@ -93,10 +100,8 @@ def compile_checkpoint_to_torchscript(checkpoint_path: str):
 
     # Trace the model
     try:
-        final_traced_model = torch.jit.trace(
-            traced_wrapper,
-            (dummy_input_dict["obs"]),
-        )
+        final_traced_model = torch.jit.trace(traced_wrapper, (dummy_input_dict["obs"]))
+        print(f"Traced model output sample: {final_traced_model(dummy_input_dict['obs'])}")  # Log output for debugging
     except Exception as e:
         print(f"Error during model tracing: {e}")
         trainer.stop()

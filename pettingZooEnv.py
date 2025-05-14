@@ -14,6 +14,7 @@ from path_planner import Obstacle
 import numpy as np
 from enum import Enum
 import os
+import imageio
 
 class Actions(Enum):
     PICK_UP_NEAREST_GOAL = 0
@@ -610,7 +611,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 color = 'green' if visible_by_any_agent else 'gray'
                 hexagon = patches.RegularPolygon((goal["position"][0], goal["position"][1]), numVertices=6, radius=0.5, orientation=np.pi/6, color=color, alpha=0.25)
                 ax.add_patch(hexagon)
-                rings_on_goal = 0
+                rings_on_goal = sum(1 for ring in self.environment_state["rings"] if ring["status"] == goal_idx + 2)
                 ax.text(goal["position"][0], goal["position"][1] + 0.6, str(rings_on_goal), color='black', ha='center')
 
             # Draw the wall stakes
@@ -623,7 +624,8 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                     text_pos = pos + np.array([0.0, -0.5])
                 elif idx == 3:
                     text_pos = pos + np.array([0.0, 0.5])
-                ax.text(text_pos[0], text_pos[1], f"{0}", color='black', ha='center')
+                rings_on_stake = sum(1 for ring in self.environment_state["rings"] if ring["status"] == idx + 7)
+                ax.text(text_pos[0], text_pos[1], str(rings_on_stake), color='black', ha='center')
 
             # Draw the robots
             for agent in self.agents:
@@ -651,7 +653,9 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 ax.add_patch(orientation_arrow)
                 
                 # Add agent label
-                ax.text(x, y, agent, fontsize=12, ha='center', va='center')
+                rings_on_bot = sum(1 for ring in self.environment_state["rings"] if ring["status"] == self.agent_name_mapping[agent] + 1)
+                ax.text(x, y-width*.75, agent, fontsize=12, ha='center', va='center')
+                ax.text(x, y, str(rings_on_bot), color='black', ha='center')
 
             # Draw the obstacles
             for obstacle in self.permanent_obstacles:
@@ -662,6 +666,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                     linestyle='dotted', alpha=0.5)
                 ax.add_patch(circle)
             
+            # Draw overlays for field of view
             for agent in self.agents:
                 robot_position = self.environment_state["agents"][agent]["position"]
                 robot_orientation = self.environment_state["agents"][agent]["orientation"][0]
@@ -681,8 +686,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 overlay = patches.Polygon(overlay_polygon, closed=True, color='yellow', alpha=0.1)
                 ax.add_patch(overlay)
             
-            total_score = 0
-            ax.text(-2.5, 6, f"Total Score: {total_score}", color='black', ha='center')
+            ax.text(-2.5, 6, f"Total Score: {self.score}", color='black', ha='center')
             ax.text(6, 13.25, f'Step {step_num}', color='black', ha='center')
 
             if actions:
@@ -706,6 +710,21 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                         os.remove(file_path)
                 except Exception as e:
                     print(f"Error deleting file {file_path}: {e}")
+    
+    def createGIF(self):
+        """
+        Create a GIF from the saved images in the steps directory.
+        """
+        steps_dir = os.path.join(self.output_directory, "steps")
+        images = []
+        for filename in sorted(os.listdir(steps_dir), key=lambda x: int(x.split('_')[1].split('.')[0])):
+            file_path = os.path.join(steps_dir, filename)
+            images.append(imageio.imread(file_path))
+        imageio.mimsave(
+            os.path.join(self.output_directory, "simulation.gif"),
+            images,
+            fps=10
+        )
 
 
     def close(self):

@@ -29,7 +29,7 @@ def run_simulation(model_path):
 
     # Initialize the environment
     # The render_mode "human" is assumed to be available in your High_Stakes_Multi_Agent_Env
-    env = High_Stakes_Multi_Agent_Env(render_mode="all", output_directory="pettingZooRun")
+    env = High_Stakes_Multi_Agent_Env(render_mode="terminal", output_directory="pettingZooRun")
     
     # Get observation and action space shapes for a sample agent
     # These are used to correctly shape tensors for the model
@@ -59,9 +59,6 @@ def run_simulation(model_path):
 
         for agent_id in current_agents_in_step:
             if agent_id not in observations:
-                # This can happen if an agent terminated in the previous step and env.agents
-                # wasn't updated yet, or if observations are stale.
-                # Should ideally not happen if observations are fresh from previous step.
                 print(f"Warning: Agent {agent_id} is in env.agents but not in observations. Skipping.")
                 continue
 
@@ -99,11 +96,10 @@ def run_simulation(model_path):
         all_terminated = terminations.get("__all__", False)
         all_truncated = truncations.get("__all__", False)
         done = all_terminated or all_truncated
-
-        if done:
-            print(f"Step {step_count}: Episode finished (all_terminated: {all_terminated}, all_truncated: {all_truncated}).")
             
     print(f"\nSimulation ended after {step_count} steps.")
+
+    env.createGIF()
         
     env.close()
 

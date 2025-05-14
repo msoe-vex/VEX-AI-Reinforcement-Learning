@@ -4,7 +4,7 @@
 #SBATCH --error=job_results/job_%j/error.txt        # Error file (%j will be replaced with the job ID)
 #SBATCH --time=0-8:0                                # Time limit (DD-HH:MM)
 #SBATCH --partition=teaching --gpus=0               # Partition to submit to. `teaching` (for the T4 GPUs) is default on Rosie, but it's still being specified here
-#SBATCH --cpus-per-task=16 --tasks=1                # Number of CPU cores to use
+#SBATCH --cpus-per-task=32 --tasks=1                # Number of CPU cores to use
 
 # Parse command line arguments
 while [[ "$#" -gt 0 ]]; do
@@ -32,21 +32,21 @@ done
 
 # Run your code here
 python pettingZooTraining.py \
-    --agents ${NUM_AGENTS:-1} \
-    --timesteps ${TOTAL_TIMESTEPS:-1000000} \
-    --entropy ${ENTROPY_I:-0.01} \
-    --learning-rate ${LR_I:-0.0005} \
-    --discount-factor ${DISCOUNT_I:-0.99} \
-    --job-id $SLURM_JOB_ID \
     --num-iters ${NUM_ITERS:-10} \
-    --model-path ${MODEL_PATH:-""} \
-    ${RANDOMIZE:-"--randomize"} \
-    --num-layers ${NUM_LAYERS:-2} \
-    --num-nodes ${NUM_NODES:-64} \
-    ${REALISTIC_PATHING:-"--no-realistic-pathing"} \
-    ${REALISTIC_VISION:-"--realistic-vision"} \
-    --robot-num ${ROBOT_NUM:-0} \
-    --num-gpus $SLURM_GPUS \
     --cpus-per-task $SLURM_CPUS_PER_TASK \
-    --partition $SLURM_JOB_PARTITION \
-    --algorithm ${ALGORITHM:-PPO}
+    # --entropy ${ENTROPY_I:-0.01} \
+    # --learning-rate ${LR_I:-0.0005} \
+    # --discount-factor ${DISCOUNT_I:-0.99} \
+    # --job-id $SLURM_JOB_ID \
+    # --model-path ${MODEL_PATH:-""} \
+    # ${RANDOMIZE:-"--randomize"} \
+    # --num-layers ${NUM_LAYERS:-2} \
+    # --num-nodes ${NUM_NODES:-64} \
+    # ${REALISTIC_PATHING:-"--no-realistic-pathing"} \
+    # ${REALISTIC_VISION:-"--realistic-vision"} \
+    # --robot-num ${ROBOT_NUM:-0} \
+    # --num-gpus $SLURM_GPUS \
+    # --partition $SLURM_JOB_PARTITION \
+    # --algorithm ${ALGORITHM:-PPO} \
+    # --timesteps ${TOTAL_TIMESTEPS:-1000000} \
+    # --agents ${NUM_AGENTS:-1} \

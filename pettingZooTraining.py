@@ -7,16 +7,22 @@ from ray.rllib.utils import check_env
 from ray.train import CheckpointConfig
 from ray import tune
 import warnings
+import time
+import os
 
-from pettingZooEnv import POSSIBLE_AGENTS, env_creator
+from pettingZooEnv import env_creator
 
 from pettingZooCompile import compile_checkpoint_to_torchscript
 
 # Policy mapping function to assign agents to policies.
 def policy_mapping_fn(agent_id, episode, worker, **kwargs):
+    return "shared_policy" # Use the same policy for all agents
     return agent_id
 
 if __name__ == "__main__":
+    # Suppress excessive experiment checkpoint warnings
+    os.environ["TUNE_WARN_EXCESSIVE_EXPERIMENT_CHECKPOINT_SYNC_THRESHOLD_S"] = "1.0"
+    
     # Suppress all deprecation warnings
     warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -25,9 +31,16 @@ if __name__ == "__main__":
     parser.add_argument('--learning-rate', type=float, default=0.0005, help='Learning rate')  # Default: 0.0005
     parser.add_argument('--discount-factor', type=float, default=0.99, help='Discount factor')  # Default: 0.99
     parser.add_argument('--entropy', type=float, default=0.01, help='Entropy coefficient')  # Default: 0.01
-    parser.add_argument('--num-iters', type=int, default=10, help='Number of training iterations')  # Default: 10
+    parser.add_argument('--num-iters', type=int, default=1, help='Number of training iterations')  # Default: 10
+    parser.add_argument('--cpus-per-task', type=int, default=1, help='Number of CPUs per task')  # Default: 1
 
     args = parser.parse_args()
+
+    print("Starting training...")
+    print("Training parameters:")
+    for arg in vars(args):
+        print(f"{arg}: {getattr(args, arg)}")
+    print(f"Training started at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
 
     # Register your environment with RLlib so it can be created by name
     register_env("High_Stakes_Multi_Agent_Env", env_creator)
@@ -35,21 +48,21 @@ if __name__ == "__main__":
     # Create a temporary instance to retrieve observation and action spaces for a sample agent.
     temp_env = env_creator(None)
     check_env(temp_env)  # Check if the environment is compatible with RLlib
-    obs_space = temp_env.observation_space(POSSIBLE_AGENTS[0])
-    act_space = temp_env.action_space(POSSIBLE_AGENTS[0])
 
     # Define a policy for each agent.
     policies = {
-        agent_id: (None, obs_space, act_space, {})
-        for agent_id in temp_env.possible_agents
+        agent_id: (None, temp_env.observation_space(agent_id), temp_env.action_space(agent_id), {}) for agent_id in temp_env.possible_agents
     }
+    policies["shared_policy"] = (None, temp_env.observation_space("shared_policy"), temp_env.action_space("shared_policy"), {})
 
     # Configure the RLlib Trainer using PPO (you can switch to another algorithm if desired)
     config = (
         PPOConfig()
         .environment(env="High_Stakes_Multi_Agent_Env")
         .framework("torch")  # change to "tf" if you prefer TensorFlow
-        .rollouts(num_rollout_workers=1)  # adjust number of workers as needed
+        .rollouts(
+            num_rollout_workers=args.cpus_per_task-1,  # Use 1 worker for each CPU core plus 1 for the main process
+        )
         .multi_agent(
             policies=policies,
             policy_mapping_fn=policy_mapping_fn,
@@ -59,6 +72,7 @@ if __name__ == "__main__":
             gamma=args.discount_factor,
             entropy_coeff=args.entropy,
         )
+        .debugging(log_level="ERROR")  # Reduce logging verbosity
     )
 
     # Initialize Ray
@@ -83,6 +97,8 @@ if __name__ == "__main__":
         metric="episode_reward_mean",  # Metric to optimize
         mode="max"  # Maximize the metric
     )
+
+    print(f"Training completed at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
 
     # Use the best checkpoint directly from the analysis
     best_checkpoint = analysis.best_checkpoint
