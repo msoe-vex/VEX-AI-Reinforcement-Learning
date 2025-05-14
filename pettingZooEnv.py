@@ -44,52 +44,36 @@ NUM_RINGS = 24
 TIME_LIMIT = 60
 DEFAULT_PENALTY = -0.1
 
-def env_creator(_):
-    return High_Stakes_Multi_Agent_Env(render_mode=None)
+POSSIBLE_AGENTS = ["robot_0", "robot_1"]
 
-# def env(render_mode=None):
-#     """
-#     The env function often wraps the environment in wrappers by default.
-#     You can find full documentation for these methods
-#     elsewhere in the developer documentation.
-#     """
-#     internal_render_mode = render_mode if render_mode != "ansi" else "human"
-#     env = raw_env(render_mode=internal_render_mode)
-#     # This wrapper is only for environments which print results to the terminal
-#     if (render_mode == "ansi"):
-#         env = wrappers.CaptureStdoutWrapper(env)
-#     # this wrapper helps error handling for discrete action spaces
-#     env = wrappers.AssertOutOfBoundsWrapper(env)
-#     # Provides a wide vareity of helpful user errors
-#     # Strongly recommended
-#     env = wrappers.OrderEnforcingWrapper(env)
-#     return env
+# Offsets for status IDs
+AGENT_ID_OFFSET = 1
+GOAL_ID_OFFSET = AGENT_ID_OFFSET + len(POSSIBLE_AGENTS)
+STAKE_ID_OFFSET = GOAL_ID_OFFSET + NUM_GOALS
 
-
-# def raw_env(render_mode=None):
-#     """
-#     To support the AEC API, the raw_env() function just uses the from_parallel
-#     function to convert from a ParallelEnv to an AEC env
-#     """
-#     env = High_Stakes_Multi_Agent_Env(render_mode=render_mode)
-#     # env = parallel_to_aec(env)
-#     return env
-
-POSSIBLE_AGENTS = ["robot_0", "robot_1"]  # Define all possible agents
+def env_creator(config=None):
+    """
+    Creates an instance of the High_Stakes_Multi_Agent_Env.
+    Args:
+        config (dict): Configuration dictionary for the environment.
+    """
+    config = config or {}  # Ensure config is a dictionary
+    return High_Stakes_Multi_Agent_Env(render_mode=None, randomize=config.get("randomize", True))
 
 class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
     metadata = {"render_modes": ["human"], "name": "vex_high_stakes"}
 
-    def __init__(self, render_mode=None, output_directory=""):
+    def __init__(self, render_mode=None, output_directory="", randomize=True):
         super().__init__()
-        self.possible_agents = POSSIBLE_AGENTS
-        self._agent_ids = self.possible_agents
+        self.possible_agents = POSSIBLE_AGENTS # Needed for PettingZoo and RlLib API
+        self._agent_ids = POSSIBLE_AGENTS
         self.agent_name_mapping = {agent: i for i, agent in enumerate(self.possible_agents)}
         self.render_mode = render_mode
         self.agents = []  # Initialize as empty; will be set in reset()
         self.observation_spaces = {agent: self.observation_space(agent) for agent in self.possible_agents}
         self.action_spaces = {agent: self.action_space(agent) for agent in self.possible_agents}
         self.output_directory = output_directory
+        self.randomize = randomize
 
         self.wall_stakes_positions = [
             np.array([0, ENV_FIELD_SIZE/2]),
@@ -190,8 +174,11 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
     def reset(self, seed=None, options=None):
         self.agents = self.possible_agents[:]  # Reset agents to all possible agents
         self.num_moves = 0
-        self.environment_state = self._get_initial_environment_state()
-        observations = {agent: self.get_observation(agent) for agent in self.agents}
+        if(self.randomize):
+            self.environment_state = self._get_random_environment_state(seed)
+        else:
+            self.environment_state = self._get_initial_environment_state()
+        observations = {agent: self._get_observation(agent) for agent in self.agents}
         infos = {agent: {} for agent in self.agents}
 
         return observations, infos
@@ -236,10 +223,39 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             "rings": ring_positions,
         }
 
-    def get_observation(self, agent):
+    def _get_random_environment_state(self, seed=None):
+        # Use the provided seed for reproducibility
+        rng = np.random.default_rng(seed)
+        ring_positions = [
+            {"position": rng.random(2) * ENV_FIELD_SIZE, "status": 0}
+            for _ in range(NUM_RINGS)
+        ]
+        goal_positions = [
+            {"position": rng.random(2) * ENV_FIELD_SIZE, "status": 0}
+            for _ in range(NUM_GOALS)
+        ]
+        return {
+            "agents": {
+            agent: {
+                "position": np.array([1.0, 6.0], dtype=np.float32),
+                "orientation": np.array([0.0], dtype=np.float32),
+                "holding_goal_index": -1,
+                "held_rings": 0,
+                "size": 15,
+                "climbed": False,
+                "gameTime": 0,
+                "active": True,
+            }
+            for agent in self.agents
+            },
+            "goals": goal_positions,
+            "rings": ring_positions,
+        }
+
+    def _get_observation(self, agent):
         agent_state = self.environment_state["agents"][agent]
-        rings = self.get_available_rings(agent_state)
-        goals = self.get_available_goals(agent_state)
+        rings = self._get_available_rings(agent_state)
+        goals = self._get_available_goals(agent_state)
         observation = np.concatenate([
             np.clip(agent_state["position"], 0, ENV_FIELD_SIZE),
             np.clip(agent_state["orientation"], -np.pi, np.pi),
@@ -249,12 +265,12 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             np.clip(goals, -1, ENV_FIELD_SIZE),
             np.clip(
                 np.array([
-                    sum(1 for ring in self.environment_state["rings"] if ring["status"] == stake_index + 7)
+                    sum(1 for ring in self.environment_state["rings"] if ring["status"] == stake_index + STAKE_ID_OFFSET)
                     for stake_index in range(NUM_WALL_STAKES)
                 ], dtype=np.float32),
                 0, 6
             ),
-            [0 if sum(1 for ring in self.environment_state["rings"] if ring["status"] == agent_state["holding_goal_index"] + 2) < 6 else 1],
+            [0 if sum(1 for ring in self.environment_state["rings"] if ring["status"] == agent_state["holding_goal_index"] + GOAL_ID_OFFSET) < 6 else 1],
             [np.clip(TIME_LIMIT - agent_state["gameTime"], 0, TIME_LIMIT)],
             [np.clip(np.count_nonzero(rings != -1) // 2, 0, NUM_RINGS)],
             [np.clip(np.count_nonzero(goals != -1) // 2, 0, NUM_GOALS)]
@@ -294,7 +310,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 agent_state["active"] = False
                 continue # skip this agent if it is ahead of the others
 
-            initial_score = self.compute_field_score()
+            initial_score = self._compute_field_score()
 
             agent_state["active"] = True
             
@@ -306,7 +322,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                     nearest_goal = None
                     min_distance = float('inf')
                     for i, goal in enumerate(self.environment_state["goals"]):
-                        if self.is_goal_available(i, agent_state):  # Check if the goal is available
+                        if self._is_goal_available(i, agent_state):  # Check if the goal is available
                             distance = np.linalg.norm(agent_state["position"] - goal["position"])
                             if distance < min_distance:
                                 min_distance = distance
@@ -315,7 +331,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                     # Pick up the nearest available goal if found
                     if nearest_goal is not None:
                         agent_state["holding_goal_index"] = nearest_goal
-                        self.environment_state["goals"][nearest_goal]["status"] = self.agent_name_mapping[agent] + 1
+                        self.environment_state["goals"][nearest_goal]["status"] = self.agent_name_mapping[agent] + AGENT_ID_OFFSET
                         
                         # Update robot orientation to face the goal
                         goal_position = self.environment_state["goals"][nearest_goal]["position"]
@@ -340,7 +356,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                     nearest_ring = None
                     min_distance = float('inf')
                     for i, ring in enumerate(self.environment_state["rings"]):
-                        if self.is_ring_available(i, agent_state):  # Check if the ring is available
+                        if self._is_ring_available(i, agent_state):  # Check if the ring is available
                             distance = np.linalg.norm(agent_state["position"] - ring["position"])
                             if distance < min_distance:
                                 min_distance = distance
@@ -348,7 +364,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
 
                     # Pick up the nearest available ring if found
                     if nearest_ring is not None:
-                        self.environment_state["rings"][nearest_ring]["status"] = self.agent_name_mapping[agent] + 1
+                        self.environment_state["rings"][nearest_ring]["status"] = self.agent_name_mapping[agent] + AGENT_ID_OFFSET
                         agent_state["held_rings"] += 1
 
                         # Update robot orientation to face the ring
@@ -419,8 +435,8 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                     goal_index = agent_state["holding_goal_index"]
                     # Find a ring held by the agent
                     for i, ring in enumerate(self.environment_state["rings"]):
-                        if ring["status"] - 1 == self.agent_name_mapping[agent]:
-                            ring["status"] = goal_index + 2
+                        if ring["status"] == self.agent_name_mapping[agent] + AGENT_ID_OFFSET:
+                            ring["status"] = goal_index + GOAL_ID_OFFSET # Assign ring to the goal
                             agent_state["held_rings"] -= 1
                             break
                     duration += 0.5  # Add duration for adding ring to goal
@@ -460,9 +476,9 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                     if distances[closest_stake_index] < 1.5:
                         # Find a ring held by the agent
                         for i, ring in enumerate(self.environment_state["rings"]):
-                            if ring["status"] - 1 == self.agent_name_mapping[agent]:
+                            if ring["status"] == self.agent_name_mapping[agent] + AGENT_ID_OFFSET:
                                 # Add ring to the wall stake
-                                ring["status"] = closest_stake_index + 7  # Assign ring to the closest wall stake
+                                ring["status"] = closest_stake_index + STAKE_ID_OFFSET  # Assign ring to the closest wall stake
                                 agent_state["held_rings"] -= 1
                                 break
                         duration += 1  # Add duration for adding ring to wall stake
@@ -482,7 +498,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                     # Find the next nearest available goal
                     available_goals = []
                     for i, goal in enumerate(self.environment_state["goals"]):
-                        if self.is_goal_available(i, agent_state):  # Check if the goal is available
+                        if self._is_goal_available(i, agent_state):  # Check if the goal is available
                             available_goals.append((i, np.linalg.norm(agent_state["position"] - goal["position"])))
 
                     if len(available_goals) > 1:
@@ -492,7 +508,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
 
                         # Update agent state to pick up the next nearest goal
                         agent_state["holding_goal_index"] = next_nearest_goal_index
-                        self.environment_state["goals"][next_nearest_goal_index]["status"] = self.agent_name_mapping[agent] + 1
+                        self.environment_state["goals"][next_nearest_goal_index]["status"] = self.agent_name_mapping[agent] + AGENT_ID_OFFSET
 
                         # Update robot orientation to face the goal
                         goal_position = self.environment_state["goals"][next_nearest_goal_index]["position"]
@@ -521,7 +537,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             #             penalty += -10  # Apply penalty for collision
             
             agent_state["gameTime"] += duration
-            rewards[agent] = self.reward_function(initial_score, penalty)
+            rewards[agent] = self._clearStepsDirectory(initial_score, penalty)
             
             # Update agent state
             self.environment_state["agents"][agent] = agent_state
@@ -535,15 +551,15 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
 
             # Update ring positions if held by the agent
             for i, ring in enumerate(self.environment_state["rings"]):
-                if ring["status"] - 1 == self.agent_name_mapping[agent]:
+                if ring["status"] == self.agent_name_mapping[agent] + AGENT_ID_OFFSET:
                     ring["position"] = agent_state["position"].copy()
 
         infos = {agent: {} for agent in self.agents}
 
         # Update observations based on the updated environment state
-        observations = {agent: self.get_observation(agent) for agent in self.agents}
+        observations = {agent: self._get_observation(agent) for agent in self.agents}
 
-        self.score = self.compute_field_score() # Compute score before agents are removed
+        self.score = self._compute_field_score() # Compute score before agents are removed
 
         # Remove agents if the environment is truncated or terminated
         if terminations["__all__"] or truncations["__all__"]:
@@ -585,9 +601,9 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             print("Time Remaining:", timeRemaining)            
             print()
         if mode == "image" or mode == "all":
-            self.save_image(self.num_moves, actions)
+            self._save_image(self.num_moves, actions)
     
-    def save_image(self, step_num, actions=None):
+    def _save_image(self, step_num, actions=None):
         # Create visualization
             fig, ax = plt.subplots(figsize=(10,8))
             ax.set_xlim(0, ENV_FIELD_SIZE)
@@ -600,18 +616,18 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             
             # Draw the rings
             for i, ring in enumerate(self.environment_state["rings"]):
-                visible_by_any_agent = any(self.is_ring_available(i, self.environment_state["agents"][agent]) for agent in self.agents)
+                visible_by_any_agent = any(self._is_ring_available(i, self.environment_state["agents"][agent]) for agent in self.agents)
                 color = 'red' if visible_by_any_agent else 'gray'
                 circle = patches.Circle((ring["position"][0], ring["position"][1]), 0.3, color=color, alpha=0.7)
                 ax.add_patch(circle)
 
             # Draw the goals
             for goal_idx, goal in enumerate(self.environment_state["goals"]):
-                visible_by_any_agent = any(self.is_goal_available(goal_idx, self.environment_state["agents"][agent]) for agent in self.agents)
+                visible_by_any_agent = any(self._is_goal_available(goal_idx, self.environment_state["agents"][agent]) for agent in self.agents)
                 color = 'green' if visible_by_any_agent else 'gray'
                 hexagon = patches.RegularPolygon((goal["position"][0], goal["position"][1]), numVertices=6, radius=0.5, orientation=np.pi/6, color=color, alpha=0.25)
                 ax.add_patch(hexagon)
-                rings_on_goal = sum(1 for ring in self.environment_state["rings"] if ring["status"] == goal_idx + 2)
+                rings_on_goal = sum(1 for ring in self.environment_state["rings"] if ring["status"] == goal_idx + GOAL_ID_OFFSET)
                 ax.text(goal["position"][0], goal["position"][1] + 0.6, str(rings_on_goal), color='black', ha='center')
 
             # Draw the wall stakes
@@ -624,7 +640,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                     text_pos = pos + np.array([0.0, -0.5])
                 elif idx == 3:
                     text_pos = pos + np.array([0.0, 0.5])
-                rings_on_stake = sum(1 for ring in self.environment_state["rings"] if ring["status"] == idx + 7)
+                rings_on_stake = sum(1 for ring in self.environment_state["rings"] if ring["status"] == idx + STAKE_ID_OFFSET)
                 ax.text(text_pos[0], text_pos[1], str(rings_on_stake), color='black', ha='center')
 
             # Draw the robots
@@ -653,7 +669,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 ax.add_patch(orientation_arrow)
                 
                 # Add agent label
-                rings_on_bot = sum(1 for ring in self.environment_state["rings"] if ring["status"] == self.agent_name_mapping[agent] + 1)
+                rings_on_bot = sum(1 for ring in self.environment_state["rings"] if ring["status"] == self.agent_name_mapping[agent] + AGENT_ID_OFFSET)
                 ax.text(x, y-width*.75, agent, fontsize=12, ha='center', va='center')
                 ax.text(x, y, str(rings_on_bot), color='black', ha='center')
 
@@ -735,16 +751,16 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         """
         pass
 
-    def reward_function(self, initial_score, penalty):
-        new_score = self.compute_field_score()
+    def _clearStepsDirectory(self, initial_score, penalty):
+        new_score = self._compute_field_score()
         delta_score = new_score - initial_score
         reward = delta_score + penalty
         return reward
 
-    def compute_field_score(self, skills=True):
+    def _compute_field_score(self, skills=True):
         score = 0
         for goal_idx, goal in enumerate(self.environment_state["goals"]):
-            rings_on_goal = sum(1 for ring in self.environment_state["rings"] if ring["status"] == goal_idx + 2)
+            rings_on_goal = sum(1 for ring in self.environment_state["rings"] if ring["status"] == goal_idx + GOAL_ID_OFFSET)
             if rings_on_goal > 0:
                 in_corner = any(np.linalg.norm(goal["position"] - corner) < 0.5 for corner in self.climb_positions)
                 if(skills):
@@ -753,7 +769,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                     score += (3 + (rings_on_goal - 1)) * (2 if in_corner else 1)
 
         for stake_idx, stake_pos in enumerate(self.wall_stakes_positions):
-            rings_on_stake = sum(1 for ring in self.environment_state["rings"] if ring["status"] == stake_idx + 7)
+            rings_on_stake = sum(1 for ring in self.environment_state["rings"] if ring["status"] == stake_idx + STAKE_ID_OFFSET)
             if rings_on_stake > 0:
                 score += 3 + (rings_on_stake - 1)
 
@@ -764,15 +780,21 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         self.total_score = score
         return score
     
-    def is_goal_available(self, goal_index, agent_state):
+    def _is_goal_available(self, goal_index, agent_state):
         goal_position = self.environment_state["goals"][goal_index]["position"]
-        return self.is_visible(goal_position, agent_state) and self.environment_state["goals"][goal_index]["status"] == 0
+        return (
+            self._is_visible(goal_position, agent_state) and
+            self.environment_state["goals"][goal_index]["status"] == 0  # Status 0 means available
+        )
 
-    def is_ring_available(self, ring_index, agent_state):
+    def _is_ring_available(self, ring_index, agent_state):
         ring_position = self.environment_state["rings"][ring_index]["position"]
-        return self.is_visible(ring_position, agent_state) and self.environment_state["rings"][ring_index]["status"] == 0
+        return (
+            self._is_visible(ring_position, agent_state) and
+            self.environment_state["rings"][ring_index]["status"] == 0  # Status 0 means available
+        )
 
-    def is_visible(self, position, agent_state):
+    def _is_visible(self, position, agent_state):
         if not self.realistic_vision:
             return True
         if position[0] < 0 or position[0] > ENV_FIELD_SIZE or position[1] < 0 or position[1] > ENV_FIELD_SIZE:
@@ -782,12 +804,12 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         relative_angle = (angle - agent_state["orientation"] + np.pi) % (2 * np.pi) - np.pi
         return -np.pi / 4 <= relative_angle <= np.pi / 4
 
-    def get_available_goals(self, agent_state):
+    def _get_available_goals(self, agent_state):
         padded_goals = np.full((NUM_GOALS * 2,), -1, dtype=np.float32)
         visible_goals = []
 
         for i, goal in enumerate(self.environment_state["goals"]):
-            if self.is_goal_available(i, agent_state):
+            if self._is_goal_available(i, agent_state):
                 visible_goals.append(goal["position"])
 
         visible_goals = np.array(visible_goals).flatten()
@@ -795,12 +817,12 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
 
         return padded_goals
 
-    def get_available_rings(self, agent_state):
+    def _get_available_rings(self, agent_state):
         padded_rings = np.full((NUM_RINGS * 2,), -1, dtype=np.float32)
         visible_rings = []
 
         for i, ring in enumerate(self.environment_state["rings"]):
-            if self.is_ring_available(i, agent_state):
+            if self._is_ring_available(i, agent_state):
                 visible_rings.append(ring["position"])
 
         visible_rings = np.array(visible_rings).flatten()
