@@ -340,7 +340,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
 
                         # Calculate distance traveled and update duration
                         distance = np.linalg.norm(direction_vector)
-                        duration += distance
+                        duration += distance / 2
 
                         # Update robot position to the goal's position
                         agent_state["position"] = self.environment_state["goals"][nearest_goal]["position"].copy()
@@ -374,7 +374,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                         
                         # Calculate distance traveled and update duration
                         distance = np.linalg.norm(direction_vector)
-                        duration += distance
+                        duration += distance / 2
 
                         # Update robot position to the ring's position
                         agent_state["position"] = self.environment_state["rings"][nearest_ring]["position"].copy()
@@ -394,7 +394,6 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                     
                     # Calculate distance traveled and update duration
                     distance = np.linalg.norm(nearest_climb_position - agent_state["position"])
-                    duration += distance
                     
                     agent_state["position"] = nearest_climb_position
                     direction_to_center = np.array([ENV_FIELD_SIZE / 2, ENV_FIELD_SIZE / 2]) - nearest_climb_position
@@ -424,7 +423,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
 
                 # Calculate distance traveled and update duration
                 distance = np.linalg.norm(target_position - agent_state["position"])
-                duration += distance
+                duration += distance / 2
 
                 # Update agent position and orientation
                 agent_state["orientation"] = np.array([np.arctan2(target_position[1] - agent_state["position"][1], target_position[0] - agent_state["position"][0])], dtype=np.float32)
@@ -460,7 +459,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
 
                 # Calculate distance traveled and update duration
                 distance = np.linalg.norm(target_position - agent_state["position"])
-                duration += distance
+                duration += distance / 2
 
                 # Update agent position
                 agent_state["position"] = target_position
@@ -517,7 +516,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
 
                         # Calculate distance traveled and update duration
                         distance = np.linalg.norm(direction_vector)
-                        duration += distance
+                        duration += distance / 2
 
                         # Update robot position to the goal's position
                         agent_state["position"] = self.environment_state["goals"][next_nearest_goal_index]["position"].copy()
