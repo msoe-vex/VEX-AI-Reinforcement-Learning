@@ -911,11 +911,13 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         for filename in sorted(os.listdir(steps_dir), key=lambda x: int(x.split('_')[1].split('.')[0])):
             file_path = os.path.join(steps_dir, filename)
             images.append(imageio.imread(file_path))
+        filename = os.path.join(self.output_directory, "simulation.gif")
         imageio.mimsave(
-            os.path.join(self.output_directory, "simulation.gif"),
+            filename,
             images,
             fps=10
         )
+        print(f"GIF saved successfully to {filename}")
 
 
     def close(self):

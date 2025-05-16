@@ -6,6 +6,7 @@ import numpy as np
 # Ensure pettingZooEnv.py is accessible
 # If runPettingZoo.py and pettingZooEnv.py are in the same directory, this should work.
 from pettingZooEnv import High_Stakes_Multi_Agent_Env
+from pettingZooEnv import Actions
 
 def run_simulation(model_path):
     """
@@ -111,7 +112,7 @@ def run_simulation(model_path):
         done = all_terminated or all_truncated
             
     print(f"\nSimulation ended after {step_count} steps.")
-
+    print("Creating GIF of the simulation...")
     env.createGIF()
         
     env.close()

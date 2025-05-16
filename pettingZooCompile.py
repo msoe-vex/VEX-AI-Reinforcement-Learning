@@ -13,7 +13,7 @@ from pettingZooEnv import env_creator
 def policy_mapping_fn(agent_id, episode, worker, **kwargs):
     return agent_id
 
-def compile_checkpoint_to_torchscript(checkpoint_path: str):
+def compile_checkpoint_to_torchscript(checkpoint_path: str, output_path: str = None):
     """
     Loads a PPO agent from a checkpoint and saves its models as TorchScript files.
 
@@ -99,9 +99,12 @@ def compile_checkpoint_to_torchscript(checkpoint_path: str):
             ray.shutdown()
             return
 
-        # Save the traced model
-        # The convention is to save it within the checkpoint directory itself
-        traced_model_path = os.path.join(checkpoint_path, f"{policy_id}.pt")
+        # Determine the path to save the traced model
+        if output_path is not None:
+            # If output_path is a directory, save as <output_path>/<policy_id>.pt
+            traced_model_path = os.path.join(output_path, f"{policy_id}.pt")
+        else:
+            traced_model_path = os.path.join(checkpoint_path, f"{policy_id}.pt")
         try:
             final_traced_model.save(traced_model_path)
             print(f"Traced TorchScript model saved to: {traced_model_path}")
@@ -122,6 +125,13 @@ if __name__ == "__main__":
         required=True,
         help="Path to the RLLib checkpoint directory (e.g., /path/to/PPO_High_Stakes_Multi_Agent_Env_.../checkpoint_000005).",
     )
+    parser.add_argument(
+        "--output-path",
+        type=str,
+        required=False,
+        default=None,
+        help="Optional output path for the TorchScript model(s). If a directory, models are saved as <policy_id>.pt inside it.",
+    )
     args = parser.parse_args()
 
-    compile_checkpoint_to_torchscript(args.checkpoint_path)
+    compile_checkpoint_to_torchscript(args.checkpoint_path, args.output_path)

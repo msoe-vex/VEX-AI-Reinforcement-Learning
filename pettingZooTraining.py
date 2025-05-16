@@ -129,7 +129,12 @@ if __name__ == "__main__":
     best_checkpoint = analysis.best_checkpoint
     best_checkpoint_path = best_checkpoint.path
 
-    compile_checkpoint_to_torchscript(best_checkpoint_path)
+    if args.job_id:
+        output_model_directory = os.path.join("job_results", "job_"+args.job_id)
+    else:
+        output_model_directory = best_checkpoint_path # Default to the checkpoint path if no job ID is provided
+
+    compile_checkpoint_to_torchscript(best_checkpoint_path, output_model_directory)
 
     # Shutdown Ray
     ray.shutdown()
