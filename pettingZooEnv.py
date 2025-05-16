@@ -9,7 +9,10 @@ from ray.rllib.env import MultiAgentEnv
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from path_planner import Obstacle, PathPlanner
+try:
+    from .path_planner import Obstacle, PathPlanner
+except:
+    from path_planner import Obstacle, PathPlanner
 
 import numpy as np
 from enum import Enum
