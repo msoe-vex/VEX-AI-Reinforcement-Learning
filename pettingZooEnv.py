@@ -9,7 +9,7 @@ from ray.rllib.env import MultiAgentEnv
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from path_planner import Obstacle
+from path_planner import Obstacle, PathPlanner
 
 import numpy as np
 from enum import Enum
@@ -111,6 +111,12 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         ])
         self.realistic_vision = True
         self.score = 0
+        self.path_planner = PathPlanner(
+            robot_length=24/INCHES_PER_FIELD,
+            robot_width=24/INCHES_PER_FIELD,
+            buffer_radius=BUFFER_RADIUS/INCHES_PER_FIELD,
+            max_velocity=80/INCHES_PER_FIELD,
+            max_accel=100/INCHES_PER_FIELD)
 
     @functools.lru_cache(maxsize=None)
     def observation_space(self, agent):
@@ -625,6 +631,119 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 return False
         
         return True
+
+    def calculate_path(self, start_point, end_point):
+        sp = np.array(start_point, dtype=np.float64)
+        ep = np.array(end_point, dtype=np.float64)
+        sol = self.path_planner.Solve(start_point=sp, end_point=ep, obstacles=self.permanent_obstacles)
+        return self.path_planner.getPath(sol)
+
+    def generate_path(self, action, observation):
+        # Use observation to get robot position and orientation
+        robot_position = np.array([observation[0], observation[1]])
+        robot_orientation = observation[2]
+
+        if action == Actions.CLIMB.value:
+            # Path from last robot position to nearest initial climb position
+            nearest_initial_climb_position = self.initial_climb_positions[np.argmin(np.linalg.norm(self.initial_climb_positions - robot_position, axis=1))]
+            planned_x1, planned_y1, time1 = self.calculate_path(robot_position / ENV_FIELD_SIZE, nearest_initial_climb_position / ENV_FIELD_SIZE)
+            planned_x1 *= ENV_FIELD_SIZE
+            planned_y1 *= ENV_FIELD_SIZE
+
+            # Path from initial climb position to corresponding climb position
+            corresponding_climb_position = self.climb_positions[np.argmin(np.linalg.norm(self.initial_climb_positions - nearest_initial_climb_position, axis=1))]
+            planned_x2, planned_y2, time2 = self.calculate_path(nearest_initial_climb_position / ENV_FIELD_SIZE, corresponding_climb_position / ENV_FIELD_SIZE)
+            planned_x2 *= ENV_FIELD_SIZE
+            planned_y2 *= ENV_FIELD_SIZE
+
+        else:
+            # For other actions, use robot_position and assume last_robot_position is also from observation
+            # If you have access to previous observation, you can use that for last_robot_position
+            planned_x, planned_y, time = self.calculate_path(robot_position / ENV_FIELD_SIZE, robot_position / ENV_FIELD_SIZE)
+            planned_x *= ENV_FIELD_SIZE
+            planned_y *= ENV_FIELD_SIZE
+
+        forward_actions = [
+            Actions.PICK_UP_NEAREST_RING.value,
+            Actions.CLIMB.value,
+        ]
+        reverse_actions = [
+            Actions.PICK_UP_NEAREST_GOAL.value,
+            Actions.PICK_UP_NEXT_NEAREST_GOAL.value,
+            Actions.DRIVE_TO_CORNER_BL.value,
+            Actions.DRIVE_TO_CORNER_BR.value,
+            Actions.DRIVE_TO_CORNER_TL.value,
+            Actions.DRIVE_TO_CORNER_TR.value,
+            Actions.DRIVE_TO_WALL_STAKE_L.value,
+            Actions.DRIVE_TO_WALL_STAKE_R.value,
+            Actions.DRIVE_TO_WALL_STAKE_B.value,
+            Actions.DRIVE_TO_WALL_STAKE_T.value,
+        ]
+        has_path = action in forward_actions or action in reverse_actions
+        reverse = action in reverse_actions
+
+        if action == Actions.CLIMB.value:
+            return has_path, reverse, [planned_x1, planned_x2], [planned_y1, planned_y2]
+        elif has_path:
+            return has_path, reverse, planned_x, planned_y
+        else:
+            return has_path, reverse, None, None
+
+    def break_down_action(self, action, observation, generate_path_output=None):
+        if generate_path_output is None:
+            has_path, reverse, planned_x, planned_y = self.generate_path(action, observation)
+        else:
+            has_path, reverse, planned_x, planned_y = generate_path_output
+
+        broken_down_actions = []
+        path_action = 'BACKWARD' if reverse else 'FORWARD'
+
+        # Use observation to get robot orientation
+        robot_orientation = observation[2]
+
+        # Treat CLIMB specially, it has two paths
+        if action == Actions.CLIMB.value:
+            path_1 = []
+            for x, y in zip(planned_x[0], planned_y[0]):
+                path_1.append(x)
+                path_1.append(y)
+            path_2 = []
+            for x, y in zip(planned_x[1], planned_y[1]):
+                path_2.append(x)
+                path_2.append(y)
+
+            broken_down_actions.append((path_action, path_1))
+            broken_down_actions.append(('START_CLIMB', None))
+            broken_down_actions.append((path_action, path_2))
+            broken_down_actions.append(('END_CLIMB', None))
+            
+            return broken_down_actions
+
+        if has_path:
+            path = []
+            for x, y in zip(planned_x, planned_y):
+                path.append(x)
+                path.append(y)
+            broken_down_actions.append((path_action, path))
+
+        if Actions.PICK_UP_NEAREST_GOAL.value == action or Actions.PICK_UP_NEXT_NEAREST_GOAL.value == action:
+            broken_down_actions.append(('PICKUP_GOAL', None))
+        elif Actions.PICK_UP_NEAREST_RING.value == action:
+            broken_down_actions.append(('PICKUP_RING', None))
+        elif Actions.DROP_GOAL.value == action:
+            broken_down_actions.append(('DROP_GOAL', None))
+        elif Actions.DRIVE_TO_CORNER_BL.value <= action <= Actions.DRIVE_TO_CORNER_TR.value:
+            broken_down_actions.append(('TURN_TO', [robot_orientation]))
+        elif Actions.ADD_RING_TO_GOAL.value == action:
+            broken_down_actions.append(('ADD_RING_TO_GOAL', None))
+        elif Actions.DRIVE_TO_WALL_STAKE_L.value <= action <= Actions.DRIVE_TO_WALL_STAKE_T.value:
+            broken_down_actions.append(('TURN_TO', [robot_orientation]))
+        elif Actions.ADD_RING_TO_WALL_STAKE.value == action:
+            broken_down_actions.append(('ADD_RING_TO_WALL_STAKE', None))
+        elif Actions.TURN_TOWARDS_CENTER.value == action:
+            broken_down_actions.append(('TURN_TO', [robot_orientation]))
+
+        return broken_down_actions
 
     def render(self, actions=None, rewards=None):
         """
