@@ -46,6 +46,8 @@ def run_simulation(model_path):
     done = False
     step_count = 0 # Optional: for logging or a safety break
 
+    last_actions = {agent: None for agent in env.possible_agents}  # Track last actions for each agent
+
     while not done:
         step_count += 1
         if not env.agents:  # No active agents left
@@ -67,7 +69,17 @@ def run_simulation(model_path):
 
             with torch.no_grad():
                 action_logits = loaded_model(obs_tensor)
-            action = torch.argmax(action_logits, dim=1).item()
+            # Sort actions by descending logit value (best first)
+            sorted_actions = torch.argsort(action_logits, dim=1, descending=True).squeeze(0).tolist()
+            # Find the first valid action
+            for candidate_action in sorted_actions:
+                if env.is_valid_action(agent_id, candidate_action):
+                    action = candidate_action
+                    break
+            else:
+                # Fallback: if no valid action found, pick top choice
+                action = torch.argmax(action_logits, dim=1).item()
+
             actions_to_take[agent_id] = action
 
         if not actions_to_take and env.agents:

@@ -13,6 +13,7 @@ import os
 from pettingZooEnv import env_creator
 
 from pettingZooCompile import compile_checkpoint_to_torchscript
+import sys
 
 # Policy mapping function to assign agents to policies.
 def policy_mapping_fn(agent_id, episode, worker, **kwargs):
@@ -99,6 +100,7 @@ if __name__ == "__main__":
 
     start_time = time.time()
     print(f"Training started at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
+    sys.stdout.flush()
     # Run the training process with logger callbacks
     analysis = tune.run(
         "PPO",

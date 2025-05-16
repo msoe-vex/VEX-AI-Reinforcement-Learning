@@ -43,6 +43,7 @@ NUM_GOALS = 5
 NUM_RINGS = 24
 TIME_LIMIT = 60
 DEFAULT_PENALTY = -0.1
+FOV = np.pi / 2
 
 POSSIBLE_AGENTS = ["robot_0", "robot_1"]
 
@@ -254,15 +255,27 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
 
     def _get_observation(self, agent):
         agent_state = self.environment_state["agents"][agent]
-        rings = self._get_available_rings(agent_state)
-        goals = self._get_available_goals(agent_state)
+        available_rings = self._get_available_rings(agent_state)
+        available_goals = self._get_available_goals(agent_state)
+
+        # Pad available objects with -1
+        padded_rings = np.full((NUM_RINGS * 2,), -1, dtype=np.float32)
+        if len(available_rings) > 0:
+            flat_rings = available_rings.flatten()
+            padded_rings[:len(flat_rings)] = flat_rings
+
+        padded_goals = np.full((NUM_GOALS * 2,), -1, dtype=np.float32)
+        if len(available_goals) > 0:
+            flat_goals = available_goals.flatten()
+            padded_goals[:len(flat_goals)] = flat_goals
+
         observation = np.concatenate([
             np.clip(agent_state["position"], 0, ENV_FIELD_SIZE),
             np.clip(agent_state["orientation"], -np.pi, np.pi),
             [0 if agent_state["holding_goal_index"] == -1 else 1],
             [np.clip(agent_state["held_rings"], 0, 2)],
-            np.clip(rings, -1, ENV_FIELD_SIZE),
-            np.clip(goals, -1, ENV_FIELD_SIZE),
+            padded_rings,
+            padded_goals,
             np.clip(
                 np.array([
                     sum(1 for ring in self.environment_state["rings"] if ring["status"] == stake_index + STAKE_ID_OFFSET)
@@ -272,8 +285,8 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             ),
             [0 if sum(1 for ring in self.environment_state["rings"] if ring["status"] == agent_state["holding_goal_index"] + GOAL_ID_OFFSET) < 6 else 1],
             [np.clip(TIME_LIMIT - agent_state["gameTime"], 0, TIME_LIMIT)],
-            [np.clip(np.count_nonzero(rings != -1) // 2, 0, NUM_RINGS)],
-            [np.clip(np.count_nonzero(goals != -1) // 2, 0, NUM_GOALS)]
+            [np.clip(len(available_rings) // 2, 0, NUM_RINGS)],
+            [np.clip(len(available_goals) // 2, 0, NUM_GOALS)]
         ])
         return observation.astype(np.float32)
 
@@ -568,6 +581,51 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
 
         return observations, rewards, terminations, truncations, infos
 
+    def is_valid_action(self, action, observation, last_action=None):
+        """
+        Check if the action is valid for the given observation.
+        """
+
+        # Check if the action is within the action space
+        if not self.action_space_contains({self.agents[0]: action}):
+            return False
+
+        # Check if the action is valid based on the observation
+        if (action == Actions.PICK_UP_NEAREST_GOAL.value or action == Actions.PICK_UP_NEXT_NEAREST_GOAL) and observation[3] == 1:
+            return False  # Already holding a goal
+        if (action == Actions.PICK_UP_NEAREST_GOAL.value or action == Actions.PICK_UP_NEXT_NEAREST_GOAL) and observation[42] == 0:
+            return False  # No visible goals to pick up
+        if action == Actions.PICK_UP_NEAREST_RING.value and observation[4] >= 2:
+            return False  # Already holding 2 rings
+        if action == Actions.PICK_UP_NEAREST_RING.value and observation[38] == 0:
+            return False  # No visible rings to pick up
+        if action == Actions.DROP_GOAL.value and observation[3] == 0:
+            return False # No goal to drop
+        if action == Actions.ADD_RING_TO_GOAL.value and observation[4] == 0:
+            return False  # No rings to add to goal
+        if action == Actions.ADD_RING_TO_WALL_STAKE.value and observation[4] == 0:
+            return False  # No rings to add to wall stake
+        if action == Actions.CLIMB.value and observation[3] == 1:
+            return False  # Can't climb while holding a goal
+        
+        # Prevent repeating certain actions consecutively
+        if last_action is not None:
+            repeat_actions = [
+                Actions.DRIVE_TO_CORNER_BL.value,
+                Actions.DRIVE_TO_CORNER_BR.value,
+                Actions.DRIVE_TO_CORNER_TL.value,
+                Actions.DRIVE_TO_CORNER_TR.value,
+                Actions.DRIVE_TO_WALL_STAKE_L.value,
+                Actions.DRIVE_TO_WALL_STAKE_R.value,
+                Actions.DRIVE_TO_WALL_STAKE_B.value,
+                Actions.DRIVE_TO_WALL_STAKE_T.value,
+                Actions.TURN_TOWARDS_CENTER.value,
+            ]
+            if action == last_action and action in repeat_actions:
+                return False
+        
+        return True
+
     def render(self, actions=None, rewards=None):
         """
         Renders the environment. In human mode, it can print to terminal, open
@@ -686,8 +744,8 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 robot_position = self.environment_state["agents"][agent]["position"]
                 robot_orientation = self.environment_state["agents"][agent]["orientation"][0]
                 fov_length = 50
-                left_fov_angle = robot_orientation + np.pi / 4
-                right_fov_angle = robot_orientation - np.pi / 4
+                left_fov_angle = robot_orientation + FOV / 2
+                right_fov_angle = robot_orientation - FOV / 2
                 left_fov_end = robot_position + fov_length * np.array([np.cos(left_fov_angle), np.sin(left_fov_angle)])
                 right_fov_end = robot_position + fov_length * np.array([np.cos(right_fov_angle), np.sin(right_fov_angle)])
                 ax.plot([robot_position[0], left_fov_end[0]], [robot_position[1], left_fov_end[1]], 'k--', alpha=0.5)
@@ -801,36 +859,24 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         direction = position - agent_state["position"]
         angle = np.arctan2(direction[1], direction[0])
         relative_angle = (angle - agent_state["orientation"] + np.pi) % (2 * np.pi) - np.pi
-        return -np.pi / 4 <= relative_angle <= np.pi / 4
+        return -FOV / 2 <= relative_angle <= FOV / 2
 
     def _get_available_goals(self, agent_state):
-        padded_goals = np.full((NUM_GOALS * 2,), -1, dtype=np.float32)
-        visible_goals = []
-
-        for i, goal in enumerate(self.environment_state["goals"]):
-            if self._is_goal_available(i, agent_state):
-                visible_goals.append(goal["position"])
-
-        visible_goals = np.array(visible_goals).flatten()
-        padded_goals[:len(visible_goals)] = visible_goals
-
-        return padded_goals
+        return np.array([
+            goal["position"]
+            for i, goal in enumerate(self.environment_state["goals"])
+            if self._is_goal_available(i, agent_state)
+        ])
 
     def _get_available_rings(self, agent_state):
-        padded_rings = np.full((NUM_RINGS * 2,), -1, dtype=np.float32)
-        visible_rings = []
-
-        for i, ring in enumerate(self.environment_state["rings"]):
-            if self._is_ring_available(i, agent_state):
-                visible_rings.append(ring["position"])
-
-        visible_rings = np.array(visible_rings).flatten()
-        padded_rings[:len(visible_rings)] = visible_rings
-
-        return padded_rings
+        return np.array([
+            ring["position"]
+            for i, ring in enumerate(self.environment_state["rings"])
+            if self._is_ring_available(i, agent_state)
+        ])
 
 if __name__ == "__main__":
-    env = High_Stakes_Multi_Agent_Env(render_mode="terminal", output_directory="run_petting_zoo")
+    env = High_Stakes_Multi_Agent_Env(render_mode="all", output_directory="pettingZooEnv")
     print("Testing the environment...")
     parallel_api_test(env)
 
