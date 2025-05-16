@@ -641,7 +641,6 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
     def generate_path(self, action, observation):
         # Use observation to get robot position and orientation
         robot_position = np.array([observation[0], observation[1]])
-        robot_orientation = observation[2]
 
         if action == Actions.CLIMB.value:
             # Path from last robot position to nearest initial climb position
