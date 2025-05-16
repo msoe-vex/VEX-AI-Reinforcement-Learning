@@ -73,7 +73,7 @@ def run_simulation(model_path):
             sorted_actions = torch.argsort(action_logits, dim=1, descending=True).squeeze(0).tolist()
             # Find the first valid action
             for candidate_action in sorted_actions:
-                if env.is_valid_action(agent_id, candidate_action):
+                if env.is_valid_action(candidate_action, obs_np, last_actions[agent_id]):
                     action = candidate_action
                     break
             else:
@@ -81,6 +81,7 @@ def run_simulation(model_path):
                 action = torch.argmax(action_logits, dim=1).item()
 
             actions_to_take[agent_id] = action
+            last_actions[agent_id] = action  # Update last action for the agent
 
         if not actions_to_take and env.agents:
             print(f"Step {step_count}: env.agents is not empty, but no actions were generated. This might indicate all remaining agents are terminating. Ending simulation.")

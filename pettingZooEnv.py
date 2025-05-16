@@ -587,7 +587,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         """
 
         # Check if the action is within the action space
-        if not self.action_space_contains({self.agents[0]: action}):
+        if not self.action_space(None).contains(action):
             return False
 
         # Check if the action is valid based on the observation
