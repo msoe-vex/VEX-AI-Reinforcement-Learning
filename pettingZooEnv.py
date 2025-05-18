@@ -48,7 +48,7 @@ TIME_LIMIT = 60
 DEFAULT_PENALTY = -0.1
 FOV = np.pi / 2
 
-POSSIBLE_AGENTS = ["robot_0", "robot_1"]
+POSSIBLE_AGENTS = ["robot_0"]
 
 # Offsets for status IDs
 AGENT_ID_OFFSET = 1
@@ -720,6 +720,10 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             broken_down_actions.append(('END_CLIMB', None))
             
             return broken_down_actions
+
+        # Start intake before moving
+        if Actions.PICK_UP_NEAREST_RING.value == action:
+            broken_down_actions.append(('INTAKE_FORWARD', None))
 
         if has_path:
             path = []
