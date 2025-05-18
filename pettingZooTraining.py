@@ -4,7 +4,7 @@ from ray.tune.registry import register_env
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.tune.logger import JsonLoggerCallback, CSVLoggerCallback, TBXLoggerCallback
 from ray.rllib.utils import check_env
-from ray.train import CheckpointConfig
+from ray.train import CheckpointConfig, RunConfig
 from ray import tune
 import warnings
 import time
@@ -101,6 +101,13 @@ if __name__ == "__main__":
     start_time = time.time()
     print(f"Training started at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
     sys.stdout.flush()
+    # Determine the output directory
+    script_directory = os.path.dirname(os.path.abspath(__file__))
+    if args.job_id:
+        output_directory = os.path.join(script_directory, "job_results", f"job_{args.job_id}")
+    else:
+        output_directory = os.path.join(script_directory, "pettingZooTraining")  # Default directory if no job ID is provided
+
     # Run the training process with logger callbacks
     analysis = tune.run(
         "PPO",
@@ -119,7 +126,7 @@ if __name__ == "__main__":
         ],
         metric="episode_reward_mean",
         mode="max",
-        verbose=args.verbose  # Use the verbosity level from the argument
+        verbose=args.verbose,  # Use the verbosity level from the argument
     )
 
     print(f"Training completed at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
@@ -129,12 +136,7 @@ if __name__ == "__main__":
     best_checkpoint = analysis.best_checkpoint
     best_checkpoint_path = best_checkpoint.path
 
-    if args.job_id:
-        output_model_directory = os.path.join("job_results", "job_"+args.job_id)
-    else:
-        output_model_directory = best_checkpoint_path # Default to the checkpoint path if no job ID is provided
-
-    compile_checkpoint_to_torchscript(best_checkpoint_path, output_model_directory)
+    compile_checkpoint_to_torchscript(best_checkpoint_path, output_directory)
 
     # Shutdown Ray
     ray.shutdown()

@@ -102,6 +102,7 @@ def compile_checkpoint_to_torchscript(checkpoint_path: str, output_path: str = N
         # Determine the path to save the traced model
         if output_path is not None:
             # If output_path is a directory, save as <output_path>/<policy_id>.pt
+            os.makedirs(output_path, exist_ok=True)
             traced_model_path = os.path.join(output_path, f"{policy_id}.pt")
         else:
             traced_model_path = os.path.join(checkpoint_path, f"{policy_id}.pt")
