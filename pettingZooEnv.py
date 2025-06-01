@@ -78,6 +78,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         self.action_spaces = {agent: self.action_space(agent) for agent in self.possible_agents}
         self.output_directory = output_directory
         self.randomize = randomize
+        self.invalid_actions = []
 
         self.wall_stakes_positions = [
             np.array([0, ENV_FIELD_SIZE/2]),
@@ -594,6 +595,9 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         """
         Check if the action is valid for the given observation.
         """
+
+        if self.invalid_actions is not None and action in self.invalid_actions:
+            return False
 
         # Check if the action is within the action space
         if not self.action_space(None).contains(action):
