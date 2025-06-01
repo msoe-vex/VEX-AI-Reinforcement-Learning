@@ -658,6 +658,55 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             planned_x2 *= ENV_FIELD_SIZE
             planned_y2 *= ENV_FIELD_SIZE
 
+        elif action == Actions.PICK_UP_NEAREST_GOAL.value:
+            # Find the nearest available goal from observation
+            # padded_goals starts at index 53, length 10 (NUM_GOALS*2)
+            padded_goals = observation[53:53 + NUM_GOALS * 2]
+            goal_positions = padded_goals.reshape(NUM_GOALS, 2)
+            valid_goal_indices = [i for i, pos in enumerate(goal_positions) if not np.any(pos == -1)]
+            if valid_goal_indices:
+                nearest_goal_pos = goal_positions[valid_goal_indices[0]]
+                planned_x, planned_y, time = self.calculate_path(robot_position / ENV_FIELD_SIZE, nearest_goal_pos / ENV_FIELD_SIZE)
+                planned_x *= ENV_FIELD_SIZE
+                planned_y *= ENV_FIELD_SIZE
+            else:
+                planned_x = planned_y = np.array([robot_position[0]])
+        elif action == Actions.PICK_UP_NEXT_NEAREST_GOAL.value:
+            # Find the next nearest available goal from observation
+            padded_goals = observation[53:53 + NUM_GOALS * 2]
+            goal_positions = padded_goals.reshape(NUM_GOALS, 2)
+            valid_goal_indices = [i for i, pos in enumerate(goal_positions) if not np.any(pos == -1)]
+            if len(valid_goal_indices) > 1:
+                # Compute distances to all valid goals
+                distances = [np.linalg.norm(robot_position - goal_positions[i]) for i in valid_goal_indices]
+                # Get indices sorted by distance
+                sorted_indices = [valid_goal_indices[i] for i in np.argsort(distances)]
+                next_nearest_goal_pos = goal_positions[sorted_indices[1]]
+                planned_x, planned_y, time = self.calculate_path(robot_position / ENV_FIELD_SIZE, next_nearest_goal_pos / ENV_FIELD_SIZE)
+                planned_x *= ENV_FIELD_SIZE
+                planned_y *= ENV_FIELD_SIZE
+            elif valid_goal_indices:
+                # Only one goal available, fallback to that
+                nearest_goal_pos = goal_positions[valid_goal_indices[0]]
+                planned_x, planned_y, time = self.calculate_path(robot_position / ENV_FIELD_SIZE, nearest_goal_pos / ENV_FIELD_SIZE)
+                planned_x *= ENV_FIELD_SIZE
+                planned_y *= ENV_FIELD_SIZE
+            else:
+                planned_x = planned_y = np.array([robot_position[0]])
+        elif action == Actions.PICK_UP_NEAREST_RING.value:
+            # Find the nearest available ring from observation
+            # padded_rings starts at index 5, length 48
+            padded_rings = observation[5:5 + NUM_RINGS * 2]
+            ring_positions = padded_rings.reshape(NUM_RINGS, 2)
+            valid_ring_indices = [i for i, pos in enumerate(ring_positions) if not np.any(pos == -1)]
+            if valid_ring_indices:
+                nearest_ring_pos = ring_positions[valid_ring_indices[0]]
+                planned_x, planned_y, time = self.calculate_path(robot_position / ENV_FIELD_SIZE, nearest_ring_pos / ENV_FIELD_SIZE)
+                planned_x *= ENV_FIELD_SIZE
+                planned_y *= ENV_FIELD_SIZE
+            else:
+                planned_x = planned_y = np.array([robot_position[0]])
+
         else:
             # For other actions, use robot_position and assume last_robot_position is also from observation
             # If you have access to previous observation, you can use that for last_robot_position
