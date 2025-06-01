@@ -1,181 +1,169 @@
 # VEX AI Reinforcement Learning
 
-This project involves training and running reinforcement learning agents in a custom VEX environment using Gymnasium/PettingZoo and RlLib.
+This project involves training and running reinforcement learning agents in a custom VEX environment using Gymnasium/PettingZoo and RLlib.
 
 ## Setup
 
 Use Python 3.8
 
 ```bash
-pip install ray[default] gymnasium pettingzoo dm-tree matplotlib casadi typer opencv-python scipy lz4 torch gputil
+pip install ray[default] gymnasium pettingzoo dm-tree matplotlib casadi typer opencv-python scipy lz4 torch gputil imageio
 ```
 
-<!-- 
+## General Workflow
 
-Old Readme
+1. **Test the Environment**
 
-1. **Install Dependencies**:
-    ```bash
-    pip install gymnasium stable-baselines3 matplotlib imageio
-    ```
+   Run the environment to ensure everything is working and to generate a random simulation GIF:
 
-2. **Ensure the `rl_environment.py` file is free of null bytes**:
-    ```bash
-    python remove_null_bytes.py
-    ```
+   ```bash
+   python pettingZooEnv.py
+   ```
+   - Runs the environment with random actions, renders each step, and creates a GIF in the `pettingZooEnv/steps` directory.
 
-## Running an Agent
+2. **Train the Model**
 
-To run a trained agent, use the `run_agent.py` script. You can specify the path to an existing model to load and run.
+   Train a new agent or continue training from a checkpoint:
 
-### Command
+   ```bash
+   python pettingZooTraining.py [OPTIONS]
+   ```
+   - Trains a PPO agent using RLlib and, after training, automatically compiles the best checkpoint to a TorchScript model.
 
-```bash
-python run_agent.py --model-path <MODEL_PATH>
-```
+   **Example:**
+   ```bash
+   python pettingZooTraining.py --num-iters 100 --learning-rate 0.0003 --entropy 0.02
+   ```
 
-### Example
+   - **Note:** Due to a bug with RLlib's `local_dir` parameter, restoring from a checkpoint may not be functional.
 
-```bash
-python run_agent.py --model-path vex_high_stakes_ppo
-```
+3. **Compile a Checkpoint to TorchScript (if needed)**
 
-### Arguments
+   The training script will automatically compile the best checkpoint. If you need to recompile (e.g., if training ends early or you want to compile a different checkpoint), run:
 
-- `--model-path`: Path to an existing model to load and run.
-- `--timesteps`: Total timesteps for training the model.
-- `--train`: Flag to indicate whether to train a new model.
-- `--randomize`: Randomize positions in the environment.
-- `--no-randomize`: Do not randomize positions in the environment.
-- `--realistic-pathing`: Use realistic pathing.
-- `--no-realistic-pathing`: Do not use realistic pathing.
-- `--realistic-vision`: Use realistic vision.
-- `--no-realistic-vision`: Do not use realistic vision.
-- `--robot-num`: Specify robot num to limit available elements (0-2). `0` to use all objects on the field, `1` to for the top half (inclusive), and `2` for the bottom half (exclusive).
+   ```bash
+   python pettingZooCompile.py --checkpoint-path /path/to/checkpoint_000005 --output-path /path/to/output
+   ```
+   - Loads a PPO checkpoint and saves the policy as a TorchScript `.pt` file.
 
-## Running Custom Instructions
+4. **Run a Simulation with a Trained Model**
 
-To run the environment based on a list of custom actions, use the `run_instructions.py` script. You can specify the path to an instruction file containing the custom actions.
+   To run a simulation using a compiled TorchScript model and generate a GIF:
 
-### Command
+   ```bash
+   python pettingZooRun.py --model-path /path/to/shared_policy.pt
+   ```
+   - Loads a TorchScript model and runs a simulation in the environment, generating a GIF in the `pettingZooRun/steps` directory.
 
-```bash
-python run_instructions.py --instructions-path <INSTRUCTIONS_PATH>
-```
+---
 
-### Example
+### (Optional) Submit a Training Job with SLURM
 
-```bash
-python run_instructions.py --instructions-path instructions.txt
-```
+   To submit a training job to SLURM:
 
-### Arguments
+   ```bash
+   sbatch submitTrainingJob.sh [OPTIONS]
+   ```
+   - Submits a job to SLURM to run `pettingZooTraining.py` with the specified options.
 
-- `--instructions-path`: Path to the instruction file containing custom actions.
-- `--randomize`: Randomize positions in the environment.
-- `--no-randomize`: Do not randomize positions in the environment.
-- `--realistic-pathing`: Use realistic pathing.
-- `--no-realistic-pathing`: Do not use realistic pathing.
-- `--realistic-vision`: Use realistic vision.
-- `--no-realistic-vision`: Do not use realistic vision.
-- `--robot-num`: Specify robot num to limit available elements (0-2). `0` to use all objects on the field, `1` to for the top half (inclusive), and `2` for the bottom half (exclusive).
+   **Example:**
+   ```bash
+   sbatch submitTrainingJob.sh --num-iters 1000 --learning-rate 0.0001 --entropy 0.005
+   ```
 
-## Training or Continuing Training an Agent
+   To continue training from a checkpoint:
+   ```bash
+   sbatch submitTrainingJob.sh --num-iters 500 --checkpoint-path /path/to/job_results/job_XXXX/checkpoint_YYYY
+   ```
 
-To train a new model or continue training an existing model, use the `run_agent.py` script with the `--train` flag. You can also specify the path to an existing model to continue training.
+### SLURM Job Management
 
-### Command
-
-```bash
-python run_agent.py --train --timesteps <TOTAL_TIMESTEPS> [--model-path <MODEL_PATH>]
-```
-
-### Example
-
-Train a new model:
-```bash
-python run_agent.py --train --timesteps 500
-```
-
-Continue training an existing model:
-```bash
-python run_agent.py --train --timesteps 500 --model-path vex_high_stakes_ppo
-```
-
-## Training with SLURM Job Script
-
-To submit a job to a SLURM cluster, use the `train_models.sh` script. You can specify the number of agents and total timesteps for training.
-
-### Command
-
-```bash
-sbatch train_models.sh --agents <NUM_AGENTS> --timesteps <TOTAL_TIMESTEPS>
-```
-
-### Example
-
-```bash
-sbatch train_models.sh --agents 3 --timesteps 100000
-```
-
-### Arguments
-
-- `--agents`: Number of agents to train.
-- `--timesteps`: Total timesteps for training each agent.
-- `--model-path`: Path to a pretrained model.
-- `--entropy`: Entropy coefficient for agent exploration.
-- `--learning-rate`: Magnitude of updates to make to the model.
-- `--discount-factor`: Value to place on potential future rewards.
-- `--randomize`: Randomize positions in the environment.
-- `--no-randomize`: Do not randomize positions in the environment.
-- `--num-layers`: Number of layers in the policy network.
-- `--num-nodes`: Number of nodes per layer in the policy network.
-- `--realistic-pathing`: Use realistic pathing.
-- `--no-realistic-pathing`: Do not use realistic pathing.
-- `--realistic-vision`: Use realistic vision.
-- `--no-realistic-vision`: Do not use realistic vision.
-- `--robot-num`: Specify robot num to limit available elements (0-2). `0` to use all objects on the field, `1` to for the top half (inclusive), and `2` for the bottom half (exclusive).
-
-### Cancel job
-
-To view your running jobs
+View running jobs:
 ```bash
 squeue -u $USER
 ```
 
-To cancel the job
+Cancel a job:
 ```bash
 scancel <JOB_ID>
 ```
 
-## Compiling Output
+---
 
-To compile the output of the RL model's action sequence into C++ autonomous code, use the `compile_output.py` script.
+## Detailed Argument Descriptions
 
-### Command
+### pettingZooEnv.py
 
-```bash
-python compile_output.py --sequence <SEQUENCE_FILE> --output <OUTPUT_FILE>
-```
+Environment definition and random simulation runner.
 
-### Example
+- **No command-line arguments.**  
+  Edit the file directly to change:
+  - `render_mode`: Rendering mode (`"all"`, `"human"`, or `"image"`)
+  - `output_directory`: Where to save images/GIFs
+  - `randomize`: Whether to randomize environment on reset
 
-```bash
-python compile_output.py --sequence auton_sequence.txt --output auton1.h
-```
+---
 
-### Arguments
+### pettingZooTraining.py
 
-- `--sequence`: The action sequence to translate.
-- `--output`: The file path for the translated code.
+RLlib training script.
 
-## File Descriptions
+| Argument           | Type    | Default   | Description                                                                 |
+|---------------------|---------|-----------|-----------------------------------------------------------------------------|
+| `--learning-rate`   | float   | 0.0005    | Learning rate for optimizer                                                 |
+| `--discount-factor` | float   | 0.99      | Discount factor gamma for future rewards                                    |
+| `--entropy`         | float   | 0.01      | Entropy coefficient for exploration                                         |
+| `--num-iters`       | int     | 1         | Number of training iterations                                               |
+| `--cpus-per-task`   | int     | 1         | Number of CPUs to use                                                       |
+| `--job-id`          | str     | ""        | SLURM job ID for logging/output directory                                   |
+| `--model-path`      | str     | ""        | Path to save/load the model (not used for RLlib, use checkpoint-path)       |
+| `--randomize`       | bool    | True      | Enable or disable randomization of environment                              |
+| `--num-layers`      | int     | 2         | Number of hidden layers in the policy network                               |
+| `--num-nodes`       | int     | 64        | Number of nodes per hidden layer                                            |
+| `--num-gpus`        | int     | 0         | Number of GPUs to use                                                       |
+| `--partition`       | str     | "teaching"| SLURM partition to use                                                      |
+| `--algorithm`       | str     | "PPO"     | RLlib algorithm to use                                                      |
+| `--checkpoint-path` | str     | ""        | Path to checkpoint directory to continue training                           |
+| `--verbose`         | int     | 0         | Verbosity level (0=silent, 1=default, 2=verbose)                            |
 
-- `rl_environment.py`: Defines the custom VEX environment.
-- `run_agent.py`: Script to train or run a PPO agent.
-- `run_instructions.py`: Script to run the environment based on a list of custom actions.
-- `train_models.py`: Script to train multiple agents concurrently.
-- `train_models.sh`: SLURM job script to submit training jobs to a cluster.
-- `compile_output.py`: Script to translate an RL model's action sequence into C++ autonomous code.
-- `remove_null_bytes.py`: Script to remove null bytes from `rl_environment.py`. 
--->
+---
+
+### pettingZooCompile.py
+
+Compile RLlib checkpoint to TorchScript.
+
+| Argument           | Type    | Required | Description                                                                 |
+|---------------------|---------|----------|-----------------------------------------------------------------------------|
+| `--checkpoint-path` | str     | Yes      | Path to the RLlib checkpoint directory (e.g., `/path/to/checkpoint_000005`) |
+| `--output-path`     | str     | No       | Directory to save the TorchScript model(s). If not specified, saves to checkpoint directory |
+
+---
+
+### pettingZooRun.py
+
+Run simulation using a TorchScript model.
+
+| Argument         | Type    | Required | Description                                               |
+|-------------------|---------|----------|-----------------------------------------------------------|
+| `--model-path`    | str     | Yes      | Path to the trained TorchScript model (`.pt` file)        |
+
+---
+
+### submitTrainingJob.sh
+
+SLURM job script to run on ROSIE.
+
+All arguments are passed as command-line arguments and forwarded to `pettingZooTraining.py`:
+
+| Argument           | Type    | Default   | Description                                                                 |
+|---------------------|---------|-----------|-----------------------------------------------------------------------------|
+| `--checkpoint-path` | str     | ""        | Path to checkpoint directory to continue training                           |
+| `--entropy`         | float   | 0.01      | Entropy coefficient for exploration                                         |
+| `--learning-rate`   | float   | 0.0005    | Learning rate                                                               |
+| `--discount-factor` | float   | 0.99      | Discount factor gamma                                                       |
+| `--randomize`       | bool    | True      | Enable/disable randomization                                                |
+| `--num-layers`      | int     | 2         | Number of hidden layers                                                     |
+| `--num-nodes`       | int     | 64        | Number of nodes per layer                                                   |
+| `--num-iters`       | int     | 10        | Number of training iterations                                               |
+| `--algorithm`       | str     | "PPO"     | RLlib algorithm                                                             |
+| `--verbose`         | int     | 0         | Verbosity level                                                             |
