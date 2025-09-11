@@ -1074,4 +1074,5 @@ if __name__ == "__main__":
         observations, rewards, terminations, truncations, infos = env.step(actions)
         done = terminations["__all__"] or truncations["__all__"]
         env.render(actions, rewards)
+    env.createGIF()
     env.close()

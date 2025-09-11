@@ -4,10 +4,14 @@ This project involves training and running reinforcement learning agents in a cu
 
 ## Setup
 
-Use Python 3.8
+Use Python 3.12
 
 ```bash
-pip install ray[default] gymnasium pettingzoo dm-tree matplotlib casadi typer opencv-python scipy lz4 torch gputil imageio
+python -m venv myenv
+
+myenv\Scripts\activate
+
+pip install -r requirements.txt
 ```
 
 ## General Workflow
@@ -32,10 +36,8 @@ pip install ray[default] gymnasium pettingzoo dm-tree matplotlib casadi typer op
 
    **Example:**
    ```bash
-   python pettingZooTraining.py --num-iters 100 --learning-rate 0.0003 --entropy 0.02
+   python pettingZooTraining.py --num-iters 2 --learning-rate 0.0003 --entropy 0.02
    ```
-
-   - **Note:** Due to a bug with RLlib's `local_dir` parameter, restoring from a checkpoint may not be functional.
 
 3. **Compile a Checkpoint to TorchScript (if needed)**
 

@@ -1,7 +1,7 @@
 import argparse
 import os
 import ray
-from ray.rllib.algorithms.ppo import PPOConfig, PPO
+from ray.rllib.algorithms.algorithm import Algorithm
 from ray.tune.registry import register_env
 from ray.rllib.utils.framework import try_import_torch
 import warnings
@@ -9,13 +9,9 @@ import warnings
 # Ensure pettingZooEnv.py is accessible
 from pettingZooEnv import env_creator
 
-# Policy mapping function
-def policy_mapping_fn(agent_id, episode, worker, **kwargs):
-    return agent_id
-
 def compile_checkpoint_to_torchscript(checkpoint_path: str, output_path: str = None):
     """
-    Loads a PPO agent from a checkpoint and saves its models as TorchScript files.
+    Loads an agent from a checkpoint and saves its RL Modules as TorchScript files.
 
     Args:
         checkpoint_path (str): Path to the RLLib checkpoint directory.
@@ -36,76 +32,67 @@ def compile_checkpoint_to_torchscript(checkpoint_path: str, output_path: str = N
     # Register the environment
     register_env("High_Stakes_Multi_Agent_Env", env_creator)
 
-    # Restore the trainer from the checkpoint
+    # Restore the algorithm from the checkpoint
     try:
-        # Use PPO.from_checkpoint to load the trainer and its config
-        trainer = PPO.from_checkpoint(checkpoint_path)
-        print(f"Successfully restored trainer from checkpoint: {checkpoint_path}")
+        # Use Algorithm.from_checkpoint to be generic for any algorithm
+        algo = Algorithm.from_checkpoint(checkpoint_path)
+        print(f"Successfully restored algorithm from checkpoint: {checkpoint_path}")
     except Exception as e:
-        print(f"Error restoring trainer from checkpoint: {e}")
+        print(f"Error restoring algorithm from checkpoint: {e}")
         ray.shutdown()
         return
 
-    for policy_id in trainer.config.policies:
-        print(f"Saving policy: {policy_id}")
+    # Iterate over all policies/modules in the algorithm
+    for policy_id in algo.config.policies:
+        print(f"Saving module for policy: {policy_id}")
+        
+        # This is the modern way to access the underlying neural network (RLModule).
         try:
-            policy = trainer.get_policy(policy_id)
-            if policy is None:
-                print(f"Error: Could not get policy for agent {policy_id}")
-                trainer.stop()
-                ray.shutdown()
-                return
+            module = algo.get_module(policy_id)
+            module.eval()  # Set the module to evaluation mode
         except Exception as e:
-            print(f"Error getting policy: {e}")
-            trainer.stop()
+            print(f"Error getting RLModule: {e}")
+            algo.stop()
             ray.shutdown()
             return
         
-        # Create a temporary environment to get observation and action spaces
-        # This is still needed for the dummy_input_dict for tracing.
+        # Create a temporary environment to get the observation space shape for tracing.
         temp_env = env_creator(None)
         obs_space = temp_env.observation_space(policy_id)
         temp_env.close()
 
-        # Extract the model from the policy
-        model = policy.model
-        model.eval()  # Set the model to evaluation mode
+        # Create a dummy observation tensor
+        dummy_obs = torch.randn(1, *obs_space.shape).clone().detach()
 
-        # Create a dummy input_dict with the expected structure (only observation)
-        dummy_input_dict = {
-            "obs": torch.randn(1, *obs_space.shape).clone().detach(),
-        }
-
-        # Wrap the model for tracing
+        # The new RLModule uses a dictionary for input and `forward_inference` for output.
         class TracedModel(torch.nn.Module):
-            def __init__(self, original_model_ref):
-                super(TracedModel, self).__init__()
-                self.original_model_ref = original_model_ref
+            def __init__(self, original_module):
+                super().__init__()
+                self.original_module = original_module
 
             def forward(self, obs):
-                input_dict_local = {"obs": obs}
-                # The model's forward pass returns (output_logits, state_list)
-                # We are interested in the logits for action selection.
-                return self.original_model_ref(input_dict_local)[0]
+                # The RLModule's forward_inference expects a batched dictionary.
+                input_dict = {"obs": obs}
+                # The output is also a dictionary. We extract the action logits.
+                output_dict = self.original_module.forward_inference(input_dict)
+                # 'action_dist_inputs' is the standard key for action logits.
+                return output_dict['action_dist_inputs']
 
-        traced_wrapper = TracedModel(model)
+        traced_wrapper = TracedModel(module)
 
         # Trace the model
         try:
-            final_traced_model = torch.jit.trace(traced_wrapper, (dummy_input_dict["obs"]))
+            final_traced_model = torch.jit.trace(traced_wrapper, (dummy_obs))
         except Exception as e:
             print(f"Error during model tracing: {e}")
-            trainer.stop()
+            algo.stop()
             ray.shutdown()
             return
 
         # Determine the path to save the traced model
-        if output_path is not None:
-            # If output_path is a directory, save as <output_path>/<policy_id>.pt
-            os.makedirs(output_path, exist_ok=True)
-            traced_model_path = os.path.join(output_path, f"{policy_id}.pt")
-        else:
-            traced_model_path = os.path.join(checkpoint_path, f"{policy_id}.pt")
+        os.makedirs(output_path, exist_ok=True)
+        traced_model_path = os.path.join(output_path, f"{policy_id}.pt")
+        
         try:
             final_traced_model.save(traced_model_path)
             print(f"Traced TorchScript model saved to: {traced_model_path}")
@@ -113,26 +100,14 @@ def compile_checkpoint_to_torchscript(checkpoint_path: str, output_path: str = N
             print(f"Error saving traced model: {e}")
 
     # Clean up
-    trainer.stop()
+    algo.stop()
     ray.shutdown()
 
 if __name__ == "__main__":
-    # Suppress all deprecation warnings
     warnings.filterwarnings("ignore", category=DeprecationWarning)
-    parser = argparse.ArgumentParser(description="Compile a PPO checkpoint to a TorchScript model.")
-    parser.add_argument(
-        "--checkpoint-path",
-        type=str,
-        required=True,
-        help="Path to the RLLib checkpoint directory (e.g., /path/to/PPO_High_Stakes_Multi_Agent_Env_.../checkpoint_000005).",
-    )
-    parser.add_argument(
-        "--output-path",
-        type=str,
-        required=False,
-        default=None,
-        help="Optional output path for the TorchScript model(s). If a directory, models are saved as <policy_id>.pt inside it.",
-    )
+    parser = argparse.ArgumentParser(description="Compile an RLLib checkpoint to a TorchScript model.")
+    parser.add_argument("--checkpoint-path", type=str, required=True, help="Path to the RLLib checkpoint directory.")
+    parser.add_argument("--output-path", type=str, required=True, help="Output directory for the TorchScript model(s).")
     args = parser.parse_args()
 
     compile_checkpoint_to_torchscript(args.checkpoint_path, args.output_path)

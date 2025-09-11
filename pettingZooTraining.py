@@ -3,7 +3,6 @@ import argparse
 from ray.tune.registry import register_env
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.tune.logger import JsonLoggerCallback, CSVLoggerCallback, TBXLoggerCallback
-from ray.rllib.utils import check_env
 from ray.train import CheckpointConfig, RunConfig
 from ray import tune
 import warnings
@@ -16,9 +15,9 @@ from pettingZooCompile import compile_checkpoint_to_torchscript
 import sys
 
 # Policy mapping function to assign agents to policies.
-def policy_mapping_fn(agent_id, episode, worker, **kwargs):
+def policy_mapping_fn(agent_id, episode):
     return "shared_policy" # Use the same policy for all agents
-    return agent_id # Change to agent_id if you want to use different policies for each agent
+    # return agent_id # Change to agent_id if you want to use different policies for each agent
 
 if __name__ == "__main__":
     # Suppress excessive experiment checkpoint warnings
@@ -57,7 +56,6 @@ if __name__ == "__main__":
 
     # Create a temporary instance to retrieve observation and action spaces for a sample agent.
     temp_env = env_creator()
-    check_env(temp_env)  # Check if the environment is compatible with RLlib
 
     # Define a policy for each agent.
     policies = {
@@ -79,8 +77,8 @@ if __name__ == "__main__":
         .resources(
             num_gpus=ray.available_resources().get("GPU", 0)  # Use available GPUs
         )
-        .rollouts(
-            num_rollout_workers=args.cpus_per_task-1,  # Use 1 worker for each CPU core plus 1 for the main process
+        .env_runners(
+            num_env_runners=args.cpus_per_task-1,  # Use 1 runner for each CPU core plus 1 for the main process
         )
         .multi_agent(
             policies=policies,
@@ -112,9 +110,10 @@ if __name__ == "__main__":
     analysis = tune.run(
         "PPO",
         config=config.to_dict(),
+        storage_path=output_directory,
         checkpoint_config=CheckpointConfig(
             checkpoint_frequency=1,
-            checkpoint_score_attribute="episode_reward_mean",
+            checkpoint_score_attribute="env_runners/episode_return_mean",
             checkpoint_score_order="max",
             num_to_keep=1,
         ),
@@ -124,7 +123,7 @@ if __name__ == "__main__":
             CSVLoggerCallback(),
             TBXLoggerCallback(),
         ],
-        metric="episode_reward_mean",
+        metric="env_runners/episode_return_mean",
         mode="max",
         verbose=args.verbose,  # Use the verbosity level from the argument
     )

@@ -1,6 +1,4 @@
-/env
-/venv
-/.venv
+/*env
 /.vscode
 job-script.sh
 /job_results
@@ -15,3 +13,4 @@ grid.png
 /Research Results
 /run_petting_zoo
 /pettingZooRun
+/pettingZooTraining

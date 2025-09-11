@@ -1,0 +1,14 @@
+ray[tune]
+ray[default]
+gymnasium
+pettingzoo
+dm-tree
+matplotlib
+casadi
+typer
+opencv-python
+scipy
+lz4
+torch
+gputil
+imageio
