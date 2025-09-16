@@ -121,8 +121,9 @@ if __name__ == "__main__":
         callbacks=[
             JsonLoggerCallback(),
             CSVLoggerCallback(),
-            TBXLoggerCallback(),
+            #TBXLoggerCallback(),
         ],
+        log_to_file=False,
         metric="env_runners/episode_return_mean",
         mode="max",
         verbose=args.verbose,  # Use the verbosity level from the argument
