@@ -62,6 +62,23 @@ WALL_GOAL_COORDINATES = {
     "TOP_WALL_GOAL_ENTERANCE_1": (50/INCHES_PER_FIELD, 119/INCHES_PER_FIELD),
     "TOP_WALL_GOAL_ENTERANCE_2": (94/INCHES_PER_FIELD, 118/INCHES_PER_FIELD),
 }
+CENTER_GOAL_COORDINATES = {
+    "BOTTOM_LEFT_GOAL": (62/INCHES_PER_FIELD, 64/INCHES_PER_FIELD),
+    "BOTTOM_RIGHT_GOAL": (78/INCHES_PER_FIELD, 80/INCHES_PER_FIELD),
+    "TOP_LEFT_GOAL": (62/INCHES_PER_FIELD, 80/INCHES_PER_FIELD),
+    "TOP_RIGHT_GOAL": (78/INCHES_PER_FIELD, 64/INCHES_PER_FIELD),
+}
+
+BLOCK_COORDINATES = [
+    {"x": 116, "y": 1, "color": "blue"},
+    {"x": 116, "y": 142, "color": "blue"},
+    {"x": 22, "y": 1, "color": "red"},
+    {"x": 22, "y": 142, "color": "red"},
+    {"x": 48, "y": 48, "color": "red"},
+    {"x": 48, "y": 91, "color": "blue"},
+    {"x": 91, "y": 48, "color": "blue"},
+    {"x": 91, "y": 91, "color": "red"},
+]
 
 def env_creator(config=None):
     """
@@ -94,33 +111,28 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             np.array([ENV_FIELD_SIZE/2, 0]),
             np.array([ENV_FIELD_SIZE/2, ENV_FIELD_SIZE])
         ]
-        self.permanent_obstacles = [Obstacle(WALL_GOAL_COORDINATES[goal][0], WALL_GOAL_COORDINATES[goal][1], 3.5/INCHES_PER_FIELD, False) for goal in WALL_GOAL_COORDINATES]
-
-        self.permanent_obstacle = [
-                    Obstacle(45.65/INCHES_PER_FIELD, 23.44/INCHES_PER_FIELD, 3.5/INCHES_PER_FIELD, False), # Bottom
-                    Obstacle(3/6, 4/6, 3.5/INCHES_PER_FIELD, False), # Top
-                    Obstacle(2/6, 3/6, 3.5/INCHES_PER_FIELD, False), # Left
-                    Obstacle(4/6, 3/6, 3.5/INCHES_PER_FIELD, False) # Right
-                    ]
+        self.goals = [Obstacle(WALL_GOAL_COORDINATES[goal][0], WALL_GOAL_COORDINATES[goal][1], 3.5/INCHES_PER_FIELD, False) for goal in WALL_GOAL_COORDINATES]
+        self.goals += [Obstacle(CENTER_GOAL_COORDINATES[goal][0], CENTER_GOAL_COORDINATES[goal][1], 3.5/INCHES_PER_FIELD, False) for goal in CENTER_GOAL_COORDINATES]
+        
         self.climb_positions = np.array([
-            [(self.permanent_obstacles[0].x + self.permanent_obstacles[2].x) / 2 * ENV_FIELD_SIZE,
-             (self.permanent_obstacles[0].y + self.permanent_obstacles[2].y) / 2 * ENV_FIELD_SIZE],
-            [(self.permanent_obstacles[0].x + self.permanent_obstacles[3].x) / 2 * ENV_FIELD_SIZE,
-             (self.permanent_obstacles[0].y + self.permanent_obstacles[3].y) / 2 * ENV_FIELD_SIZE],
-            [(self.permanent_obstacles[1].x + self.permanent_obstacles[2].x) / 2 * ENV_FIELD_SIZE,
-             (self.permanent_obstacles[1].y + self.permanent_obstacles[2].y) / 2 * ENV_FIELD_SIZE],
-            [(self.permanent_obstacles[1].x + self.permanent_obstacles[3].x) / 2 * ENV_FIELD_SIZE,
-             (self.permanent_obstacles[1].y + self.permanent_obstacles[3].y) / 2 * ENV_FIELD_SIZE]
+            [(self.goals[0].x + self.goals[2].x) / 2 * ENV_FIELD_SIZE,
+             (self.goals[0].y + self.goals[2].y) / 2 * ENV_FIELD_SIZE],
+            [(self.goals[0].x + self.goals[3].x) / 2 * ENV_FIELD_SIZE,
+             (self.goals[0].y + self.goals[3].y) / 2 * ENV_FIELD_SIZE],
+            [(self.goals[1].x + self.goals[2].x) / 2 * ENV_FIELD_SIZE,
+             (self.goals[1].y + self.goals[2].y) / 2 * ENV_FIELD_SIZE],
+            [(self.goals[1].x + self.goals[3].x) / 2 * ENV_FIELD_SIZE,
+             (self.goals[1].y + self.goals[3].y) / 2 * ENV_FIELD_SIZE]
         ])
         self.initial_climb_positions = self.climb_positions + np.array([
-            [np.cos(np.arctan2(self.permanent_obstacles[2].y - self.permanent_obstacles[1].y, self.permanent_obstacles[2].x - self.permanent_obstacles[1].x)) * 1,
-             np.sin(np.arctan2(self.permanent_obstacles[2].y - self.permanent_obstacles[1].y, self.permanent_obstacles[2].x - self.permanent_obstacles[1].x)) * 1],
-            [np.cos(np.arctan2(self.permanent_obstacles[3].y - self.permanent_obstacles[1].y, self.permanent_obstacles[3].x - self.permanent_obstacles[1].x)) * 1,
-             np.sin(np.arctan2(self.permanent_obstacles[3].y - self.permanent_obstacles[1].y, self.permanent_obstacles[3].x - self.permanent_obstacles[1].x)) * 1],
-            [np.cos(np.arctan2(self.permanent_obstacles[2].y - self.permanent_obstacles[0].y, self.permanent_obstacles[2].x - self.permanent_obstacles[0].x)) * 1,
-             np.sin(np.arctan2(self.permanent_obstacles[2].y - self.permanent_obstacles[0].y, self.permanent_obstacles[2].x - self.permanent_obstacles[0].x)) * 1],
-            [np.cos(np.arctan2(self.permanent_obstacles[3].y - self.permanent_obstacles[0].y, self.permanent_obstacles[3].x - self.permanent_obstacles[0].x)) * 1,
-             np.sin(np.arctan2(self.permanent_obstacles[3].y - self.permanent_obstacles[0].y, self.permanent_obstacles[3].x - self.permanent_obstacles[0].x)) * 1]
+            [np.cos(np.arctan2(self.goals[2].y - self.goals[1].y, self.goals[2].x - self.goals[1].x)) * 1,
+             np.sin(np.arctan2(self.goals[2].y - self.goals[1].y, self.goals[2].x - self.goals[1].x)) * 1],
+            [np.cos(np.arctan2(self.goals[3].y - self.goals[1].y, self.goals[3].x - self.goals[1].x)) * 1,
+             np.sin(np.arctan2(self.goals[3].y - self.goals[1].y, self.goals[3].x - self.goals[1].x)) * 1],
+            [np.cos(np.arctan2(self.goals[2].y - self.goals[0].y, self.goals[2].x - self.goals[0].x)) * 1,
+             np.sin(np.arctan2(self.goals[2].y - self.goals[0].y, self.goals[2].x - self.goals[0].x)) * 1],
+            [np.cos(np.arctan2(self.goals[3].y - self.goals[0].y, self.goals[3].x - self.goals[0].x)) * 1,
+             np.sin(np.arctan2(self.goals[3].y - self.goals[0].y, self.goals[3].x - self.goals[0].x)) * 1]
         ])
         self.realistic_vision = True
         self.score = 0
@@ -651,7 +663,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
     def calculate_path(self, start_point, end_point):
         sp = np.array(start_point, dtype=np.float64)
         ep = np.array(end_point, dtype=np.float64)
-        sol = self.path_planner.Solve(start_point=sp, end_point=ep, obstacles=self.permanent_obstacles)
+        sol = self.path_planner.Solve(start_point=sp, end_point=ep, obstacles=self.goals)
         return self.path_planner.getPath(sol)
 
     def generate_path(self, action, observation):
@@ -918,7 +930,7 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 ax.text(x, y, str(rings_on_bot), color='black', ha='center')
 
             # Draw the obstacles
-            for obstacle in self.permanent_obstacles:
+            for obstacle in self.goals:
                 circle = patches.Circle(
                     (obstacle.x * ENV_FIELD_SIZE, obstacle.y * ENV_FIELD_SIZE), 
                     obstacle.radius * ENV_FIELD_SIZE, 
