@@ -70,14 +70,14 @@ CENTER_GOAL_COORDINATES = {
 }
 
 BLOCK_COORDINATES = [
-    {"x": 116, "y": 1, "color": "blue"},
-    {"x": 116, "y": 142, "color": "blue"},
-    {"x": 22, "y": 1, "color": "red"},
-    {"x": 22, "y": 142, "color": "red"},
-    {"x": 48, "y": 48, "color": "red"},
-    {"x": 48, "y": 91, "color": "blue"},
-    {"x": 91, "y": 48, "color": "blue"},
-    {"x": 91, "y": 91, "color": "red"},
+    {"x": 116/INCHES_PER_FIELD, "y": 1/INCHES_PER_FIELD, "color": "blue"},
+    {"x": 116/INCHES_PER_FIELD, "y": 142/INCHES_PER_FIELD, "color": "blue"},
+    {"x": 22/INCHES_PER_FIELD, "y": 1/INCHES_PER_FIELD, "color": "red"},
+    {"x": 22/INCHES_PER_FIELD, "y": 142/INCHES_PER_FIELD, "color": "red"},
+    {"x": 48/INCHES_PER_FIELD, "y": 48/INCHES_PER_FIELD, "color": "red"},
+    {"x": 48/INCHES_PER_FIELD, "y": 91/INCHES_PER_FIELD, "color": "blue"},
+    {"x": 91/INCHES_PER_FIELD, "y": 48/INCHES_PER_FIELD, "color": "blue"},
+    {"x": 91/INCHES_PER_FIELD, "y": 91/INCHES_PER_FIELD, "color": "red"},
 ]
 
 def env_creator(config=None):
