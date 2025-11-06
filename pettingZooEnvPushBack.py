@@ -114,6 +114,8 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         self.goals = [Obstacle(WALL_GOAL_COORDINATES[goal][0], WALL_GOAL_COORDINATES[goal][1], 3.5/INCHES_PER_FIELD, False) for goal in WALL_GOAL_COORDINATES]
         self.goals += [Obstacle(CENTER_GOAL_COORDINATES[goal][0], CENTER_GOAL_COORDINATES[goal][1], 3.5/INCHES_PER_FIELD, False) for goal in CENTER_GOAL_COORDINATES]
         
+        self.blocks = [Obstacle(block["x"], block["y"], 3.5/INCHES_PER_FIELD, False) for block in BLOCK_COORDINATES]
+
         self.climb_positions = np.array([
             [(self.goals[0].x + self.goals[2].x) / 2 * ENV_FIELD_SIZE,
              (self.goals[0].y + self.goals[2].y) / 2 * ENV_FIELD_SIZE],
@@ -937,7 +939,13 @@ class High_Stakes_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                     edgecolor='black', facecolor='none', 
                     linestyle='dotted', alpha=0.5)
                 ax.add_patch(circle)
-            
+            for obstacle in self.blocks:
+                circle = patches.Circle(
+                    (obstacle.x * ENV_FIELD_SIZE, obstacle.y * ENV_FIELD_SIZE), 
+                    obstacle.radius * ENV_FIELD_SIZE, 
+                    edgecolor='black', facecolor='none', 
+                    linestyle='dotted', alpha=0.5)
+                ax.add_patch(circle)
             # Draw overlays for field of view
             for agent in self.agents:
                 robot_position = self.environment_state["agents"][agent]["position"]
