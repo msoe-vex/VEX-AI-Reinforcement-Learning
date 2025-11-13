@@ -70,15 +70,20 @@ CENTER_GOAL_COORDINATES = {
 }
 
 BLOCK_COORDINATES = [
-    {"x": 116/INCHES_PER_FIELD, "y": 1/INCHES_PER_FIELD, "color": "blue"},
-    {"x": 116/INCHES_PER_FIELD, "y": 142/INCHES_PER_FIELD, "color": "blue"},
-    {"x": 22/INCHES_PER_FIELD, "y": 1/INCHES_PER_FIELD, "color": "red"},
-    {"x": 22/INCHES_PER_FIELD, "y": 142/INCHES_PER_FIELD, "color": "red"},
+    {"x": 116/INCHES_PER_FIELD, "y": 25/INCHES_PER_FIELD, "color": "blue"},
+    {"x": 116/INCHES_PER_FIELD, "y": 116/INCHES_PER_FIELD, "color": "blue"},
+    {"x": 22/INCHES_PER_FIELD, "y": 25/INCHES_PER_FIELD, "color": "red"},
+    {"x": 22/INCHES_PER_FIELD, "y": 116/INCHES_PER_FIELD, "color": "red"},
     {"x": 48/INCHES_PER_FIELD, "y": 48/INCHES_PER_FIELD, "color": "red"},
     {"x": 48/INCHES_PER_FIELD, "y": 91/INCHES_PER_FIELD, "color": "blue"},
     {"x": 91/INCHES_PER_FIELD, "y": 48/INCHES_PER_FIELD, "color": "blue"},
     {"x": 91/INCHES_PER_FIELD, "y": 91/INCHES_PER_FIELD, "color": "red"},
 ]
+
+ROBOT_STARTING_POSITIONS = {
+    "red_robot_0": {"x": 0/INCHES_PER_FIELD, "y":70/INCHES_PER_FIELD},
+    "blue_robot_0": {"x": 140/INCHES_PER_FIELD, "y":70/INCHES_PER_FIELD},
+}
 
 def env_creator(config=None):
     """
