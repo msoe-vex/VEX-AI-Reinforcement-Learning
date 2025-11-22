@@ -4,7 +4,7 @@ import os
 import numpy as np
 
 # Ensure vexEnv.py is accessible
-# If runPettingZoo.py and vexEnv.py are in the same directory, this should work.
+# If vexEnvRun.py and vexEnv.py are in the same directory, this should work.
 from vexEnv import High_Stakes_Multi_Agent_Env
 from vexEnv import Actions
 
@@ -30,7 +30,7 @@ def run_simulation(model_path):
 
     # Initialize the environment
     # The render_mode "human" is assumed to be available in your High_Stakes_Multi_Agent_Env
-    env = High_Stakes_Multi_Agent_Env(render_mode="all", output_directory="pettingZooRun", randomize=False)
+    env = High_Stakes_Multi_Agent_Env(render_mode="all", output_directory="vexEnvRun", randomize=False)
     
     # Get observation and action space shapes for a sample agent
     # These are used to correctly shape tensors for the model
@@ -118,7 +118,7 @@ def run_simulation(model_path):
     env.close()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run PettingZoo simulation with a trained model.")
+    parser = argparse.ArgumentParser(description="Run VEX environment simulation with a trained model.")
     parser.add_argument(
         "--model-path",
         type=str,

@@ -53,9 +53,9 @@ pip install -r requirements.txt
    To run a simulation using a compiled TorchScript model and generate a GIF:
 
    ```bash
-   python pettingZooRun.py --model-path /path/to/shared_policy.pt
+   python vexEnvRun.py --model-path /path/to/shared_policy.pt
    ```
-   - Loads a TorchScript model and runs a simulation in the environment, generating a GIF in the `pettingZooRun/steps` directory.
+   - Loads a TorchScript model and runs a simulation in the environment, generating a GIF in the `vexEnvRun/steps` directory.
 
 ---
 
@@ -141,7 +141,7 @@ Compile RLlib checkpoint to TorchScript.
 
 ---
 
-### pettingZooRun.py
+### vexEnvRun.py
 
 Run simulation using a TorchScript model.
 
