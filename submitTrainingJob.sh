@@ -24,7 +24,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 # Run your code here
-python pettingZooTraining.py \
+python vexEnvTraining.py \
     --num-iters ${NUM_ITERS:-10} \
     --cpus-per-task $SLURM_CPUS_PER_TASK \
     --entropy ${ENTROPY_I:-0.01} \

@@ -9,9 +9,9 @@ import warnings
 import time
 import os
 
-from pettingZooEnv import env_creator
+from vexEnv import env_creator
 
-from pettingZooCompile import compile_checkpoint_to_torchscript
+from vexEnvCompile import compile_checkpoint_to_torchscript
 import sys
 
 # Policy mapping function to assign agents to policies.
@@ -104,7 +104,7 @@ if __name__ == "__main__":
     if args.job_id:
         output_directory = os.path.join(script_directory, "job_results", f"job_{args.job_id}")
     else:
-        output_directory = os.path.join(script_directory, "pettingZooTraining")  # Default directory if no job ID is provided
+        output_directory = os.path.join(script_directory, "vexEnvTraining")  # Default directory if no job ID is provided
 
     # Run the training process with logger callbacks
     analysis = tune.run(

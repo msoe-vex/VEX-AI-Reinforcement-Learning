@@ -3,10 +3,10 @@ import argparse
 import os
 import numpy as np
 
-# Ensure pettingZooEnv.py is accessible
-# If runPettingZoo.py and pettingZooEnv.py are in the same directory, this should work.
-from pettingZooEnv import High_Stakes_Multi_Agent_Env
-from pettingZooEnv import Actions
+# Ensure vexEnv.py is accessible
+# If runPettingZoo.py and vexEnv.py are in the same directory, this should work.
+from vexEnv import High_Stakes_Multi_Agent_Env
+from vexEnv import Actions
 
 def run_simulation(model_path):
     """

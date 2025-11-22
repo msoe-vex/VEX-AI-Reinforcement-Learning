@@ -21,22 +21,22 @@ pip install -r requirements.txt
    Run the environment to ensure everything is working and to generate a random simulation GIF:
 
    ```bash
-   python pettingZooEnv.py
+   python vexEnv.py
    ```
-   - Runs the environment with random actions, renders each step, and creates a GIF in the `pettingZooEnv/steps` directory.
+   - Runs the environment with random actions, renders each step, and creates a GIF in the `vexEnv/steps` directory.
 
 2. **Train the Model**
 
    Train a new agent or continue training from a checkpoint:
 
    ```bash
-   python pettingZooTraining.py [OPTIONS]
+   python vexEnvTraining.py [OPTIONS]
    ```
    - Trains a PPO agent using RLlib and, after training, automatically compiles the best checkpoint to a TorchScript model.
 
    **Example:**
    ```bash
-   python pettingZooTraining.py --num-iters 2 --learning-rate 0.0003 --entropy 0.02
+   python vexEnvTraining.py --num-iters 2 --learning-rate 0.0003 --entropy 0.02
    ```
 
 3. **Compile a Checkpoint to TorchScript (if needed)**
@@ -44,7 +44,7 @@ pip install -r requirements.txt
    The training script will automatically compile the best checkpoint. If you need to recompile (e.g., if training ends early or you want to compile a different checkpoint), run:
 
    ```bash
-   python pettingZooCompile.py --checkpoint-path /path/to/checkpoint_000005 --output-path /path/to/output
+   python vexEnvCompile.py --checkpoint-path /path/to/checkpoint_000005 --output-path /path/to/output
    ```
    - Loads a PPO checkpoint and saves the policy as a TorchScript `.pt` file.
 
@@ -66,7 +66,7 @@ pip install -r requirements.txt
    ```bash
    sbatch submitTrainingJob.sh [OPTIONS]
    ```
-   - Submits a job to SLURM to run `pettingZooTraining.py` with the specified options.
+   - Submits a job to SLURM to run `vexEnvTraining.py` with the specified options.
 
    **Example:**
    ```bash
@@ -94,7 +94,7 @@ scancel <JOB_ID>
 
 ## Detailed Argument Descriptions
 
-### pettingZooEnv.py
+### vexEnv.py
 
 Environment definition and random simulation runner.
 
@@ -106,7 +106,7 @@ Environment definition and random simulation runner.
 
 ---
 
-### pettingZooTraining.py
+### vexEnvTraining.py
 
 RLlib training script.
 
@@ -130,7 +130,7 @@ RLlib training script.
 
 ---
 
-### pettingZooCompile.py
+### vexEnvCompile.py
 
 Compile RLlib checkpoint to TorchScript.
 
@@ -155,7 +155,7 @@ Run simulation using a TorchScript model.
 
 SLURM job script to run on ROSIE.
 
-All arguments are passed as command-line arguments and forwarded to `pettingZooTraining.py`:
+All arguments are passed as command-line arguments and forwarded to `vexEnvTraining.py`:
 
 | Argument           | Type    | Default   | Description                                                                 |
 |---------------------|---------|-----------|-----------------------------------------------------------------------------|

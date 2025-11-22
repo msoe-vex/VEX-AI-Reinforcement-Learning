@@ -6,8 +6,8 @@ from ray.tune.registry import register_env
 from ray.rllib.utils.framework import try_import_torch
 import warnings
 
-# Ensure pettingZooEnv.py is accessible
-from pettingZooEnv import env_creator
+# Ensure env.py is accessible
+from vexEnv import env_creator
 
 def compile_checkpoint_to_torchscript(checkpoint_path: str, output_path: str = None):
     """
