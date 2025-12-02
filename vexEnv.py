@@ -447,6 +447,8 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         if terminations["__all__"]:
             self.agents = []
 
+        infos = {agent: {} for agent in self.agents} 
+
         return observations, rewards, terminations, truncations, infos
 
     def _compute_score(self):
