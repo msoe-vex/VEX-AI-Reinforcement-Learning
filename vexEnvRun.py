@@ -5,7 +5,7 @@ import numpy as np
 
 # Ensure vexEnv.py is accessible
 # If vexEnvRun.py and vexEnv.py are in the same directory, this should work.
-from vexEnv import High_Stakes_Multi_Agent_Env
+from vexEnv import Push_Back_Multi_Agent_Env
 from vexEnv import Actions
 
 def run_simulation(model_path):
@@ -30,7 +30,7 @@ def run_simulation(model_path):
 
     # Initialize the environment
     # The render_mode "human" is assumed to be available in your High_Stakes_Multi_Agent_Env
-    env = High_Stakes_Multi_Agent_Env(render_mode="all", output_directory="vexEnvRun", randomize=False)
+    env = Push_Back_Multi_Agent_Env(render_mode="all", output_directory="vexEnvRun", randomize=False)
     
     # Get observation and action space shapes for a sample agent
     # These are used to correctly shape tensors for the model
