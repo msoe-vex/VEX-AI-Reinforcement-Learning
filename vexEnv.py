@@ -6,6 +6,7 @@ from pettingzoo.test import parallel_api_test
 from ray.rllib.env import MultiAgentEnv
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import matplotlib.transforms as mtransforms
 import numpy as np
 from enum import Enum
 import os
@@ -31,9 +32,19 @@ class Actions(Enum):
     PARK_RED = 9 # Drive to Red Park Zone
     IDLE = 10
 
+class GameMode(Enum):
+    SKILLS = "skills"  # Single robot, 60 seconds
+    COMPETITION = "competition"  # Two alliance robots vs two opponent robots
+
+class Team(Enum):
+    RED = "red"
+    BLUE = "blue"
+
 # Constants based on V5RC Push Back Manual
 FIELD_SIZE_INCHES = 144  # Full field is 12 feet = 144 inches
-BUFFER_RADIUS_INCHES = 2  # Buffer radius in inches 
+BUFFER_RADIUS_INCHES = 2  # Buffer radius in inches
+ROBOT_WIDTH = 18.0  # Robot width in inches
+ROBOT_LENGTH = 18.0  # Robot length in inches 
 NUM_LOADERS = 4
 NUM_LONG_GOALS = 2
 NUM_CENTER_GOALS = 1 # Treated as one complex structure for simplicity
@@ -44,7 +55,7 @@ TIME_LIMIT = 60 # Skills match
 DEFAULT_PENALTY = -0.1
 FOV = np.pi / 2
 
-POSSIBLE_AGENTS = ["robot_0"]
+POSSIBLE_AGENTS = ["red_robot_0", "blue_robot_0"]  # Can be configured based on game mode
 
 # Offsets for status IDs
 AGENT_ID_OFFSET = 1
@@ -53,7 +64,12 @@ GOAL_ID_OFFSET = AGENT_ID_OFFSET + len(POSSIBLE_AGENTS)
 
 def env_creator(config=None):
     config = config or {}
-    return Push_Back_Multi_Agent_Env(render_mode=None, randomize=config.get("randomize", True))
+    return Push_Back_Multi_Agent_Env(
+        render_mode=None, 
+        randomize=config.get("randomize", True),
+        game_mode=config.get("game_mode", GameMode.SKILLS),
+        agents_config=config.get("agents_config", None)
+    )
 
 class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
     """
@@ -67,10 +83,19 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
     """
     metadata = {"render_modes": ["human", "rgb_array"], "name": "vex_push_back"}
 
-    def __init__(self, render_mode=None, output_directory="", randomize=True):
+    def __init__(self, render_mode=None, output_directory="", randomize=True, game_mode=GameMode.SKILLS, agents_config=None):
         super().__init__()
-        self.possible_agents = POSSIBLE_AGENTS
-        self._agent_ids = POSSIBLE_AGENTS
+        self.game_mode = game_mode
+        
+        # Configure agents based on game mode
+        if agents_config:
+            self.possible_agents = agents_config
+        elif game_mode == GameMode.SKILLS:
+            self.possible_agents = ["red_robot_0"]  # Single red robot for skills
+        else:  # COMPETITION
+            self.possible_agents = ["red_robot_0", "red_robot_1", "blue_robot_0", "blue_robot_1"]
+        
+        self._agent_ids = self.possible_agents
         self.agent_name_mapping = {agent: i for i, agent in enumerate(self.possible_agents)}
         self.render_mode = render_mode
         self.agents = []
@@ -104,20 +129,31 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             np.array([72, -48])  # BR
         ]
         
-        self.park_zone_red = np.array([-60.0, 0.0]) # Left side (in inches, -72 to 72)
+        self.park_zones = {
+            Team.RED: {"center": np.array([-60.0, 0.0]), "bounds": (-72, -54, -12, 12)},  # (x_min, x_max, y_min, y_max)
+            Team.BLUE: {"center": np.array([60.0, 0.0]), "bounds": (54, 72, -12, 12)}
+        }
 
         self.score = 0
         
         # Path planner setup (uses 0-1 scale, so convert from inches)
         try:
             self.path_planner = PathPlanner(
-                robot_length=18.0 / FIELD_SIZE_INCHES,
-                robot_width=18.0 / FIELD_SIZE_INCHES,
+                robot_length=ROBOT_LENGTH / FIELD_SIZE_INCHES,
+                robot_width=ROBOT_WIDTH / FIELD_SIZE_INCHES,
                 buffer_radius=BUFFER_RADIUS_INCHES / FIELD_SIZE_INCHES,
                 max_velocity=80.0 / FIELD_SIZE_INCHES,
                 max_accel=100.0 / FIELD_SIZE_INCHES)
         except:
             self.path_planner = None
+
+    def _get_agent_team(self, agent_name):
+        """Determine team from agent name."""
+        if "red" in agent_name.lower():
+            return Team.RED
+        elif "blue" in agent_name.lower():
+            return Team.BLUE
+        return Team.RED  # Default
 
     def inches_to_planner_scale(self, pos_inches):
         """Convert position from inches (-72 to 72) to path planner scale (0-1)."""
@@ -206,18 +242,27 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         # One Preload held by robot (Status 1)
         add_block(-60.0, 0.0, status=1)
 
+        # Initialize agents based on game mode and team
+        agents_dict = {}
+        for agent in self.possible_agents:
+            team = self._get_agent_team(agent)
+            if team == Team.RED:
+                start_pos = np.array([-60.0, 0.0], dtype=np.float32)
+            else:  # BLUE
+                start_pos = np.array([60.0, 0.0], dtype=np.float32)
+            
+            agents_dict[agent] = {
+                "position": start_pos,
+                "orientation": np.array([0.0], dtype=np.float32),
+                "team": team,
+                "held_blocks": 1 if agent == self.possible_agents[0] else 0,  # Only first agent has preload
+                "parked": False,
+                "gameTime": 0,
+                "active": True,
+            }
+
         return {
-            "agents": {
-                agent: {
-                    "position": np.array([-60.0, 0.0], dtype=np.float32), # Start Red Side (Left) in inches (-72 to 72)
-                    "orientation": np.array([0.0], dtype=np.float32),
-                    "held_blocks": 1, # Has preload
-                    "parked": False,
-                    "gameTime": 0,
-                    "active": True,
-                }
-                for agent in self.agents
-            },
+            "agents": agents_dict,
             "blocks": blocks, # Total 61 blocks
             "loaders": [6, 6, 6, 6] # Count of blocks in each loader
         }
@@ -372,8 +417,10 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
 
             # Park
             elif action == Actions.PARK_RED.value:
-                dist = np.linalg.norm(agent_state["position"] - self.park_zone_red)
-                agent_state["position"] = self.park_zone_red.copy()
+                team = agent_state.get("team", Team.RED)
+                park_zone = self.park_zones[team]["center"]
+                dist = np.linalg.norm(agent_state["position"] - park_zone)
+                agent_state["position"] = park_zone.copy()
                 duration += dist / 60.0  # Speed in inches/sec
                 agent_state["parked"] = True
                 
@@ -433,17 +480,18 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             if count == 0:
                 score += 5
                 
-        # 4. Cleared Park Zone: 5 Points
-        # Check if any blocks (Status 0) are in park zone rect
-        # Red Park Zone approx (-72, -12) to (-54, 12) inches - simplified check
-        park_clear = True
-        for block in self.environment_state["blocks"]:
-            if block["status"] == 0:
-                if -72.0 <= block["position"][0] <= -54.0 and -12.0 <= block["position"][1] <= 12.0:
-                    park_clear = False
-                    break
-        if park_clear:
-            score += 5
+        # 4. Cleared Park Zone: 5 Points (per zone)
+        # Check if any blocks (Status 0) are in park zones
+        for team, zone_data in self.park_zones.items():
+            x_min, x_max, y_min, y_max = zone_data["bounds"]
+            zone_clear = True
+            for block in self.environment_state["blocks"]:
+                if block["status"] == 0:
+                    if x_min <= block["position"][0] <= x_max and y_min <= block["position"][1] <= y_max:
+                        zone_clear = False
+                        break
+            if zone_clear:
+                score += 5
             
         # 5. Parked Robot: 15 Points
         for agent in self.agents:
@@ -464,9 +512,13 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         # Draw Tape Lines (White)
         ax.plot([-72, 72], [0, 0], color='white', linewidth=2) # Auto line
         
-        # Draw Park Zone (Red Left)
-        rect_park = patches.Rectangle((-72, -12), 18, 24, linewidth=1, edgecolor='red', facecolor='none', hatch='//')
-        ax.add_patch(rect_park)
+        # Draw Park Zones
+        # Red Park Zone (Left)
+        rect_park_red = patches.Rectangle((-72, -12), 18, 24, linewidth=1, edgecolor='red', facecolor='none', hatch='//')
+        ax.add_patch(rect_park_red)
+        # Blue Park Zone (Right)
+        rect_park_blue = patches.Rectangle((54, -12), 18, 24, linewidth=1, edgecolor='blue', facecolor='none', hatch='//')
+        ax.add_patch(rect_park_blue)
         
         # Draw Goals
         # Long Top
@@ -499,7 +551,7 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             circle = patches.Circle((obs.x, obs.y), obs.radius, fill=False, edgecolor='black', linestyle=':', linewidth=2)
             ax.add_patch(circle)
 
-        # Draw Blocks
+        # Draw Blocks as hexagons
         for block in self.environment_state["blocks"]:
             if block["status"] < 5: # Don't draw blocks hidden in loaders
                 # Status 2,3,4 are scored -> draw darker
@@ -509,19 +561,50 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 if block["status"] == 1: c = 'blue'
                 elif block["status"] > 1: c = 'purple'
                 
-                # Blocks are octagons, simplified to circles
-                circle = patches.Circle((block["position"][0], block["position"][1]), 2.4, color=c, ec='black')
-                ax.add_patch(circle)
+                # Blocks are hexagons (2.4 inch radius, approximately 4.8 inch diagonal)
+                hexagon = patches.RegularPolygon(
+                    (block["position"][0], block["position"][1]), 
+                    numVertices=6, 
+                    radius=2.4, 
+                    orientation=0,
+                    facecolor=c, 
+                    edgecolor='black',
+                    linewidth=1
+                )
+                ax.add_patch(hexagon)
 
-        # Draw Robot
+        # Draw Robots as rectangles
         for agent in self.agents:
             st = self.environment_state["agents"][agent]
-            circle = patches.Circle((st["position"][0], st["position"][1]), 9.0, color='cyan', label=agent)
-            ax.add_patch(circle)
-            # Orientation
-            dx = np.cos(st["orientation"][0]) * 12.0  # Arrow length in inches
-            dy = np.sin(st["orientation"][0]) * 12.0
-            ax.arrow(st["position"][0], st["position"][1], dx, dy, width=1.2, color='black')
+            team = st.get("team", Team.RED)
+            robot_color = 'red' if team == Team.RED else 'blue'
+            
+            # Get position and orientation
+            x, y = st["position"][0], st["position"][1]
+            theta = st["orientation"][0]
+            
+            # Create rectangle centered at robot position
+            robot_rect = patches.Rectangle(
+                (-ROBOT_LENGTH/2, -ROBOT_WIDTH/2), 
+                ROBOT_LENGTH, 
+                ROBOT_WIDTH,
+                edgecolor='black',
+                facecolor=robot_color,
+                alpha=0.7,
+                linewidth=2,
+                label=agent
+            )
+            
+            # Apply rotation and translation
+            t = mtransforms.Affine2D().rotate(theta).translate(x, y) + ax.transData
+            robot_rect.set_transform(t)
+            ax.add_patch(robot_rect)
+            
+            # Draw orientation arrow inside the robot (shorter to fit within rectangle)
+            arrow_length = min(ROBOT_LENGTH, ROBOT_WIDTH) * 0.6  # 60% of smaller dimension to fit inside
+            dx = np.cos(theta) * arrow_length
+            dy = np.sin(theta) * arrow_length
+            ax.arrow(x-dx/2-1.5, y, dx, dy, width=1, color='black', head_width=5, head_length=3, zorder=10)
 
         ax.set_title(f"V5RC Push Back - Score: {self.score}")
         
