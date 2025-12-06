@@ -201,9 +201,10 @@ class GoalManager:
     def __init__(self):
         """Initialize goal manager with all field goals."""
         self.goals = {
-            GoalType.LONG_TOP: GoalQueue(GoalType.LONG_TOP, LONG_GOAL_CAPACITY),
-            GoalType.LONG_BOTTOM: GoalQueue(GoalType.LONG_BOTTOM, LONG_GOAL_CAPACITY),
-            GoalType.CENTER: GoalQueue(GoalType.CENTER, CENTER_GOAL_CAPACITY),
+            GoalType.LONG_1: GoalQueue(GoalType.LONG_1, LONG_GOAL_CAPACITY),
+            GoalType.LONG_2: GoalQueue(GoalType.LONG_2, LONG_GOAL_CAPACITY),
+            GoalType.CENTER_UPPER: GoalQueue(GoalType.CENTER_UPPER, CENTER_GOAL_CAPACITY),
+            GoalType.CENTER_LOWER: GoalQueue(GoalType.CENTER_LOWER, CENTER_GOAL_CAPACITY),
         }
     
     def get_goal(self, goal_type: GoalType) -> GoalQueue:
@@ -244,21 +245,23 @@ class BlockStatus:
     """Block status codes for tracking location."""
     ON_FIELD = 0
     HELD = 1
-    IN_LONG_TOP = 2
-    IN_LONG_BOTTOM = 3
-    IN_CENTER = 4
-    IN_LOADER_TL = 5
-    IN_LOADER_TR = 6
-    IN_LOADER_BL = 7
-    IN_LOADER_BR = 8
+    IN_LONG_1 = 2
+    IN_LONG_2 = 3
+    IN_CENTER_UPPER = 4
+    IN_CENTER_LOWER = 5
+    IN_LOADER_TL = 6
+    IN_LOADER_TR = 7
+    IN_LOADER_BL = 8
+    IN_LOADER_BR = 9
     
     @staticmethod
     def get_goal_type(status: int) -> Optional[GoalType]:
         """Convert block status to goal type if applicable."""
         mapping = {
-            2: GoalType.LONG_TOP,
-            3: GoalType.LONG_BOTTOM,
-            4: GoalType.CENTER,
+            2: GoalType.LONG_1,
+            3: GoalType.LONG_2,
+            4: GoalType.CENTER_UPPER,
+            5: GoalType.CENTER_LOWER,
         }
         return mapping.get(status)
     
@@ -266,8 +269,10 @@ class BlockStatus:
     def get_status_for_goal(goal_type: GoalType) -> int:
         """Get the status code for a goal type."""
         mapping = {
-            GoalType.LONG_TOP: 2,
-            GoalType.LONG_BOTTOM: 3,
-            GoalType.CENTER: 4,
+            GoalType.LONG_1: 2,
+            GoalType.LONG_2: 3,
+            GoalType.CENTER_UPPER: 4,
+            GoalType.CENTER_LOWER: 5,
         }
         return mapping[goal_type]
+

@@ -261,9 +261,10 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         # Goal block counts
         goal_counts = self.goal_manager.get_goal_counts()
         goal_data = [
-            float(goal_counts[GoalType.LONG_TOP]),
-            float(goal_counts[GoalType.LONG_BOTTOM]),
-            float(goal_counts[GoalType.CENTER]),
+            float(goal_counts[GoalType.LONG_1]),
+            float(goal_counts[GoalType.LONG_2]),
+            float(goal_counts[GoalType.CENTER_UPPER]),
+            float(goal_counts[GoalType.CENTER_LOWER]),
         ]
             
         obs = np.concatenate([
@@ -288,17 +289,18 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         self.num_moves += 1
         rewards = {agent: 0.0 for agent in self.agents}
         
-        # Determine current game time
+        # Determine current game time (for action skipping)
         min_game_time = min([
             self.environment_state["agents"][agent]["gameTime"] 
             for agent in self.agents
         ])
         
-        # Check terminations
+        # Check terminations - each agent terminates when THEIR time is up
         terminations = {
-            agent: min_game_time >= self.mode_config.total_time 
+            agent: self.environment_state["agents"][agent]["gameTime"] >= self.mode_config.total_time 
             for agent in self.agents
         }
+        # Only end when ALL agents have reached the time limit
         terminations["__all__"] = all(terminations.values())
         truncations = {agent: False for agent in self.agents}
         truncations["__all__"] = False
@@ -342,17 +344,21 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             duration, penalty = self._action_pickup_block(agent_state, duration, penalty)
         
         # SCORE IN GOALS
-        elif action == Actions.SCORE_IN_LONG_GOAL_TOP.value:
+        elif action == Actions.SCORE_IN_LONG_GOAL_1.value:
             duration, penalty = self._action_score_in_goal(
-                agent_state, GoalType.LONG_TOP, duration, penalty
+                agent_state, GoalType.LONG_1, duration, penalty
             )
-        elif action == Actions.SCORE_IN_LONG_GOAL_BOTTOM.value:
+        elif action == Actions.SCORE_IN_LONG_GOAL_2.value:
             duration, penalty = self._action_score_in_goal(
-                agent_state, GoalType.LONG_BOTTOM, duration, penalty
+                agent_state, GoalType.LONG_2, duration, penalty
             )
-        elif action == Actions.SCORE_IN_CENTER_GOAL.value:
+        elif action == Actions.SCORE_IN_CENTER_UPPER.value:
             duration, penalty = self._action_score_in_goal(
-                agent_state, GoalType.CENTER, duration, penalty
+                agent_state, GoalType.CENTER_UPPER, duration, penalty
+            )
+        elif action == Actions.SCORE_IN_CENTER_LOWER.value:
+            duration, penalty = self._action_score_in_goal(
+                agent_state, GoalType.CENTER_LOWER, duration, penalty
             )
         
         # DRIVE TO LOADERS
@@ -418,29 +424,40 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         scoring_side = goal.get_nearest_side(agent_state["position"])
         
         # Calculate position flush with goal and set exact angle
-        # Long goals: robots face up (90°) or down (-90°)
-        # Center goal: robots face at 45° angles
-        if goal_type == GoalType.LONG_TOP:
+        # Long goals: robots face left (0°) or right (180°)
+        # Center goals: robots face at 45° angles matching the diagonal
+        if goal_type == GoalType.LONG_1:
             if scoring_side == "left":
                 robot_pos = np.array([-24.0 - ROBOT_LENGTH/2 - 2.0, 48.0])
                 orientation = 0.0  # Face right toward goal
             else:
                 robot_pos = np.array([24.0 + ROBOT_LENGTH/2 + 2.0, 48.0])
                 orientation = np.pi  # Face left toward goal
-        elif goal_type == GoalType.LONG_BOTTOM:
+        elif goal_type == GoalType.LONG_2:
             if scoring_side == "left":
                 robot_pos = np.array([-24.0 - ROBOT_LENGTH/2 - 2.0, -48.0])
                 orientation = 0.0  # Face right
             else:
                 robot_pos = np.array([24.0 + ROBOT_LENGTH/2 + 2.0, -48.0])
                 orientation = np.pi  # Face left
-        else:  # CENTER goal
+        elif goal_type == GoalType.CENTER_UPPER:
+            # Upper center: diagonal from upper-left to lower-right (45°)
+            offset = ROBOT_LENGTH/2 + 4.0
             if scoring_side == "left":
-                robot_pos = np.array([-12.0 - ROBOT_LENGTH/2 - 2.0, 0.0])
-                orientation = 0.0  # Face right toward center
+                robot_pos = np.array([-8.5 - offset * 0.707, 8.5 + offset * 0.707])
+                orientation = -np.pi / 4  # Face toward lower-right
             else:
-                robot_pos = np.array([12.0 + ROBOT_LENGTH/2 + 2.0, 0.0])
-                orientation = np.pi  # Face left toward center
+                robot_pos = np.array([8.5 + offset * 0.707, -8.5 - offset * 0.707])
+                orientation = 3 * np.pi / 4  # Face toward upper-left
+        else:  # CENTER_LOWER
+            # Lower center: diagonal from lower-left to upper-right (-45°)
+            offset = ROBOT_LENGTH/2 + 4.0
+            if scoring_side == "left":
+                robot_pos = np.array([-8.5 - offset * 0.707, -8.5 - offset * 0.707])
+                orientation = np.pi / 4  # Face toward upper-right
+            else:
+                robot_pos = np.array([8.5 + offset * 0.707, 8.5 + offset * 0.707])
+                orientation = -3 * np.pi / 4  # Face toward lower-left
         
         dist = np.linalg.norm(agent_state["position"] - robot_pos)
         agent_state["position"] = robot_pos.astype(np.float32)
@@ -615,25 +632,33 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         ax.add_patch(rect_park_blue)
         
         # Draw Goals
-        rect_lg_t = patches.Rectangle((-24, 46), 48, 4, color='orange', alpha=0.3)
-        ax.add_patch(rect_lg_t)
+        # Long Goal 1 (top, y=48)
+        rect_lg_1 = patches.Rectangle((-24, 46), 48, 4, color='orange', alpha=0.3)
+        ax.add_patch(rect_lg_1)
+        ax.text(0, 52, 'Long 1', fontsize=8, ha='center', va='bottom', color='orange')
         
-        rect_lg_b = patches.Rectangle((-24, -50), 48, 4, color='orange', alpha=0.3)
-        ax.add_patch(rect_lg_b)
+        # Long Goal 2 (bottom, y=-48)
+        rect_lg_2 = patches.Rectangle((-24, -50), 48, 4, color='orange', alpha=0.3)
+        ax.add_patch(rect_lg_2)
+        ax.text(0, -54, 'Long 2', fontsize=8, ha='center', va='top', color='orange')
         
-        # Center Structure (X shape)
+        # Center Structure (X shape) - two separate diagonals
         w, h = 24, 4
-        rect_center_1 = patches.Rectangle(
-            (-w/2, -h/2), w, h, color='orange', alpha=0.3,
+        # Upper center: UL to LR diagonal (45°)
+        rect_center_upper = patches.Rectangle(
+            (-w/2, -h/2), w, h, color='green', alpha=0.4,
             transform=mtransforms.Affine2D().rotate_deg_around(0, 0, 45) + ax.transData
         )
-        ax.add_patch(rect_center_1)
+        ax.add_patch(rect_center_upper)
+        ax.text(-14, 14, 'Upper', fontsize=6, ha='center', va='center', color='green')
         
-        rect_center_2 = patches.Rectangle(
-            (-w/2, -h/2), w, h, color='orange', alpha=0.3,
+        # Lower center: LL to UR diagonal (-45°)
+        rect_center_lower = patches.Rectangle(
+            (-w/2, -h/2), w, h, color='purple', alpha=0.4,
             transform=mtransforms.Affine2D().rotate_deg_around(0, 0, -45) + ax.transData
         )
-        ax.add_patch(rect_center_2)
+        ax.add_patch(rect_center_lower)
+        ax.text(-14, -14, 'Lower', fontsize=6, ha='center', va='center', color='purple')
         
         # Draw Loaders
         for loader in LOADERS:
@@ -651,14 +676,14 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             )
             ax.add_patch(circle)
 
-        # Draw Blocks
+        # Draw Blocks (don't draw blocks in loaders - status >= 6)
         for block in self.environment_state["blocks"]:
-            if block["status"] < 5:
+            if block["status"] < 6:  # Not in loaders
                 c = 'red'
                 if block["status"] == BlockStatus.HELD:
                     c = 'blue'
                 elif block["status"] > BlockStatus.HELD:
-                    c = 'purple'
+                    c = 'purple'  # In a goal
                 
                 hexagon = patches.RegularPolygon(
                     (block["position"][0], block["position"][1]), 
@@ -711,8 +736,9 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                     edgecolor='black', linewidth=0.5)
             
             # Add agent number label on robot
-            ax.text(x, y, str(i), fontsize=8, ha='center', va='center', 
-                   color='white', fontweight='bold', zorder=11)
+            ax.text(x, y, str(i), fontsize=12, ha='center', va='center', 
+                   color='white', fontweight='bold', zorder=11,
+                   bbox=dict(boxstyle='circle,pad=0.2', facecolor='black', alpha=0.8))
             
             # Add to info panel
             action_text = "---"
@@ -846,6 +872,10 @@ if __name__ == "__main__":
         observations, rewards, terminations, truncations, infos = env.step(actions)
         done = terminations.get("__all__", False) or truncations.get("__all__", False)
         env.render(actions=actions, rewards=rewards)
+    
+    # Render final state
+    print("\nRendering final state...")
+    env.render()
         
     print(f"\nSimulation complete after {step_count} steps.")
     print(f"Final score: {env.score}")

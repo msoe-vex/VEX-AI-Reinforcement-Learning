@@ -64,9 +64,10 @@ FOV = np.pi / 2
 
 class GoalType(Enum):
     """Types of goals on the field."""
-    LONG_TOP = "long_top"
-    LONG_BOTTOM = "long_bottom"
-    CENTER = "center"
+    LONG_1 = "long_1"           # Long goal at y=48 (top)
+    LONG_2 = "long_2"           # Long goal at y=-48 (bottom)
+    CENTER_UPPER = "center_upper"  # Upper center: UL to LR diagonal (45°)
+    CENTER_LOWER = "center_lower"  # Lower center: LL to UR diagonal (-45°)
 
 
 @dataclass
@@ -78,6 +79,7 @@ class GoalPosition:
     capacity: int                # Maximum blocks the goal can hold
     control_threshold: int       # Blocks needed for control bonus
     goal_type: GoalType
+    angle: float = 0.0           # Rotation angle in degrees (for rendering)
     
     def get_nearest_entry(self, robot_position: np.ndarray) -> np.ndarray:
         """Get the entry point nearest to the robot."""
@@ -116,30 +118,46 @@ class LoaderPosition:
 # =============================================================================
 
 # Goal positions with entry points (all in inches, centered at origin)
+# Center goals are at 45° angles forming an X pattern
 GOALS: Dict[GoalType, GoalPosition] = {
-    GoalType.LONG_TOP: GoalPosition(
+    GoalType.LONG_1: GoalPosition(
         center=np.array([0.0, 48.0]),
         left_entry=np.array([-24.0, 48.0]),
         right_entry=np.array([24.0, 48.0]),
         capacity=LONG_GOAL_CAPACITY,
         control_threshold=LONG_GOAL_CONTROL_THRESHOLD,
-        goal_type=GoalType.LONG_TOP,
+        goal_type=GoalType.LONG_1,
+        angle=0.0,
     ),
-    GoalType.LONG_BOTTOM: GoalPosition(
+    GoalType.LONG_2: GoalPosition(
         center=np.array([0.0, -48.0]),
         left_entry=np.array([-24.0, -48.0]),
         right_entry=np.array([24.0, -48.0]),
         capacity=LONG_GOAL_CAPACITY,
         control_threshold=LONG_GOAL_CONTROL_THRESHOLD,
-        goal_type=GoalType.LONG_BOTTOM,
+        goal_type=GoalType.LONG_2,
+        angle=0.0,
     ),
-    GoalType.CENTER: GoalPosition(
+    # Center Upper: diagonal from upper-left to lower-right (45°)
+    # Entry points are at the diagonal ends
+    GoalType.CENTER_UPPER: GoalPosition(
         center=np.array([0.0, 0.0]),
-        left_entry=np.array([-12.0, 0.0]),
-        right_entry=np.array([12.0, 0.0]),
+        left_entry=np.array([-8.5, 8.5]),   # Upper-left end
+        right_entry=np.array([8.5, -8.5]),  # Lower-right end
         capacity=CENTER_GOAL_CAPACITY,
         control_threshold=CENTER_GOAL_CONTROL_THRESHOLD,
-        goal_type=GoalType.CENTER,
+        goal_type=GoalType.CENTER_UPPER,
+        angle=45.0,
+    ),
+    # Center Lower: diagonal from lower-left to upper-right (-45°)
+    GoalType.CENTER_LOWER: GoalPosition(
+        center=np.array([0.0, 0.0]),
+        left_entry=np.array([-8.5, -8.5]),  # Lower-left end
+        right_entry=np.array([8.5, 8.5]),   # Upper-right end
+        capacity=CENTER_GOAL_CAPACITY,
+        control_threshold=CENTER_GOAL_CONTROL_THRESHOLD,
+        goal_type=GoalType.CENTER_LOWER,
+        angle=-45.0,
     ),
 }
 
@@ -296,14 +314,20 @@ def get_all_initial_blocks(agents: list = None) -> List[Dict]:
 # =============================================================================
 
 def get_robot_start_position(team: str, robot_index: int = 0) -> np.ndarray:
-    """Get starting position for a robot based on team and index."""
+    """
+    Get starting position for a robot based on team and index.
+    
+    Robots start at y=24 (index 0) and y=-24 (index 1).
+    """
     if team == "red":
         # Red robots start on left side
         base_x = -60.0
-        offset = robot_index * 12.0  # Offset for multiple robots
     else:
         # Blue robots start on right side
         base_x = 60.0
-        offset = -robot_index * 12.0
     
-    return np.array([base_x, offset], dtype=np.float32)
+    # First robot at y=24, second at y=-24
+    y_positions = [24.0, -24.0]
+    y = y_positions[robot_index] if robot_index < len(y_positions) else 0.0
+    
+    return np.array([base_x, y], dtype=np.float32)

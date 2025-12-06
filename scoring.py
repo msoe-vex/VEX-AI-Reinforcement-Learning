@@ -86,15 +86,16 @@ class ScoreCalculator:
         counts = goal_manager.get_goal_counts()
         
         # Long goals (need 3+ blocks for control)
-        for goal_type in [GoalType.LONG_TOP, GoalType.LONG_BOTTOM]:
+        for goal_type in [GoalType.LONG_1, GoalType.LONG_2]:
             goal_info = GOALS[goal_type]
             if counts[goal_type] >= goal_info.control_threshold:
                 score += self.config.control_zone_long
         
-        # Center goal (need 7 blocks for control)
-        center_info = GOALS[GoalType.CENTER]
-        if counts[GoalType.CENTER] >= center_info.control_threshold:
-            score += self.config.control_zone_center
+        # Center goals (need 7 blocks for control each)
+        for goal_type in [GoalType.CENTER_UPPER, GoalType.CENTER_LOWER]:
+            goal_info = GOALS[goal_type]
+            if counts[goal_type] >= goal_info.control_threshold:
+                score += self.config.control_zone_center
         
         return score
     
