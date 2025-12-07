@@ -203,6 +203,10 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             self.environment_state = self._get_random_environment_state(seed)
         else:
             self.environment_state = self._get_initial_environment_state()
+        self._update_held_blocks()
+        
+        # Compute initial score
+        self.score = self._compute_score()
             
         observations = {agent: self._get_observation(agent) for agent in self.agents}
         infos = {agent: {} for agent in self.agents}
@@ -315,8 +319,12 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         for agent, action in actions.items():
             agent_state = self.environment_state["agents"][agent]
             
+            # Skip agent if their time is ahead of min_game_time
             if agent_state["gameTime"] > min_game_time or not agent_state["active"]:
+                agent_state["action_skipped"] = True
                 continue
+            
+            agent_state["action_skipped"] = False
 
             initial_score = self._compute_score()
             agent_team = "red" if agent_state.get("team") == Team.RED else "blue"
@@ -408,6 +416,10 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         # PARK (dynamic based on team)
         elif action == Actions.PARK.value:
             duration, penalty = self._action_park(agent_state, duration, penalty)
+        
+        # TURN TOWARD CENTER
+        elif action == Actions.TURN_TOWARD_CENTER.value:
+            duration, penalty = self._action_turn_toward_center(agent_state, duration, penalty)
         
         # IDLE
         elif action == Actions.IDLE.value:
@@ -665,6 +677,25 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         
         return duration, penalty
 
+    def _action_turn_toward_center(self, agent_state, duration, penalty):
+        """Turn robot to face the center of the field (0, 0) for maximum visibility."""
+        robot_pos = agent_state["position"]
+        
+        # Calculate angle from robot to center (0, 0)
+        center = np.array([0.0, 0.0])
+        direction = center - robot_pos
+        
+        # Calculate angle using atan2 (handles all quadrants correctly)
+        target_angle = np.arctan2(direction[1], direction[0])
+        
+        # Set orientation to face center
+        agent_state["orientation"] = np.array([target_angle], dtype=np.float32)
+        
+        # Small time cost for turning
+        duration += 0.3
+        
+        return duration, penalty
+
     def _update_held_blocks(self):
         """Update positions of held blocks to follow their robot."""
         for agent in self.agents:
@@ -877,16 +908,20 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             # Add to info panel
             action_text = "---"
             if actions and agent in actions:
-                action_val = actions[agent]
-                # Convert to int (handles numpy types) and get action name
-                try:
-                    action_int = int(action_val)
-                    action_text = Actions(action_int).name
-                except (ValueError, TypeError):
-                    if hasattr(action_val, 'name'):
-                        action_text = action_val.name
-                    else:
-                        action_text = str(action_val)
+                # Check if action was skipped
+                if st.get("action_skipped", False):
+                    action_text = "--"
+                else:
+                    action_val = actions[agent]
+                    # Convert to int (handles numpy types) and get action name
+                    try:
+                        action_int = int(action_val)
+                        action_text = Actions(action_int).name
+                    except (ValueError, TypeError):
+                        if hasattr(action_val, 'name'):
+                            action_text = action_val.name
+                        else:
+                            action_text = str(action_val)
             
             reward_text = ""
             if rewards and agent in rewards:
@@ -909,7 +944,14 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         info_y -= 0.02
         ax_info.axhline(y=info_y, xmin=0.05, xmax=0.95, color='gray', linewidth=0.5)
         info_y -= 0.05
-        ax_info.text(0.05, info_y, f"Score: {self.score}", fontsize=11, fontweight='bold', va='top')
+        
+        # Show team scores
+        team_scores = self._compute_team_scores()
+        ax_info.text(0.05, info_y, "Scores:", fontsize=10, fontweight='bold', va='top')
+        info_y -= 0.04
+        ax_info.text(0.1, info_y, f"Red: {team_scores['red']}", fontsize=9, va='top', color='red', fontweight='bold')
+        info_y -= 0.04
+        ax_info.text(0.1, info_y, f"Blue: {team_scores['blue']}", fontsize=9, va='top', color='blue', fontweight='bold')
         info_y -= 0.05
         ax_info.text(0.05, info_y, f"Mode: {self.competition_mode.value}", fontsize=8, va='top')
         info_y -= 0.04
@@ -1006,8 +1048,8 @@ if __name__ == "__main__":
 
     i = 0
     while not done and step_count < 100:
-        # actions = {agent: env.action_space(agent).sample() for agent in env.agents}
-        actions = {agent: TEST_ACTIONS[i % len(TEST_ACTIONS)] for agent in env.agents}
+        actions = {agent: env.action_space(agent).sample() for agent in env.agents}
+        # actions = {agent: TEST_ACTIONS[i % len(TEST_ACTIONS)] for agent in env.agents}
         i += 1
 
         # Print actions for each agent

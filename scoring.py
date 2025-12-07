@@ -91,11 +91,14 @@ class ScoreCalculator:
             if counts[goal_type] >= goal_info.control_threshold:
                 score += self.config.control_zone_long
         
-        # Center goals (need 7 blocks for control each)
-        for goal_type in [GoalType.CENTER_UPPER, GoalType.CENTER_LOWER]:
-            goal_info = GOALS[goal_type]
-            if counts[goal_type] >= goal_info.control_threshold:
-                score += self.config.control_zone_center
+        # Center goals - upper and lower have different point values
+        goal_info_upper = GOALS[GoalType.CENTER_UPPER]
+        if counts[GoalType.CENTER_UPPER] >= goal_info_upper.control_threshold:
+            score += self.config.control_zone_center_upper
+        
+        goal_info_lower = GOALS[GoalType.CENTER_LOWER]
+        if counts[GoalType.CENTER_LOWER] >= goal_info_lower.control_threshold:
+            score += self.config.control_zone_center_lower
         
         return score
     

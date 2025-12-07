@@ -26,7 +26,8 @@ class Actions(Enum):
     TAKE_FROM_LOADER_BR = 8       # Take block from Bottom Right loader
     CLEAR_LOADER = 9              # Dispense blocks from nearest loader
     PARK = 10                     # Dynamic: parks in team's zone (red/blue)
-    IDLE = 11
+    TURN_TOWARD_CENTER = 11       # Turn to face center of field (0, 0)
+    IDLE = 12
 
 
 # Action metadata for validation and UI
@@ -42,6 +43,7 @@ ACTION_DESCRIPTIONS = {
     Actions.TAKE_FROM_LOADER_BR: "Take block from the bottom-right loader",
     Actions.CLEAR_LOADER: "Clear blocks from the nearest loader",
     Actions.PARK: "Park in the team's designated zone",
+    Actions.TURN_TOWARD_CENTER: "Turn to face the center of the field",
     Actions.IDLE: "Do nothing (wait)",
 }
 
