@@ -230,7 +230,14 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 "parked": False,
                 "gameTime": 0.0,
                 "active": True,
+                "agent_name": agent,  # Track agent name for block ownership
             }
+
+        # Set held_by for preload blocks (they are at the end of the blocks list)
+        preload_start_idx = NUM_BLOCKS_FIELD + 24  # Field blocks + loader blocks
+        for i, agent in enumerate(self.possible_agents):
+            if preload_start_idx + i < len(blocks):
+                blocks[preload_start_idx + i]["held_by"] = agent
 
         return {
             "agents": agents_dict,
@@ -312,6 +319,12 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 continue
 
             initial_score = self._compute_score()
+            agent_team = "red" if agent_state.get("team") == Team.RED else "blue"
+            opposing_team = "blue" if agent_team == "red" else "red"
+            
+            # Get team scores before action
+            initial_team_scores = self._compute_team_scores()
+            
             penalty = 0.0
             duration = 0.5  # Default action duration
 
@@ -320,9 +333,21 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
 
             agent_state["gameTime"] += duration
             
-            # Calculate reward
+            # Get team scores after action
+            new_team_scores = self._compute_team_scores()
+            
+            # Calculate reward using scoring module
+            reward = compute_instant_reward(
+                initial_team_scores[agent_team],
+                new_team_scores[agent_team],
+                initial_team_scores[opposing_team],
+                new_team_scores[opposing_team],
+                penalty
+            )
+            
+            # Update total score
             new_score = self._compute_score()
-            rewards[agent] = compute_instant_reward(initial_score, new_score, penalty)
+            rewards[agent] = reward
             self.score = new_score
 
         # Update held block positions to follow robots
@@ -338,6 +363,11 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
 
     def _execute_action(self, agent, action, agent_state, duration, penalty):
         """Execute a single action for an agent."""
+        
+        # Normalize action to integer value (handle both enum and int)
+        if hasattr(action, 'value'):
+            action = action.value
+        action = int(action)
         
         # PICK UP NEAREST BLOCK
         if action == Actions.PICK_UP_NEAREST_BLOCK.value:
@@ -361,15 +391,15 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 agent_state, GoalType.CENTER_LOWER, duration, penalty
             )
         
-        # DRIVE TO LOADERS
+        # TAKE FROM LOADERS
         elif action in [
-            Actions.DRIVE_TO_LOADER_TL.value, 
-            Actions.DRIVE_TO_LOADER_TR.value,
-            Actions.DRIVE_TO_LOADER_BL.value, 
-            Actions.DRIVE_TO_LOADER_BR.value
+            Actions.TAKE_FROM_LOADER_TL.value, 
+            Actions.TAKE_FROM_LOADER_TR.value,
+            Actions.TAKE_FROM_LOADER_BL.value, 
+            Actions.TAKE_FROM_LOADER_BR.value
         ]:
-            idx = action - Actions.DRIVE_TO_LOADER_TL.value
-            duration, penalty = self._action_drive_to_loader(agent_state, idx, duration, penalty)
+            idx = action - Actions.TAKE_FROM_LOADER_TL.value
+            duration, penalty = self._action_take_from_loader(agent_state, idx, duration, penalty)
         
         # CLEAR LOADER
         elif action == Actions.CLEAR_LOADER.value:
@@ -386,16 +416,40 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         return duration, penalty
 
     def _action_pickup_block(self, agent_state, duration, penalty):
-        """Pick up the nearest block on the field."""
+        """Pick up the nearest block on the field within robot's field of view that matches robot's team."""
         target_block_idx = -1
         min_dist = float('inf')
         
+        robot_pos = agent_state["position"]
+        robot_theta = agent_state["orientation"][0]
+        robot_team = "red" if agent_state.get("team") == Team.RED else "blue"
+        
         for i, block in enumerate(self.environment_state["blocks"]):
             if block["status"] == BlockStatus.ON_FIELD:
-                dist = np.linalg.norm(agent_state["position"] - block["position"])
-                if dist < min_dist:
-                    min_dist = dist
-                    target_block_idx = i
+                # Only pick blocks matching robot's team color
+                if block.get("team") != robot_team:
+                    continue
+                    
+                # Check if block is within FOV (90 degrees = pi/2 radians)
+                block_pos = block["position"]
+                direction_to_block = block_pos - robot_pos
+                dist = np.linalg.norm(direction_to_block)
+                
+                if dist > 0:
+                    # Calculate angle to block
+                    angle_to_block = np.arctan2(direction_to_block[1], direction_to_block[0])
+                    # Normalize angle difference to [-pi, pi]
+                    angle_diff = angle_to_block - robot_theta
+                    while angle_diff > np.pi:
+                        angle_diff -= 2 * np.pi
+                    while angle_diff < -np.pi:
+                        angle_diff += 2 * np.pi
+                    
+                    # Check if within FOV (half angle on each side)
+                    if abs(angle_diff) <= FOV / 2:
+                        if dist < min_dist:
+                            min_dist = dist
+                            target_block_idx = i
                     
         if target_block_idx != -1:
             # Move to block
@@ -404,8 +458,9 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             agent_state["position"] = target_pos.copy()
             duration += dist_travelled / ROBOT_SPEED
             
-            # Pickup
+            # Pickup - track which agent holds this block
             self.environment_state["blocks"][target_block_idx]["status"] = BlockStatus.HELD
+            self.environment_state["blocks"][target_block_idx]["held_by"] = agent_state.get("agent_name")
             agent_state["held_blocks"] += 1
         else:
             penalty = DEFAULT_PENALTY
@@ -441,35 +496,43 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 robot_pos = np.array([24.0 + ROBOT_LENGTH/2 + 2.0, -48.0])
                 orientation = np.pi  # Face left
         elif goal_type == GoalType.CENTER_UPPER:
-            # Upper center: diagonal from upper-left to lower-right (45°)
+            # Upper center: diagonal at -45° rotation
+            # left_entry is (-8.5, 8.5) = TL, right_entry is (8.5, -8.5) = BR
             offset = ROBOT_LENGTH/2 + 4.0
             if scoring_side == "left":
+                # Approach from top-left
                 robot_pos = np.array([-8.5 - offset * 0.707, 8.5 + offset * 0.707])
-                orientation = -np.pi / 4  # Face toward lower-right
+                orientation = -np.pi / 4  # Face toward bottom-right
             else:
+                # Approach from bottom-right
                 robot_pos = np.array([8.5 + offset * 0.707, -8.5 - offset * 0.707])
-                orientation = 3 * np.pi / 4  # Face toward upper-left
+                orientation = 3 * np.pi / 4  # Face toward top-left
         else:  # CENTER_LOWER
-            # Lower center: diagonal from lower-left to upper-right (-45°)
+            # Lower center: diagonal from upper-right to bottom-left (-45° rotation)
+            # left_entry is (8.5, 8.5) = UR, right_entry is (-8.5, -8.5) = BL
             offset = ROBOT_LENGTH/2 + 4.0
             if scoring_side == "left":
+                # Approach from upper-right
+                robot_pos = np.array([8.5 + offset * 0.707, 8.5 + offset * 0.707])
+                orientation = -3 * np.pi / 4  # Face toward bottom-left
+            else:
+                # Approach from bottom-left
                 robot_pos = np.array([-8.5 - offset * 0.707, -8.5 - offset * 0.707])
                 orientation = np.pi / 4  # Face toward upper-right
-            else:
-                robot_pos = np.array([8.5 + offset * 0.707, 8.5 + offset * 0.707])
-                orientation = -3 * np.pi / 4  # Face toward lower-left
         
         dist = np.linalg.norm(agent_state["position"] - robot_pos)
         agent_state["position"] = robot_pos.astype(np.float32)
         agent_state["orientation"] = np.array([orientation], dtype=np.float32)
         duration += dist / ROBOT_SPEED
         
-        # Score all held blocks
+        # Score all blocks held by this agent
         scored_count = 0
         target_status = BlockStatus.get_status_for_goal(goal_type)
+        agent_name = agent_state.get("agent_name")
         
         for block in self.environment_state["blocks"]:
-            if block["status"] == BlockStatus.HELD:
+            # Only score blocks held by THIS agent
+            if block["status"] == BlockStatus.HELD and block.get("held_by") == agent_name:
                 # Add block to goal queue
                 ejected_id, _ = goal.add_block_from_nearest(
                     id(block), 
@@ -477,7 +540,7 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 )
                 
                 block["status"] = target_status
-                block["position"] = nearest_entry.copy()
+                block["held_by"] = None  # No longer held
                 scored_count += 1
                 
                 # Handle overflow - ejected block goes back to field
@@ -493,13 +556,34 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                                 b["position"] = goal.left_entry.copy()
                             break
         
+        # Update all block positions in this goal to shift them along the tube
+        self._update_goal_block_positions(goal, target_status)
+        
         agent_state["held_blocks"] = 0
         duration += 0.5 * scored_count
         
         return duration, penalty
+    
+    def _update_goal_block_positions(self, goal, target_status):
+        """Update positions of all blocks in a goal based on their queue positions."""
+        # Get the queue's calculated positions (only blocks actually in the goal queue)
+        block_positions = goal.get_block_positions(goal.goal_position.center)
+        
+        # Create a set of block IDs that are in the goal queue
+        goal_block_ids = {block_id for block_id, pos in block_positions}
+        
+        # Create a mapping from block ID to position
+        id_to_position = {block_id: pos for block_id, pos in block_positions}
+        
+        # Update each block's position if it's in the goal queue
+        for block in self.environment_state["blocks"]:
+            block_id = id(block)
+            if block_id in goal_block_ids:
+                block["position"] = id_to_position[block_id].copy()
+                block["status"] = target_status  # Ensure status is correct
 
-    def _action_drive_to_loader(self, agent_state, loader_idx, duration, penalty):
-        """Drive to a specific loader, positioning flush and facing it at exact 45° angle."""
+    def _action_take_from_loader(self, agent_state, loader_idx, duration, penalty):
+        """Take a block from a specific loader, positioning flush and facing it at exact 45° angle."""
         loader_pos = LOADERS[loader_idx].position
         
         # Set exact 45-degree angles based on loader position (loaders are in corners)
@@ -526,6 +610,20 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         agent_state["position"] = robot_pos.astype(np.float32)
         agent_state["orientation"] = np.array([orientation], dtype=np.float32)
         duration += dist / ROBOT_SPEED
+        
+        # Take a block from the loader if available
+        if self.environment_state["loaders"][loader_idx] > 0:
+            self.environment_state["loaders"][loader_idx] -= 1
+            agent_state["held_blocks"] += 1
+            duration += 0.5  # Time to grab the block
+            
+            # Update block status
+            for block in self.environment_state["blocks"]:
+                if block["status"] == BlockStatus.IN_LOADER_TL + loader_idx:
+                    block["status"] = BlockStatus.HELD
+                    block["position"] = agent_state["position"].copy()
+                    break
+        
         return duration, penalty
 
     def _action_clear_loader(self, agent_state, duration, penalty):
@@ -584,6 +682,18 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             self.environment_state["agents"],
             self.environment_state["blocks"],
         )
+    
+    def _compute_team_scores(self):
+        """Compute scores for each team based on their blocks in goals."""
+        scores = {"red": 0, "blue": 0}
+        
+        for block in self.environment_state["blocks"]:
+            # Check if block is in a goal (status 2-5)
+            if block["status"] > BlockStatus.HELD and block["status"] <= 5:
+                block_team = block.get("team", "red")
+                scores[block_team] += self.mode_config.block_points
+        
+        return scores
 
     def is_valid_action(self, action, observation, last_action=None):
         """Check if an action is valid in the current state."""
@@ -633,32 +743,38 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         
         # Draw Goals
         # Long Goal 1 (top, y=48)
-        rect_lg_1 = patches.Rectangle((-24, 46), 48, 4, color='orange', alpha=0.3)
+        rect_lg_1 = patches.Rectangle((-24, 46), 48, 4, facecolor='orange', alpha=0.3, edgecolor='orange')
         ax.add_patch(rect_lg_1)
         ax.text(0, 52, 'Long 1', fontsize=8, ha='center', va='bottom', color='orange')
+        # Control zone lines (inner 12 inches = x from -6 to 6)
+        ax.plot([-6, -6], [46, 50], color='white', linewidth=2, linestyle='--')
+        ax.plot([6, 6], [46, 50], color='white', linewidth=2, linestyle='--')
         
         # Long Goal 2 (bottom, y=-48)
-        rect_lg_2 = patches.Rectangle((-24, -50), 48, 4, color='orange', alpha=0.3)
+        rect_lg_2 = patches.Rectangle((-24, -50), 48, 4, facecolor='orange', alpha=0.3, edgecolor='orange')
         ax.add_patch(rect_lg_2)
         ax.text(0, -54, 'Long 2', fontsize=8, ha='center', va='top', color='orange')
+        # Control zone lines (inner 12 inches = x from -6 to 6)
+        ax.plot([-6, -6], [-50, -46], color='white', linewidth=2, linestyle='--')
+        ax.plot([6, 6], [-50, -46], color='white', linewidth=2, linestyle='--')
         
         # Center Structure (X shape) - two separate diagonals
         w, h = 24, 4
-        # Upper center: UL to LR diagonal (45°)
+        # Upper center: -45° rotation - green
         rect_center_upper = patches.Rectangle(
-            (-w/2, -h/2), w, h, color='green', alpha=0.4,
-            transform=mtransforms.Affine2D().rotate_deg_around(0, 0, 45) + ax.transData
-        )
-        ax.add_patch(rect_center_upper)
-        ax.text(-14, 14, 'Upper', fontsize=6, ha='center', va='center', color='green')
-        
-        # Lower center: LL to UR diagonal (-45°)
-        rect_center_lower = patches.Rectangle(
-            (-w/2, -h/2), w, h, color='purple', alpha=0.4,
+            (-w/2, -h/2), w, h, facecolor='green', alpha=0.4, edgecolor='green',
             transform=mtransforms.Affine2D().rotate_deg_around(0, 0, -45) + ax.transData
         )
+        ax.add_patch(rect_center_upper)
+        ax.text(-10, 10, 'Upper', fontsize=6, ha='center', va='center', color='green')
+        
+        # Lower center: 45° rotation - purple
+        rect_center_lower = patches.Rectangle(
+            (-w/2, -h/2), w, h, facecolor='purple', alpha=0.4, edgecolor='purple',
+            transform=mtransforms.Affine2D().rotate_deg_around(0, 0, 45) + ax.transData
+        )
         ax.add_patch(rect_center_lower)
-        ax.text(-14, -14, 'Lower', fontsize=6, ha='center', va='center', color='purple')
+        ax.text(-10, -10, 'Lower', fontsize=6, ha='center', va='center', color='purple')
         
         # Draw Loaders
         for loader in LOADERS:
@@ -679,20 +795,28 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         # Draw Blocks (don't draw blocks in loaders - status >= 6)
         for block in self.environment_state["blocks"]:
             if block["status"] < 6:  # Not in loaders
-                c = 'red'
-                if block["status"] == BlockStatus.HELD:
-                    c = 'blue'
-                elif block["status"] > BlockStatus.HELD:
-                    c = 'purple'  # In a goal
+                # Fill color based on team
+                fill_color = block.get("team", "red")
+                
+                # Edge color based on status
+                if block["status"] == BlockStatus.ON_FIELD:
+                    edge_color = 'black'
+                    edge_width = 1
+                elif block["status"] == BlockStatus.HELD:
+                    edge_color = 'yellow'
+                    edge_width = 3
+                else:  # In a goal (status 2-5)
+                    edge_color = 'white'
+                    edge_width = 2
                 
                 hexagon = patches.RegularPolygon(
                     (block["position"][0], block["position"][1]), 
                     numVertices=6, 
                     radius=2.4, 
                     orientation=0,
-                    facecolor=c, 
-                    edgecolor='black',
-                    linewidth=1
+                    facecolor=fill_color, 
+                    edgecolor=edge_color,
+                    linewidth=edge_width
                 )
                 ax.add_patch(hexagon)
 
@@ -709,6 +833,16 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             
             x, y = st["position"][0], st["position"][1]
             theta = st["orientation"][0]
+            
+            # Draw FOV wedge (light yellow, transparent)
+            fov_radius = 72  # How far the FOV extends
+            fov_start_angle = np.degrees(theta - FOV/2)
+            fov_end_angle = np.degrees(theta + FOV/2)
+            fov_wedge = patches.Wedge(
+                (x, y), fov_radius, fov_start_angle, fov_end_angle,
+                facecolor='yellow', alpha=0.15, edgecolor='yellow', linewidth=0.5
+            )
+            ax.add_patch(fov_wedge)
             
             robot_rect = patches.Rectangle(
                 (-ROBOT_LENGTH/2, -ROBOT_WIDTH/2), 
@@ -731,7 +865,7 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             ax.arrow(x, y, 
                     np.cos(theta) * arrow_length, 
                     np.sin(theta) * arrow_length, 
-                    width=1.5, color='yellow', 
+                    width=1.5, facecolor='yellow', 
                     head_width=4, head_length=2, zorder=10,
                     edgecolor='black', linewidth=0.5)
             
@@ -833,6 +967,17 @@ class GameMode:
     COMPETITION = CompetitionMode.VEX_U_COMPETITION
 
 
+TEST_ACTIONS = [
+    Actions.PICK_UP_NEAREST_BLOCK,
+    Actions.SCORE_IN_CENTER_UPPER,
+    Actions.PICK_UP_NEAREST_BLOCK,
+    Actions.SCORE_IN_CENTER_LOWER,
+    Actions.PICK_UP_NEAREST_BLOCK,
+    Actions.SCORE_IN_LONG_GOAL_1,
+    Actions.PICK_UP_NEAREST_BLOCK,
+    Actions.SCORE_IN_LONG_GOAL_2
+]
+
 if __name__ == "__main__":
     # Test the environment
     print("Testing VEX Push Back environment...")
@@ -858,10 +1003,13 @@ if __name__ == "__main__":
     
     done = False
     step_count = 0
-    
+
+    i = 0
     while not done and step_count < 100:
-        actions = {agent: env.action_space(agent).sample() for agent in env.agents}
-        
+        # actions = {agent: env.action_space(agent).sample() for agent in env.agents}
+        actions = {agent: TEST_ACTIONS[i % len(TEST_ACTIONS)] for agent in env.agents}
+        i += 1
+
         # Print actions for each agent
         step_count += 1
         print(f"\nStep {step_count}:")

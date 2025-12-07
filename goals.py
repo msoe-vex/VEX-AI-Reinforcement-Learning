@@ -10,7 +10,7 @@ Implements goal structures with queue-based block storage:
 import numpy as np
 from collections import deque
 from dataclasses import dataclass, field as dataclass_field
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 from enum import Enum
 
 try:
@@ -39,12 +39,10 @@ class Block:
 
 class GoalQueue:
     """
-    Represents a goal with queue-based block storage.
+    Queue-based goal that manages blocks with FIFO behavior from both sides.
     
-    Blocks are stored in a list representing positions from left to right.
-    When a block is added from the left, it's inserted at the beginning.
-    When a block is added from the right, it's appended to the end.
-    If the goal is full, the block on the opposite end is ejected.
+    Uses a fixed-size array with None for empty slots. Adding from left fills
+    from index 0 rightward, adding from right fills from the end leftward.
     """
     
     def __init__(self, goal_type: GoalType, capacity: int):
@@ -52,23 +50,28 @@ class GoalQueue:
         Initialize a goal queue.
         
         Args:
-            goal_type: Type of goal (LONG_TOP, LONG_BOTTOM, CENTER)
+            goal_type: Type of goal (LONG_1, LONG_2, CENTER_UPPER, CENTER_LOWER)
             capacity: Maximum number of blocks the goal can hold
         """
         self.goal_type = goal_type
         self.capacity = capacity
-        self.blocks: List[int] = []  # List of block IDs
+        self.slots: List[Optional[int]] = [None] * capacity  # Fixed-size array
         self.goal_position = GOALS[goal_type]
         
     @property
     def count(self) -> int:
         """Number of blocks currently in the goal."""
-        return len(self.blocks)
+        return sum(1 for slot in self.slots if slot is not None)
     
     @property
     def is_full(self) -> bool:
         """Check if the goal is at capacity."""
-        return len(self.blocks) >= self.capacity
+        return all(slot is not None for slot in self.slots)
+    
+    @property
+    def blocks(self) -> List[int]:
+        """Get list of block IDs (non-None slots)."""
+        return [slot for slot in self.slots if slot is not None]
     
     @property
     def left_entry(self) -> np.ndarray:
@@ -102,15 +105,23 @@ class GoalQueue:
         ejected = None
         
         if from_side == "left":
-            # Add to left side (beginning of list)
-            if self.is_full:
-                ejected = self.blocks.pop()  # Eject from right
-            self.blocks.insert(0, block_id)
+            # Add from left - find first empty slot from left
+            for i in range(self.capacity):
+                if self.slots[i] is None:
+                    self.slots[i] = block_id
+                    return None
+            # Full - eject from right, shift left, add at left
+            ejected = self.slots[-1]
+            self.slots = [block_id] + self.slots[:-1]
         else:  # right
-            # Add to right side (end of list)
-            if self.is_full:
-                ejected = self.blocks.pop(0)  # Eject from left
-            self.blocks.append(block_id)
+            # Add from right - find first empty slot from right
+            for i in range(self.capacity - 1, -1, -1):
+                if self.slots[i] is None:
+                    self.slots[i] = block_id
+                    return None
+            # Full - eject from left, shift right, add at right
+            ejected = self.slots[0]
+            self.slots = self.slots[1:] + [block_id]
             
         return ejected
     
@@ -139,9 +150,10 @@ class GoalQueue:
         Returns:
             True if block was found and removed, False otherwise
         """
-        if block_id in self.blocks:
-            self.blocks.remove(block_id)
-            return True
+        for i in range(self.capacity):
+            if self.slots[i] == block_id:
+                self.slots[i] = None
+                return True
         return False
     
     def remove_from_side(self, side: str) -> Optional[int]:
@@ -152,46 +164,50 @@ class GoalQueue:
             side: 'left' or 'right'
             
         Returns:
-            ID of removed block or None if empty
+            ID of removed block or None if empty on that side
         """
-        if not self.blocks:
-            return None
-            
         if side == "left":
-            return self.blocks.pop(0)
+            for i in range(self.capacity):
+                if self.slots[i] is not None:
+                    block_id = self.slots[i]
+                    self.slots[i] = None
+                    return block_id
         else:
-            return self.blocks.pop()
+            for i in range(self.capacity - 1, -1, -1):
+                if self.slots[i] is not None:
+                    block_id = self.slots[i]
+                    self.slots[i] = None
+                    return block_id
+        return None
     
     def get_block_positions(self, goal_center: np.ndarray) -> List[Tuple[int, np.ndarray]]:
         """
         Calculate display positions for all blocks in the goal.
         
+        Each slot has a fixed position. Only returns positions for non-empty slots.
+        
         Args:
-            goal_center: Center position of the goal
+            goal_center: Center position of the goal (unused, kept for compatibility)
             
         Returns:
             List of (block_id, position) tuples
         """
-        if not self.blocks:
-            return []
-        
-        # Spread blocks evenly across the goal
         positions = []
-        goal_width = np.linalg.norm(self.right_entry - self.left_entry)
-        spacing = goal_width / (self.capacity + 1)
+        direction = self.right_entry - self.left_entry
         
-        for i, block_id in enumerate(self.blocks):
-            # Calculate position from left to right
-            t = (i + 1) / (len(self.blocks) + 1)
-            pos = self.left_entry + t * (self.right_entry - self.left_entry)
-            positions.append((block_id, pos))
+        for i, block_id in enumerate(self.slots):
+            if block_id is not None:
+                # Position at center of slot
+                t = (i + 0.5) / self.capacity
+                pos = self.left_entry + t * direction
+                positions.append((block_id, pos.copy()))
             
         return positions
     
     def clear(self) -> List[int]:
         """Clear all blocks from the goal. Returns list of ejected block IDs."""
-        ejected = self.blocks.copy()
-        self.blocks = []
+        ejected = [b for b in self.slots if b is not None]
+        self.slots = [None] * self.capacity
         return ejected
 
 

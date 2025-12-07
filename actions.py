@@ -20,10 +20,10 @@ class Actions(Enum):
     SCORE_IN_LONG_GOAL_2 = 2      # Long goal 2 (y=-48)
     SCORE_IN_CENTER_UPPER = 3     # Center goal upper (UL to LR diagonal)
     SCORE_IN_CENTER_LOWER = 4     # Center goal lower (LL to UR diagonal)
-    DRIVE_TO_LOADER_TL = 5        # Top Left loader
-    DRIVE_TO_LOADER_TR = 6        # Top Right loader
-    DRIVE_TO_LOADER_BL = 7        # Bottom Left loader
-    DRIVE_TO_LOADER_BR = 8        # Bottom Right loader
+    TAKE_FROM_LOADER_TL = 5       # Take block from Top Left loader
+    TAKE_FROM_LOADER_TR = 6       # Take block from Top Right loader
+    TAKE_FROM_LOADER_BL = 7       # Take block from Bottom Left loader
+    TAKE_FROM_LOADER_BR = 8       # Take block from Bottom Right loader
     CLEAR_LOADER = 9              # Dispense blocks from nearest loader
     PARK = 10                     # Dynamic: parks in team's zone (red/blue)
     IDLE = 11
@@ -36,10 +36,10 @@ ACTION_DESCRIPTIONS = {
     Actions.SCORE_IN_LONG_GOAL_2: "Score blocks in long goal 2 (bottom)",
     Actions.SCORE_IN_CENTER_UPPER: "Score blocks in center goal upper (45°)",
     Actions.SCORE_IN_CENTER_LOWER: "Score blocks in center goal lower (-45°)",
-    Actions.DRIVE_TO_LOADER_TL: "Drive to the top-left loader",
-    Actions.DRIVE_TO_LOADER_TR: "Drive to the top-right loader",
-    Actions.DRIVE_TO_LOADER_BL: "Drive to the bottom-left loader",
-    Actions.DRIVE_TO_LOADER_BR: "Drive to the bottom-right loader",
+    Actions.TAKE_FROM_LOADER_TL: "Take block from the top-left loader",
+    Actions.TAKE_FROM_LOADER_TR: "Take block from the top-right loader",
+    Actions.TAKE_FROM_LOADER_BL: "Take block from the bottom-left loader",
+    Actions.TAKE_FROM_LOADER_BR: "Take block from the bottom-right loader",
     Actions.CLEAR_LOADER: "Clear blocks from the nearest loader",
     Actions.PARK: "Park in the team's designated zone",
     Actions.IDLE: "Do nothing (wait)",
@@ -48,19 +48,19 @@ ACTION_DESCRIPTIONS = {
 
 def get_loader_index_from_action(action: Actions) -> int:
     """
-    Get the loader index (0-3) from a drive-to-loader action.
+    Get the loader index (0-3) from a take-from-loader action.
     
     Args:
-        action: A DRIVE_TO_LOADER_* action
+        action: A TAKE_FROM_LOADER_* action
         
     Returns:
         Loader index (0=TL, 1=TR, 2=BL, 3=BR) or -1 if not a loader action
     """
     loader_actions = {
-        Actions.DRIVE_TO_LOADER_TL: 0,
-        Actions.DRIVE_TO_LOADER_TR: 1,
-        Actions.DRIVE_TO_LOADER_BL: 2,
-        Actions.DRIVE_TO_LOADER_BR: 3,
+        Actions.TAKE_FROM_LOADER_TL: 0,
+        Actions.TAKE_FROM_LOADER_TR: 1,
+        Actions.TAKE_FROM_LOADER_BL: 2,
+        Actions.TAKE_FROM_LOADER_BR: 3,
     }
     return loader_actions.get(action, -1)
 
@@ -78,10 +78,10 @@ def is_scoring_action(action: Actions) -> bool:
 def is_loader_action(action: Actions) -> bool:
     """Check if an action involves loaders."""
     return action in [
-        Actions.DRIVE_TO_LOADER_TL,
-        Actions.DRIVE_TO_LOADER_TR,
-        Actions.DRIVE_TO_LOADER_BL,
-        Actions.DRIVE_TO_LOADER_BR,
+        Actions.TAKE_FROM_LOADER_TL,
+        Actions.TAKE_FROM_LOADER_TR,
+        Actions.TAKE_FROM_LOADER_BL,
+        Actions.TAKE_FROM_LOADER_BR,
         Actions.CLEAR_LOADER,
     ]
 
@@ -89,4 +89,5 @@ def is_loader_action(action: Actions) -> bool:
 def requires_held_blocks(action: Actions) -> bool:
     """Check if an action requires the robot to be holding blocks."""
     return is_scoring_action(action)
+
 

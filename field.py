@@ -138,22 +138,22 @@ GOALS: Dict[GoalType, GoalPosition] = {
         goal_type=GoalType.LONG_2,
         angle=0.0,
     ),
-    # Center Upper: diagonal from upper-left to lower-right (45°)
+    # Center Upper: diagonal at -45° rotation (render coordmates)
     # Entry points are at the diagonal ends
     GoalType.CENTER_UPPER: GoalPosition(
         center=np.array([0.0, 0.0]),
-        left_entry=np.array([-8.5, 8.5]),   # Upper-left end
-        right_entry=np.array([8.5, -8.5]),  # Lower-right end
+        left_entry=np.array([-8.5, 8.5]),   # Top-left end
+        right_entry=np.array([8.5, -8.5]),  # Bottom-right end
         capacity=CENTER_GOAL_CAPACITY,
         control_threshold=CENTER_GOAL_CONTROL_THRESHOLD,
         goal_type=GoalType.CENTER_UPPER,
-        angle=45.0,
+        angle=-45.0,
     ),
-    # Center Lower: diagonal from lower-left to upper-right (-45°)
+    # Center Lower: diagonal from upper-right to bottom-left (-45° rotation when drawn)
     GoalType.CENTER_LOWER: GoalPosition(
         center=np.array([0.0, 0.0]),
-        left_entry=np.array([-8.5, -8.5]),  # Lower-left end
-        right_entry=np.array([8.5, 8.5]),   # Upper-right end
+        left_entry=np.array([8.5, 8.5]),    # Upper-right end
+        right_entry=np.array([-8.5, -8.5]), # Bottom-left end
         capacity=CENTER_GOAL_CAPACITY,
         control_threshold=CENTER_GOAL_CONTROL_THRESHOLD,
         goal_type=GoalType.CENTER_LOWER,
@@ -204,17 +204,25 @@ def get_initial_field_blocks(randomize: bool = True, seed=None) -> List[Dict]:
         seed: Random seed for reproducibility.
         
     Returns:
-        List of block dictionaries with position and status.
-        Status 0 = on field, 1 = held, 2-4 = in goals, 5-8 = in loaders
+        List of block dictionaries with position, status, and team.
+        Status 0 = on field, 1 = held, 2-5 = in goals, 6-9 = in loaders
+        Team: 'red' or 'blue'
     """
     blocks = []
     rng = np.random.default_rng(seed)
+    block_count = 0
     
-    def add_block(x: float, y: float, status: int = 0):
+    def add_block(x: float, y: float, status: int = 0, team: str = None):
+        nonlocal block_count
+        # Alternate team colors if not specified
+        if team is None:
+            team = "red" if block_count % 2 == 0 else "blue"
         blocks.append({
             "position": np.array([x, y], dtype=np.float32),
-            "status": status
+            "status": status,
+            "team": team
         })
+        block_count += 1
     
     def is_valid_position(x: float, y: float) -> bool:
         """Check if position is valid (not in goals, loaders, or park zones)."""
@@ -269,9 +277,12 @@ def get_initial_loader_blocks() -> List[Dict]:
     
     for loader in LOADERS:
         for _ in range(6):
+            # Alternate teams for loader blocks
+            team = "red" if loader.index % 2 == 0 else "blue"
             blocks.append({
                 "position": loader.position.copy().astype(np.float32),
-                "status": 5 + loader.index  # Status 5-8 for loaders 0-3
+                "status": 6 + loader.index,  # Status 6-9 for loaders 0-3
+                "team": team
             })
     
     return blocks
@@ -284,7 +295,7 @@ def get_preload_block(team: str) -> Dict:
     else:
         pos = np.array([60.0, 0.0], dtype=np.float32)
     
-    return {"position": pos, "status": 1}  # Status 1 = held
+    return {"position": pos, "status": 1, "team": team}  # Status 1 = held
 
 
 def get_all_initial_blocks(agents: list = None) -> List[Dict]:

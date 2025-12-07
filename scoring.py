@@ -185,19 +185,25 @@ class ScoreCalculator:
 
 
 def compute_instant_reward(
-    old_score: int,
-    new_score: int,
+    own_score_before: int,
+    own_score_after: int,
+    opponent_score_before: int,
+    opponent_score_after: int,
     penalty: float = 0.0
 ) -> float:
     """
-    Compute the reward for a single step.
+    Compute the reward for a single step based on team score changes.
     
     Args:
-        old_score: Score before the action
-        new_score: Score after the action
-        penalty: Any penalty applied (negative value)
+        own_score_before: Agent's team score before the action
+        own_score_after: Agent's team score after the action
+        opponent_score_before: Opponent's team score before the action
+        opponent_score_after: Opponent's team score after the action
+        penalty: Any penalty applied (positive value to subtract)
         
     Returns:
-        Reward value (score change + penalty)
+        Reward value: (own_delta) - (opponent_delta) - penalty
     """
-    return (new_score - old_score) + penalty
+    own_delta = own_score_after - own_score_before
+    opponent_delta = opponent_score_after - opponent_score_before
+    return own_delta - opponent_delta - penalty
