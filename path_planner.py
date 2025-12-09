@@ -291,38 +291,47 @@ class PathPlanner:
         
         self.solve_time = time.time() - start_time
 
-        return res
+        # Extract solution components
+        x_opt = res['x'].full().flatten()
+        pos_x = x_opt[self.indexes.px:self.indexes.py]
+        pos_y = x_opt[self.indexes.py:self.indexes.vx]
+        vel_x = x_opt[self.indexes.vx:self.indexes.vy]
+        vel_y = x_opt[self.indexes.vy:self.indexes.dt]
+        dt = x_opt[self.indexes.dt]
+        
+        # Return positions (Nx2), velocities ((N-1)x2), and time step
+        positions = np.column_stack((pos_x, pos_y))
+        velocities = np.column_stack((vel_x, vel_y))
+        
+        return positions, velocities, dt
 
-    def print_trajectory_details(self, res, save_path):
+    def print_trajectory_details(self, positions, velocities, dt, save_path=None):
         # -------------------------------------------------------------------------
         # Trajectory Output: Print details and save to a file
         # -------------------------------------------------------------------------
-        x_opt = res['x'].full().flatten()
-        final_cost = res['f'].full().item()
         print(f"{'Step':<5} {'Position (x, y)':<20}\t{'Velocity (vx, vy)':<20}\t{'Acceleration (ax, ay)':<25}")
         print("-" * 70)
         lemlib_output_string = ""
-        optimized_time_step  = x_opt[self.num_of_x_-1]
-        for i in range(self.num_steps):
-            px = x_opt[self.indexes.px + i]
-            py = x_opt[self.indexes.py + i]
-            if i < self.num_steps - 1:
-                vx = x_opt[self.indexes.vx + i]
-                vy = x_opt[self.indexes.vy + i]
+        
+        for i in range(len(positions)):
+            px, py = positions[i]
+            if i < len(velocities):
+                vx, vy = velocities[i]
             else:
                 vx = vy = 0
-            if i < self.num_steps - 2:
-                next_vx = x_opt[self.indexes.vx + i + 1]
-                next_vy = x_opt[self.indexes.vy + i + 1]
-                ax = (next_vx - vx) / optimized_time_step 
-                ay = (next_vy - vy) / optimized_time_step 
+            
+            if i < len(velocities) - 1:
+                next_vx, next_vy = velocities[i + 1]
+                ax = (next_vx - vx) / dt
+                ay = (next_vy - vy) / dt
             else:
                 ax = ay = 0
+            
             print(f"{i:<5} ({px*INCHES_PER_FIELD-72:.2f}, {py*INCHES_PER_FIELD-72:.2f})\t\t({vx*INCHES_PER_FIELD:.2f}, {vy*INCHES_PER_FIELD:.2f})\t\t({ax*INCHES_PER_FIELD:.2f}, {ay*INCHES_PER_FIELD:.2f})")
             lemlib_output_string += f"{px*INCHES_PER_FIELD-72:.3f}, {py*INCHES_PER_FIELD-72:.3f}\n"
-        print(f"\nFinal cost: {final_cost:.2f}")
-        print(f"\nTime step: {optimized_time_step:.2f}")
-        print(f"Path time: {optimized_time_step * self.num_steps:.2f}")
+        
+        print(f"\nTime step: {dt:.2f}")
+        print(f"Path time: {dt * len(positions):.2f}")
         print(f"\nStatus: {self.status}")
         print(f"Solve time: {self.solve_time:.3f} seconds")
         lemlib_output_string += "endData"
@@ -330,17 +339,17 @@ class PathPlanner:
             with open(save_path, 'w') as file:
                 file.write(lemlib_output_string)
 
-    def plotResults(self, sol):
+    def plotResults(self, positions, velocities, start_point, end_point, obstacles):
         # -------------------------------------------------------------------------
         # Plot Results: Display trajectory, obstacles, and robot boundaries
         # -------------------------------------------------------------------------
         fig, ax = plt.subplots(figsize=(8, 8))
-        planned_px = np.array(sol['x'][self.indexes.px:self.indexes.py]).flatten()
-        planned_py = np.array(sol['x'][self.indexes.py:self.indexes.vx]).flatten()
-        planned_vx = np.array(sol['x'][self.indexes.vx:self.indexes.vy]).flatten()
-        planned_vy = np.array(sol['x'][self.indexes.vy:self.indexes.dt]).flatten()
+        planned_px = positions[:, 0]
+        planned_py = positions[:, 1]
+        planned_vx = velocities[:, 0]
+        planned_vy = velocities[:, 1]
         planned_theta = np.arctan2(planned_vy, planned_vx)
-        planned_theta = np.concatenate(([planned_theta[1]], planned_theta[1:-1], [planned_theta[-2], planned_theta[-2]]))
+        planned_theta = np.concatenate(([planned_theta[0]], planned_theta, [planned_theta[-1]]))
         ax.plot(self.init_x, self.init_y, linestyle=':', color='gray', alpha=0.7, label='initial path')
         ax.plot(planned_px, planned_py, '-o', label='path', color="blue", alpha=0.5)
         theta_list = np.linspace(0, 2 * np.pi, 100)
@@ -387,10 +396,11 @@ class PathPlanner:
 
         
     
-    def getPath(self, sol):
-        planned_px = np.array(sol['x'][self.indexes.px:self.indexes.py]).flatten()
-        planned_py = np.array(sol['x'][self.indexes.py:self.indexes.vx]).flatten()
-        total_path_time = sol['x'][self.indexes.dt] * self.num_steps
+    def getPath(self, positions, dt):
+        """Legacy method for compatibility - returns separate x, y arrays and total time."""
+        planned_px = positions[:, 0]
+        planned_py = positions[:, 1]
+        total_path_time = dt * len(positions)
         return planned_px, planned_py, total_path_time
 
     def a_star_search(self, start_point, end_point, obstacles):
@@ -557,7 +567,7 @@ if __name__ == "__main__":
                         obstacles.append(Obstacle(x, y, radius, True))
                         break
 
-        sol = planner.Solve(start_point=start_point, end_point=end_point, obstacles=obstacles)
+        positions, velocities, dt = planner.Solve(start_point=start_point, end_point=end_point, obstacles=obstacles)
 
         if planner.status == 'Solve_Succeeded':
             successful_trials += 1
@@ -568,8 +578,8 @@ if __name__ == "__main__":
 
         total_solve_time += planner.solve_time
 
-        planner.print_trajectory_details(sol, None)
-        planner.plotResults(sol)
+        planner.print_trajectory_details(positions, velocities, dt, None)
+        planner.plotResults(positions, velocities, start_point, end_point, obstacles)
         planner.generate_grid_png(obstacles, start_point, end_point)
 
         input()

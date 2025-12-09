@@ -7,6 +7,7 @@ import numpy as np
 # If vexEnvRun.py and vexEnv.py are in the same directory, this should work.
 from vexEnv import Push_Back_Multi_Agent_Env
 from vexEnv import Actions
+from path_planner import PathPlanner
 
 def is_valid_action(action, observation):
     """
@@ -75,11 +76,22 @@ def split_action(action, observation):
     """
     # Core actions that can be taken by the robot
 
-    # FORWARD 0,0,1,1,2,2 speed
-    # BACKWARD 0,0,1,1,2,2 speed
-    # INTAKE speed
-    # TURN degrees speed
-    # OUTTAKE speed
+    # FORWARD;(0,0),(1,1),(2,2);speed
+    # BACKWARD;(0,0),(1,1),(2,2);speed
+    # INTAKE;speed
+    # TURN;degrees;speed
+    # OUTTAKE;speed
 
-    action = None # Placeholder for the valid action
+    path_planner = PathPlanner(15,15,2,70,70)
+
+    actions = []
+    if action is Actions.PICK_UP_NEAREST_BLOCK.value:
+        positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[0.5,0.5], obstacles=[]) # Will update later
+        points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
+
+        actions.append("INTAKE;100")
+        actions.append(f"FORWARD;{points_str};50")
+        actions.append("WAIT;0.5")
+        actions.append("INTAKE;0")
+
     return action # TODO: implement actual splitting logic
