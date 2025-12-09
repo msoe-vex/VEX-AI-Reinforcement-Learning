@@ -76,11 +76,11 @@ def split_action(action, observation):
     """
     # Core actions that can be taken by the robot
 
-    # FORWARD;(0,0),(1,1),(2,2);speed
-    # BACKWARD;(0,0),(1,1),(2,2);speed
+    # FOLLOW;(0,0),(1,1),(2,2);speed
     # INTAKE;speed
     # TURN;degrees;speed
     # OUTTAKE;speed
+    # DRIVE;12;30
 
     path_planner = PathPlanner(15,15,2,70,70)
 
@@ -90,7 +90,7 @@ def split_action(action, observation):
         points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
 
         actions.append("INTAKE;100")
-        actions.append(f"FORWARD;{points_str};50")
+        actions.append(f"FOLLOW;{points_str};50")
         actions.append("WAIT;0.5")
         actions.append("INTAKE;0")
 
