@@ -2,7 +2,7 @@
 /.vscode
 job-script.sh
 /job_results
-/__pycache__
+**/__pycache__
 train_models_*.sh
 path.png
 grid.png
