@@ -79,6 +79,7 @@ def split_action(action, observation):
     # FOLLOW;(0,0),(1,1),(2,2);speed
     # INTAKE;speed
     # TURN;degrees;speed
+    # TURN_TO_POINT;(x,y);speed
     # DRIVE;inches;speed
 
     path_planner = PathPlanner(15,15,2,70,70)

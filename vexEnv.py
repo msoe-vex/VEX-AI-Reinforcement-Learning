@@ -151,24 +151,14 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                     robot_width=ROBOT_WIDTH / FIELD_SIZE_INCHES,
                     buffer_radius=BUFFER_RADIUS_INCHES / FIELD_SIZE_INCHES,
                     max_velocity=80.0 / FIELD_SIZE_INCHES,
-                    max_accel=100.0 / FIELD_SIZE_INCHES
+                    max_accel=100.0 / FIELD_SIZE_INCHES,
+                    field_size_inches=FIELD_SIZE_INCHES,
+                    field_center=(0, 0)
                 )
             except Exception:
                 self.path_planner = None
         else:
             self.path_planner = None
-
-    def inches_to_planner_scale(self, pos_inches):
-        """Convert position from inches (-72 to 72) to path planner scale (0-1)."""
-        if isinstance(pos_inches, np.ndarray):
-            return (pos_inches + 72.0) / FIELD_SIZE_INCHES
-        return (np.array(pos_inches) + 72.0) / FIELD_SIZE_INCHES
-    
-    def planner_scale_to_inches(self, pos_normalized):
-        """Convert position from path planner scale (0-1) to inches (-72 to 72)."""
-        if isinstance(pos_normalized, np.ndarray):
-            return pos_normalized * FIELD_SIZE_INCHES - 72.0
-        return np.array(pos_normalized) * FIELD_SIZE_INCHES - 72.0
 
     @functools.lru_cache(maxsize=None)
     def observation_space(self, agent):
@@ -195,6 +185,9 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         """Reset the environment to initial state."""
         self.agents = self.possible_agents[:]
         self.num_moves = 0
+        
+        # Reset movement history
+        self.agent_movements = {agent: None for agent in self.possible_agents}
         
         # Reset goal manager
         self.goal_manager.reset()
@@ -238,10 +231,14 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             }
 
         # Set held_by for preload blocks (they are at the end of the blocks list)
+        # Also ensure preload block color matches the agent's team
         preload_start_idx = NUM_BLOCKS_FIELD + 24  # Field blocks + loader blocks
         for i, agent in enumerate(self.possible_agents):
             if preload_start_idx + i < len(blocks):
                 blocks[preload_start_idx + i]["held_by"] = agent
+                # Set block color to match agent's team
+                team = get_team_from_agent(agent)
+                blocks[preload_start_idx + i]["team"] = team.value
 
         return {
             "agents": agents_dict,
@@ -306,12 +303,13 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             for agent in self.agents
         ])
         
-        # Check terminations - each agent terminates when THEIR time is up
+        # Check terminations - each agent terminates when THEIR time is up OR they are parked
         terminations = {
-            agent: self.environment_state["agents"][agent]["gameTime"] >= self.mode_config.total_time 
+            agent: (self.environment_state["agents"][agent]["gameTime"] >= self.mode_config.total_time or
+                    self.environment_state["agents"][agent].get("parked", False))
             for agent in self.agents
         }
-        # Only end when ALL agents have reached the time limit
+        # Only end when ALL agents have reached the time limit or are parked
         terminations["__all__"] = all(terminations.values())
         truncations = {agent: False for agent in self.agents}
         truncations["__all__"] = False
@@ -372,6 +370,13 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
     def _execute_action(self, agent, action, agent_state, duration, penalty):
         """Execute a single action for an agent."""
         
+        # Parked robots cannot perform any actions
+        if agent_state.get("parked", False):
+            return duration, penalty
+        
+        # Store initial position for path tracking
+        initial_pos = agent_state["position"].copy()
+        
         # Normalize action to integer value (handle both enum and int)
         if hasattr(action, 'value'):
             action = action.value
@@ -425,6 +430,13 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         elif action == Actions.IDLE.value:
             duration = 0.1
         
+        # After executing action, check if position changed and store movement
+        final_pos = agent_state["position"]
+        if not np.array_equal(initial_pos, final_pos): # Moved
+            self.agent_movements[agent] = (initial_pos.copy(), final_pos.copy())
+        else:
+            self.agent_movements[agent] = None
+        
         return duration, penalty
 
     def _action_pickup_block(self, agent_state, duration, penalty):
@@ -466,8 +478,12 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         if target_block_idx != -1:
             # Move to block
             target_pos = self.environment_state["blocks"][target_block_idx]["position"]
-            dist_travelled = np.linalg.norm(agent_state["position"] - target_pos)
+            movement_vector = target_pos - agent_state["position"]
+            dist_travelled = np.linalg.norm(movement_vector)
             agent_state["position"] = target_pos.copy()
+            # Update orientation to face the direction of movement
+            if dist_travelled > 0:
+                agent_state["orientation"][0] = np.arctan2(movement_vector[1], movement_vector[0])
             duration += dist_travelled / ROBOT_SPEED
             
             # Pickup - track which agent holds this block
@@ -532,41 +548,57 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 robot_pos = np.array([-8.5 - offset * 0.707, -8.5 - offset * 0.707])
                 orientation = np.pi / 4  # Face toward upper-right
         
-        dist = np.linalg.norm(agent_state["position"] - robot_pos)
+        movement_vector = robot_pos - agent_state["position"]
+        dist = np.linalg.norm(movement_vector)
         agent_state["position"] = robot_pos.astype(np.float32)
+        # Face movement direction by default, then override with goal-specific orientation if specified
         agent_state["orientation"] = np.array([orientation], dtype=np.float32)
         duration += dist / ROBOT_SPEED
         
         # Score all blocks held by this agent
         scored_count = 0
+        dropped_count = 0
         target_status = BlockStatus.get_status_for_goal(goal_type)
         agent_name = agent_state.get("agent_name")
+        robot_team = "red" if agent_state.get("team") == Team.RED else "blue"
         
         for block in self.environment_state["blocks"]:
             # Only score blocks held by THIS agent
             if block["status"] == BlockStatus.HELD and block.get("held_by") == agent_name:
-                # Add block to goal queue
-                ejected_id, _ = goal.add_block_from_nearest(
-                    id(block), 
-                    agent_state["position"]
-                )
+                # Check if block color matches robot's team
+                block_team = block.get("team")
                 
-                block["status"] = target_status
-                block["held_by"] = None  # No longer held
-                scored_count += 1
-                
-                # Handle overflow - ejected block goes back to field
-                if ejected_id is not None:
-                    # Find the ejected block and put it on the field
-                    for b in self.environment_state["blocks"]:
-                        if id(b) == ejected_id:
-                            b["status"] = BlockStatus.ON_FIELD
-                            # Place on opposite side of goal
-                            if scoring_side == "left":
-                                b["position"] = goal.right_entry.copy()
-                            else:
-                                b["position"] = goal.left_entry.copy()
-                            break
+                if block_team == robot_team:
+                    # Correct color - score it in the goal
+                    # Add block to goal queue
+                    ejected_id, _ = goal.add_block_from_nearest(
+                        id(block), 
+                        agent_state["position"]
+                    )
+                    
+                    block["status"] = target_status
+                    block["held_by"] = None  # No longer held
+                    scored_count += 1
+                    
+                    # Handle overflow - ejected block goes back to field
+                    if ejected_id is not None:
+                        # Find the ejected block and put it on the field
+                        for b in self.environment_state["blocks"]:
+                            if id(b) == ejected_id:
+                                b["status"] = BlockStatus.ON_FIELD
+                                # Place on opposite side of goal
+                                if scoring_side == "left":
+                                    b["position"] = goal.right_entry.copy()
+                                else:
+                                    b["position"] = goal.left_entry.copy()
+                                break
+                else:
+                    # Wrong color - drop it on the field
+                    block["status"] = BlockStatus.ON_FIELD
+                    block["held_by"] = None
+                    # Drop at robot's current position
+                    block["position"] = agent_state["position"].copy()
+                    dropped_count += 1
         
         # Update all block positions in this goal to shift them along the tube
         self._update_goal_block_positions(goal, target_status)
@@ -595,31 +627,34 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 block["status"] = target_status  # Ensure status is correct
 
     def _action_take_from_loader(self, agent_state, loader_idx, duration, penalty):
-        """Take a block from a specific loader, positioning flush and facing it at exact 45° angle."""
+        """Take a block from a specific loader, positioning perpendicular to the wall."""
         loader_pos = LOADERS[loader_idx].position
         
-        # Set exact 45-degree angles based on loader position (loaders are in corners)
-        # TL (0): loader at (-72, 48), robot faces 45° (toward corner)
-        # TR (1): loader at (72, 48), robot faces 135°
-        # BL (2): loader at (-72, -48), robot faces -45° (315°)
-        # BR (3): loader at (72, -48), robot faces -135° (225°)
+        # Position robot perpendicular to the wall the loader is on
+        # Loaders are in corners - approach perpendicular to the X-axis walls (left/right)
+        # TL (0): loader at (-72, 48) on left wall, robot to the right facing left (180°)
+        # TR (1): loader at (72, 48) on right wall, robot to the left facing right (0°)
+        # BL (2): loader at (-72, -48) on left wall, robot to the right facing left (180°)
+        # BR (3): loader at (72, -48) on right wall, robot to the left facing right (0°)
         offset = ROBOT_LENGTH / 2 + 8.0
         
-        if loader_idx == 0:  # Top Left
-            orientation = np.pi / 4  # 45°
-            robot_pos = loader_pos + np.array([offset * 0.707, -offset * 0.707])
-        elif loader_idx == 1:  # Top Right
-            orientation = 3 * np.pi / 4  # 135°
-            robot_pos = loader_pos + np.array([-offset * 0.707, -offset * 0.707])
-        elif loader_idx == 2:  # Bottom Left
-            orientation = -np.pi / 4  # -45°
-            robot_pos = loader_pos + np.array([offset * 0.707, offset * 0.707])
-        else:  # Bottom Right (3)
-            orientation = -3 * np.pi / 4  # -135°
-            robot_pos = loader_pos + np.array([-offset * 0.707, offset * 0.707])
+        if loader_idx == 0:  # Top Left - on left wall
+            orientation = np.pi  # 180° - facing left toward loader
+            robot_pos = np.array([loader_pos[0] + offset, loader_pos[1]])
+        elif loader_idx == 1:  # Top Right - on right wall
+            orientation = 0.0  # 0° - facing right toward loader
+            robot_pos = np.array([loader_pos[0] - offset, loader_pos[1]])
+        elif loader_idx == 2:  # Bottom Left - on left wall
+            orientation = np.pi  # 180° - facing left toward loader
+            robot_pos = np.array([loader_pos[0] + offset, loader_pos[1]])
+        else:  # Bottom Right (3) - on right wall
+            orientation = 0.0  # 0° - facing right toward loader
+            robot_pos = np.array([loader_pos[0] - offset, loader_pos[1]])
         
-        dist = np.linalg.norm(agent_state["position"] - robot_pos)
+        movement_vector = robot_pos - agent_state["position"]
+        dist = np.linalg.norm(movement_vector)
         agent_state["position"] = robot_pos.astype(np.float32)
+        # Face movement direction by default, then override with loader-specific orientation
         agent_state["orientation"] = np.array([orientation], dtype=np.float32)
         duration += dist / ROBOT_SPEED
         
@@ -670,10 +705,14 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         park_zone = PARK_ZONES[team_str]
         park_center = park_zone.center
         
-        dist = np.linalg.norm(agent_state["position"] - park_center)
+        movement_vector = park_center - agent_state["position"]
+        dist = np.linalg.norm(movement_vector)
         agent_state["position"] = park_center.copy()
         duration += dist / ROBOT_SPEED
         agent_state["parked"] = True
+        
+        # Parked robots face either up or down
+        agent_state["orientation"] = np.array([np.random.choice([np.pi/2, -np.pi/2])], dtype=np.float32)
         
         return duration, penalty
 
@@ -807,13 +846,36 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
         ax.add_patch(rect_center_lower)
         ax.text(-10, -10, 'Lower', fontsize=6, ha='center', va='center', color='purple')
         
-        # Draw Loaders
-        for loader in LOADERS:
+        # Draw Loaders and blocks in them
+        for idx, loader in enumerate(LOADERS):
             circle = patches.Circle(
                 (loader.position[0], loader.position[1]), 
-                6.0, color='orange'
+                6.0, fill=False, edgecolor='orange', linewidth=4
             )
             ax.add_patch(circle)
+            
+            # Draw blocks in this loader (stacked vertically)
+            num_blocks_in_loader = self.environment_state["loaders"][idx]
+            if num_blocks_in_loader > 0:
+                # Stack blocks vertically inside the loader
+                # Start from bottom and work up so top block is drawn last
+                block_spacing = 1.0  # Vertical spacing between blocks
+                start_y = loader.position[1] - (num_blocks_in_loader - 1) * block_spacing / 2
+                
+                for block_idx in range(num_blocks_in_loader):
+                    block_y = start_y + block_idx * block_spacing
+                    # Alternate colors for visual distinction
+                    block_color = 'red' if block_idx % 2 == 0 else 'blue'
+                    hexagon = patches.RegularPolygon(
+                        (loader.position[0], block_y), 
+                        numVertices=6, 
+                        radius=1.8,  # Slightly smaller to fit in loader
+                        orientation=0,
+                        facecolor=block_color, 
+                        edgecolor='black',
+                        linewidth=1
+                    )
+                    ax.add_patch(hexagon)
         
         # Draw Permanent Obstacles
         for obs in PERMANENT_OBSTACLES:
@@ -851,6 +913,38 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
                 )
                 ax.add_patch(hexagon)
 
+        # Draw agent paths (dotted lines showing trajectory)
+        if self.path_planner is not None:
+            for agent in self.agents:
+                # Only draw if the agent has moved
+                movement = self.agent_movements.get(agent)
+                if movement is None:
+                    continue
+                
+                start_pos, end_pos = movement
+                agent_state = self.environment_state["agents"][agent]
+                team = agent_state.get("team", Team.RED)
+                color = 'red' if team == Team.RED else 'blue'
+                
+                # Compute and draw last path segment
+                try:                    
+                    # Solve for path (pass everything in inches, get back positions in inches)
+                    positions_inches, _, _ = self.path_planner.Solve(
+                        start_point=start_pos,
+                        end_point=end_pos,
+                        obstacles=PERMANENT_OBSTACLES
+                    )
+                    
+                    # Plot path directly (already in inches)
+                    ax.plot(positions_inches[:, 0], positions_inches[:, 1], 
+                            linestyle=':', linewidth=1.5, color=color, alpha=0.4)
+                except Exception as e:
+                    # If path planning fails, draw direct line
+                    ax.plot([start_pos[0], end_pos[0]], [start_pos[1], end_pos[1]], 
+                            linestyle=':', linewidth=1.5, color=color, alpha=0.4)
+                    print(f"Path planning failed for agent {agent} from {start_pos} to {end_pos}")
+                    print(e)
+        
         # Draw Robots and build info text
         info_y = 0.95
         ax_info.text(0.5, info_y, "Agent Actions", fontsize=12, fontweight='bold', 
@@ -864,6 +958,13 @@ class Push_Back_Multi_Agent_Env(MultiAgentEnv, ParallelEnv):
             
             x, y = st["position"][0], st["position"][1]
             theta = st["orientation"][0]
+
+            # Draw buffer circle around robot
+            circle = patches.Circle(
+                (x, y), BUFFER_RADIUS_INCHES + np.sqrt(ROBOT_LENGTH**2 + ROBOT_WIDTH**2)/2, 
+                fill=False, edgecolor='black', linestyle=':', linewidth=2
+            )
+            ax.add_patch(circle)
             
             # Draw FOV wedge (light yellow, transparent)
             fov_radius = 72  # How far the FOV extends

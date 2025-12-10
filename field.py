@@ -183,11 +183,17 @@ PARK_ZONES = {
 
 # Permanent obstacles (goal structures, etc.)
 PERMANENT_OBSTACLES: List[Obstacle] = [
-    Obstacle(0.0, 0.0, 18.0, False),        # Center Goal Structure
-    Obstacle(-24.0, 48.0, 6.0, False),     # Long Goal Top - Left End
-    Obstacle(24.0, 48.0, 6.0, False),      # Long Goal Top - Right End
-    Obstacle(-24.0, -48.0, 6.0, False),    # Long Goal Bottom - Left End
-    Obstacle(24.0, -48.0, 6.0, False),     # Long Goal Bottom - Right End
+    Obstacle(0.0, 0.0, 11.3, False),       # Center Goal Structure
+    Obstacle(-21.0, 48.0, 3.0, False),     # Long Goal Top - Left End
+    Obstacle(0.0, 48.0, 3.0, False),       # Long Goal Top - Center
+    Obstacle(21.0, 48.0, 3.0, False),      # Long Goal Top - Right End
+    Obstacle(-21.0, -48.0, 3.0, False),    # Long Goal Bottom - Left End
+    Obstacle(0.0, -48.0, 3.0, False),      # Long Goal Bottom - Center
+    Obstacle(21.0, -48.0, 3.0, False),     # Long Goal Bottom - Right End
+    Obstacle(58.0, -10.0, 0.0, False),     # Blue Park Zone Bottom Corner
+    Obstacle(58.0, 10.0, 0.0, False),      # Blue Park Zone Top Corner
+    Obstacle(-58.0, -10.0, 0.0, False),    # Red Park Zone Bottom Corner
+    Obstacle(-58.0, 10.0, 0.0, False),     # Red Park Zone Top Corner
 ]
 
 
