@@ -1,6 +1,6 @@
 # VEX AI Reinforcement Learning
 
-This project involves training and running reinforcement learning agents in a custom VEX environment using Gymnasium/PettingZoo and RLlib.
+This project involves training and running reinforcement learning agents in a custom VEX environment using Gymnasium/PettingZoo and RLlib. It simulates the VEX High Stakes game (2024-2025) variations: VEX U Competition, VEX U Skills, VEX AI Competition, and VEX AI Skills.
 
 ## Setup
 
@@ -8,87 +8,60 @@ Use Python 3.12
 
 ```bash
 python -m venv myenv
-
 myenv\Scripts\activate
-
 pip install -r requirements.txt
 ```
+
+## Features
+
+- **Multi-Game Support**: Integrated support for all 4 game variants:
+  - `vexu_comp`: VEX U Competition (Team-based, 24" & 15" robots)
+  - `vexu_skills`: VEX U Skills (Cooperative, 2 Red robots)
+  - `vexai_comp`: VEX AI Competition (Fully autonomous, special scoring rules)
+  - `vexai_skills`: VEX AI Skills (Cooperative, Red & Blue robots working for Red score)
+- **Explicit Field Setup**: Accurate block coordinates, loader sequences, and robot starting positions derived from official setup notes.
+- **Advanced Randomization**: Full-field block scatter (-70" to +70") for robust training.
+- **Standardized Scoring**: Unified `Dict[str, int]` scoring interface for all modes.
 
 ## General Workflow
 
 1. **Test the Environment**
 
-   Run the environment to ensure everything is working and to generate a random simulation GIF:
+   Run the environment to check generation and physics. You can select the game mode via CLI:
 
    ```bash
-   python vexEnv.py
+   # Default: vex_ai_competition
+   python vexEnv.py --mode vex_ai_competition --steps 100
+   
+   # Other modes: vex_u_competition, vex_u_skills, vex_ai_skills
+   python vexEnv.py --mode vexu_skills
    ```
-   - Runs the environment with random actions, renders each step, and creates a GIF in the `vexEnv/steps` directory.
+   - Runs a random policy simulation.
+   - Saves GIFs to `vexEnv/steps`.
 
 2. **Train the Model**
 
-   Train a new agent or continue training from a checkpoint:
+   Train a PPO agent using RLlib. The script automatically compiles the best checkpoint to TorchScript after training.
 
    ```bash
-   python vexEnvTraining.py [OPTIONS]
-   ```
-   - Trains a PPO agent using RLlib and, after training, automatically compiles the best checkpoint to a TorchScript model.
-
-   **Example:**
-   ```bash
-   python vexEnvTraining.py --num-iters 2 --learning-rate 0.0003 --entropy 0.02
+   python vexEnvTraining.py --num-iters 100 --learning-rate 0.0003 --algorithm PPO
    ```
 
-3. **Compile a Checkpoint to TorchScript (if needed)**
+3. **Compile a Checkpoint (Manual)**
 
-   The training script will automatically compile the best checkpoint. If you need to recompile (e.g., if training ends early or you want to compile a different checkpoint), run:
+   If you need to recompile a specific checkpoint:
 
    ```bash
-   python vexModelCompile.py --checkpoint-path /path/to/checkpoint_000005 --output-path /path/to/output
+   python vexModelCompile.py --checkpoint-path /path/to/checkpoint_000005
    ```
-   - Loads a PPO checkpoint and saves the policy as a TorchScript `.pt` file.
 
-4. **Run a Simulation with a Trained Model**
+4. **Run a Trained Model**
 
-   To run a simulation using a compiled TorchScript model and generate a GIF:
+   Visualize a trained policy:
 
    ```bash
-   python vexEnvRun.py --model-path /path/to/shared_policy.pt
+   python vexEnvRun.py --model-path /path/to/policy.pt
    ```
-   - Loads a TorchScript model and runs a simulation in the environment, generating a GIF in the `vexEnvRun/steps` directory.
-
----
-
-### (Optional) Submit a Training Job with SLURM
-
-   To submit a training job to SLURM:
-
-   ```bash
-   sbatch submitTrainingJob.sh [OPTIONS]
-   ```
-   - Submits a job to SLURM to run `vexEnvTraining.py` with the specified options.
-
-   **Example:**
-   ```bash
-   sbatch submitTrainingJob.sh --num-iters 1000 --learning-rate 0.0001 --entropy 0.005
-   ```
-
-   To continue training from a checkpoint:
-   ```bash
-   sbatch submitTrainingJob.sh --num-iters 500 --checkpoint-path /path/to/job_results/job_XXXX/checkpoint_YYYY
-   ```
-
-### SLURM Job Management
-
-View running jobs:
-```bash
-squeue -u $USER
-```
-
-Cancel a job:
-```bash
-scancel <JOB_ID>
-```
 
 ---
 
@@ -98,13 +71,11 @@ scancel <JOB_ID>
 
 Environment definition and random simulation runner.
 
-- **No command-line arguments.**  
-  Edit the file directly to change:
-  - `render_mode`: Rendering mode (`"all"`, `"human"`, or `"image"`)
-  - `output_directory`: Where to save images/GIFs
-  - `randomize`: Whether to randomize environment on reset
-
----
+| Argument         | Type    | Default              | Description                                      |
+|-------------------|---------|----------------------|--------------------------------------------------|
+| `--mode`         | str     | `vex_ai_competition` | Game variant to run.                             |
+| `--steps`        | int     | 100                  | Number of simulation steps.                      |
+| `--render_mode`  | str     | `rgb_array`          | Rendering mode.                                  |
 
 ### vexEnvTraining.py
 
@@ -113,33 +84,20 @@ RLlib training script.
 | Argument           | Type    | Default   | Description                                                                 |
 |---------------------|---------|-----------|-----------------------------------------------------------------------------|
 | `--learning-rate`   | float   | 0.0005    | Learning rate for optimizer                                                 |
-| `--discount-factor` | float   | 0.99      | Discount factor gamma for future rewards                                    |
-| `--entropy`         | float   | 0.01      | Entropy coefficient for exploration                                         |
+| `--discount-factor` | float   | 0.99      | Discount factor gamma                                                       |
+| `--entropy`         | float   | 0.01      | Entropy coefficient                                                         |
 | `--num-iters`       | int     | 1         | Number of training iterations                                               |
-| `--cpus-per-task`   | int     | 1         | Number of CPUs to use                                                       |
-| `--job-id`          | str     | ""        | SLURM job ID for logging/output directory                                   |
-| `--model-path`      | str     | ""        | Path to save/load the model (not used for RLlib, use checkpoint-path)       |
-| `--randomize`       | bool    | True      | Enable or disable randomization of environment                              |
-| `--num-layers`      | int     | 2         | Number of hidden layers in the policy network                               |
-| `--num-nodes`       | int     | 64        | Number of nodes per hidden layer                                            |
-| `--num-gpus`        | int     | 0         | Number of GPUs to use                                                       |
-| `--partition`       | str     | "teaching"| SLURM partition to use                                                      |
-| `--algorithm`       | str     | "PPO"     | RLlib algorithm to use                                                      |
-| `--checkpoint-path` | str     | ""        | Path to checkpoint directory to continue training                           |
-| `--verbose`         | int     | 0         | Verbosity level (0=silent, 1=default, 2=verbose)                            |
-
----
+| `--randomize`       | bool    | True      | Enable full-field block randomization                                       |
+| `--model-path`      | str     | ""        | Path to load a pre-trained model (for transfer learning)                    |
 
 ### vexModelCompile.py
 
-Compile RLlib checkpoint to TorchScript.
+Compile RLlib checkpont to TorchScript.
 
 | Argument           | Type    | Required | Description                                                                 |
 |---------------------|---------|----------|-----------------------------------------------------------------------------|
-| `--checkpoint-path` | str     | Yes      | Path to the RLlib checkpoint directory (e.g., `/path/to/checkpoint_000005`) |
-| `--output-path`     | str     | No       | Directory to save the TorchScript model(s). If not specified, saves to checkpoint directory |
-
----
+| `--checkpoint-path` | str     | Yes      | Path to the RLlib checkpoint directory                                      |
+| `--output-path`     | str     | No       | Output directory for `.pt` file                                             |
 
 ### vexEnvRun.py
 
@@ -151,21 +109,15 @@ Run simulation using a TorchScript model.
 
 ---
 
-### submitTrainingJob.sh
+### SLURM Submission (submitTrainingJob.sh)
 
-SLURM job script to run on ROSIE.
+Wrapper script for submitting `vexEnvTraining.py` jobs to SLURM (e.g., on ROSIE). Arguments passed to this script are forwarded to the python script.
 
-All arguments are passed as command-line arguments and forwarded to `vexEnvTraining.py`:
+```bash
+sbatch submitTrainingJob.sh --num-iters 1000 --learning-rate 0.0001
+```
 
-| Argument           | Type    | Default   | Description                                                                 |
-|---------------------|---------|-----------|-----------------------------------------------------------------------------|
-| `--checkpoint-path` | str     | ""        | Path to checkpoint directory to continue training                           |
-| `--entropy`         | float   | 0.01      | Entropy coefficient for exploration                                         |
-| `--learning-rate`   | float   | 0.0005    | Learning rate                                                               |
-| `--discount-factor` | float   | 0.99      | Discount factor gamma                                                       |
-| `--randomize`       | bool    | True      | Enable/disable randomization                                                |
-| `--num-layers`      | int     | 2         | Number of hidden layers                                                     |
-| `--num-nodes`       | int     | 64        | Number of nodes per layer                                                   |
-| `--num-iters`       | int     | 10        | Number of training iterations                                               |
-| `--algorithm`       | str     | "PPO"     | RLlib algorithm                                                             |
-| `--verbose`         | int     | 0         | Verbosity level                                                             |
+### SLURM Job Management
+
+View jobs: `squeue -u $USER`
+Cancel job: `scancel <JOB_ID>`
