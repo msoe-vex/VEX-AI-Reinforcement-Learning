@@ -193,10 +193,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             # Store initial position for path tracking
             initial_pos = agent_state["position"].copy()
             
-            # Get team scores before action
-            agent_team = self.game.get_team_for_agent(agent)
-            opposing_team = "blue" if agent_team == "red" else "red"
-            initial_team_scores = self.game.compute_team_scores(self.environment_state)
+            # Get scores before action
+            initial_scores = self.game.compute_score(self.environment_state)
             
             # Execute action through game
             action_int = int(action.value if hasattr(action, 'value') else action)
@@ -207,10 +205,24 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             agent_state["gameTime"] += duration
             
             # Calculate reward
-            new_team_scores = self.game.compute_team_scores(self.environment_state)
-            own_delta = new_team_scores[agent_team] - initial_team_scores[agent_team]
-            opp_delta = new_team_scores[opposing_team] - initial_team_scores[opposing_team]
-            reward = own_delta - opp_delta - penalty
+            new_scores = self.game.compute_score(self.environment_state)
+            
+            # Unified Scoring Logic (Always Dict)
+            # Calculate reward based on team improvement
+            # For competitive: (My Delta) - (Opponent Delta)
+            # For skills: (My Delta) - (Opponent Delta [which is 0])
+            try:
+                agent_team = self.game.get_team_for_agent(agent)
+                opposing_team = "blue" if agent_team == "red" else "red"
+                
+                own_delta = new_scores.get(agent_team, 0) - initial_scores.get(agent_team, 0)
+                opp_delta = new_scores.get(opposing_team, 0) - initial_scores.get(opposing_team, 0)
+                
+                # Reward is net improvement over opponent
+                reward = own_delta - opp_delta - penalty
+            except (KeyError, AttributeError):
+                # Fallback if team structure unclear
+                reward = -penalty
             
             rewards[agent] = reward
             
@@ -221,7 +233,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             else:
                 self.agent_movements[agent] = None
         
-        # Update total score
+        # Update total score (stored as property)
         self.score = self.game.compute_score(self.environment_state)
         
         observations = {
@@ -408,7 +420,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         ax_info.axhline(y=info_y, xmin=0.05, xmax=0.95, color='gray', linewidth=0.5)
         info_y -= 0.05
         
-        team_scores = self.game.compute_team_scores(self.environment_state)
+        team_scores = self.game.compute_score(self.environment_state)
         ax_info.text(0.05, info_y, "Scores:", fontsize=10, fontweight='bold', va='top')
         info_y -= 0.04
         ax_info.text(0.1, info_y, f"Red: {team_scores.get('red', 0)}",

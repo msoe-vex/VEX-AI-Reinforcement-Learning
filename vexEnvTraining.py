@@ -13,7 +13,7 @@ import os
 from vex_core import VexMultiAgentEnv
 from pushback import VexUSkillsGame
 
-from vexEnvCompile import compile_checkpoint_to_torchscript
+from vexModelCompile import compile_checkpoint_to_torchscript
 import sys
 
 

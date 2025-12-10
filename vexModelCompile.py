@@ -8,7 +8,7 @@ import warnings
 
 # Import from new modular architecture
 from vex_core import VexMultiAgentEnv
-from pushback import VexUSkillsGame
+from pushback import VexUSkillsGame, PushBackGame
 
 
 def env_creator(config=None):
@@ -69,15 +69,11 @@ def compile_checkpoint_to_torchscript(checkpoint_path: str, output_path: str = N
             ray.shutdown()
             return
         
-        # Create a temporary environment to get the observation space shape for tracing.
-        temp_env = env_creator(None)
-        # Use first agent's observation space for shared policies
-        agent_for_obs = policy_id if policy_id in temp_env.possible_agents else temp_env.possible_agents[0]
-        obs_space = temp_env.observation_space(agent_for_obs)
-        temp_env.close()
+        # Use static method to get observation shape (assuming 2 agents for VEX U)
+        obs_shape = PushBackGame.get_observation_space_shape(2)
 
         # Create a dummy observation tensor
-        dummy_obs = torch.randn(1, *obs_space.shape).clone().detach()
+        dummy_obs = torch.randn(1, *obs_shape).clone().detach()
 
         # The new RLModule uses a dictionary for input and `forward_inference` for output.
         class TracedModel(torch.nn.Module):

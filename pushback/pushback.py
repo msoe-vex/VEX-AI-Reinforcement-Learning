@@ -22,6 +22,11 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from vex_core.base_game import VexGame
+from vex_core.base_game import VexGame
+from path_planner import PathPlanner
+
+NUM_BLOCKS_FIELD = 36
+NUM_BLOCKS_LOADER = 24
 
 
 # =============================================================================
@@ -393,19 +398,7 @@ class GoalManager:
 # Scoring Configuration
 # =============================================================================
 
-@dataclass
-class ScoringConfig:
-    """Scoring configuration for a game variant."""
-    total_time: float
-    block_points: int
-    control_zone_long: int
-    control_zone_center_upper: int
-    control_zone_center_lower: int
-    park_single: int
-    park_double: int
-    cleared_loader: int
-    cleared_park_zone: int
-    is_skills: bool = False
+
 
 
 # =============================================================================
@@ -424,19 +417,14 @@ class PushBackGame(VexGame):
     - _get_loader_counts() -> List of initial loader counts
     """
     
+    
     def __init__(self):
         self.goal_manager = GoalManager()
-        self._config: Optional[ScoringConfig] = None
         self._agents: Optional[List[str]] = None
     
     # =========================================================================
     # Abstract methods for variants
     # =========================================================================
-    
-    @abstractmethod
-    def _get_scoring_config(self) -> ScoringConfig:
-        """Get scoring configuration for this variant."""
-        pass
     
     @abstractmethod
     def _get_agents_config(self) -> List[str]:
@@ -474,10 +462,10 @@ class PushBackGame(VexGame):
         return FIELD_SIZE_INCHES
     
     @property
+    @abstractmethod
     def total_time(self) -> float:
-        if self._config is None:
-            self._config = self._get_scoring_config()
-        return self._config.total_time
+        """Total game time in seconds."""
+        pass
     
     @property
     def possible_agents(self) -> List[str]:
@@ -496,7 +484,6 @@ class PushBackGame(VexGame):
     def reset(self) -> None:
         """Reset game state."""
         self.goal_manager.reset()
-        self._config = None
         self._agents = None
     
     def get_initial_state(
@@ -505,7 +492,6 @@ class PushBackGame(VexGame):
         seed: Optional[int] = None
     ) -> Dict:
         """Create initial game state."""
-        config = self._get_scoring_config()
         robot_configs = self._get_robot_configs()
         
         # Initialize agents
@@ -558,14 +544,12 @@ class PushBackGame(VexGame):
         ]
         
         total_blocks = len(state["blocks"])
-        config = self._get_scoring_config()
-        
         obs = np.concatenate([
             agent_state["position"],
             agent_state["orientation"],
             [float(agent_state["held_blocks"])],
             [1.0 if agent_state["parked"] else 0.0],
-            [float(config.total_time - agent_state["gameTime"])],
+            [float(self.total_time - agent_state["gameTime"])],
             np.array(block_data, dtype=np.float32),
             np.array(state["loaders"], dtype=np.float32),
             np.array(goal_data, dtype=np.float32),
@@ -575,19 +559,34 @@ class PushBackGame(VexGame):
     
     def observation_space(self, agent: str) -> spaces.Space:
         """Get observation space for an agent."""
-        # Calculate observation size based on expected blocks
-        # This is approximate - will be refined when blocks are created
-        total_blocks = NUM_BLOCKS_FIELD + NUM_BLOCKS_LOADER + len(self.possible_agents)
-        obs_size = 6 + (total_blocks * 3) + 4 + 4  # agent state + blocks + loaders + goals
+        shape = self.get_observation_space_shape(len(self.possible_agents))
         
-        low = np.full((obs_size,), -float('inf'), dtype=np.float32)
-        high = np.full((obs_size,), float('inf'), dtype=np.float32)
+        low = np.full(shape, -float('inf'), dtype=np.float32)
+        high = np.full(shape, float('inf'), dtype=np.float32)
         
         return spaces.Box(low=low, high=high, dtype=np.float32)
     
+    @staticmethod
+    def get_observation_space_shape(num_agents: int) -> Tuple[int]:
+        """Get the shape of the observation space."""
+        # Calculate observation size based on expected blocks
+        total_blocks = NUM_BLOCKS_FIELD + NUM_BLOCKS_LOADER + num_agents
+        obs_size = 6 + (total_blocks * 3) + 4 + 4  # agent state + blocks + loaders + goals
+        return (obs_size,)
+    
     def action_space(self, agent: str) -> spaces.Space:
         """Get action space for an agent."""
-        return spaces.Discrete(len(Actions))
+        return spaces.Discrete(self.num_actions)
+
+    @staticmethod
+    def get_action_space_shape() -> Tuple[int]:
+        """Get the shape of the action space (discrete)."""
+        return ()
+    
+    @staticmethod
+    def get_num_actions() -> int:
+        """Get number of available actions."""
+        return len(Actions)
     
     # =========================================================================
     # VexGame Game Logic
@@ -849,7 +848,8 @@ class PushBackGame(VexGame):
             agent_state["held_blocks"] += 1
             duration += 0.5
             
-            for block in state["blocks"]:
+            # Take from Bottom (Last added block for this loader)
+            for block in reversed(state["blocks"]):
                 if block["status"] == BlockStatus.IN_LOADER_TL + loader_idx:
                     block["status"] = BlockStatus.HELD
                     block["held_by"] = agent_state["agent_name"]
@@ -871,7 +871,8 @@ class PushBackGame(VexGame):
         
         if closest_loader != -1 and state["loaders"][closest_loader] > 0:
             loader_status = BlockStatus.IN_LOADER_TL + closest_loader
-            for block in state["blocks"]:
+            # Clear from Bottom (Last added)
+            for block in reversed(state["blocks"]):
                 if block["status"] == loader_status:
                     block["status"] = BlockStatus.ON_FIELD
                     block["position"] = agent_state["position"] + np.random.uniform(-6.0, 6.0, 2).astype(np.float32)
@@ -910,53 +911,13 @@ class PushBackGame(VexGame):
         
         return duration, penalty
     
-    def compute_score(self, state: Dict) -> int:
-        """Compute total score."""
-        config = self._get_scoring_config()
-        score = 0
-        
-        # Blocks in goals
-        for goal_type, goal in self.goal_manager.goals.items():
-            score += goal.count * config.block_points
-        
-        # Control zones
-        counts = self.goal_manager.get_goal_counts()
-        for goal_type in [GoalType.LONG_1, GoalType.LONG_2]:
-            if counts[goal_type] >= GOALS[goal_type].control_threshold:
-                score += config.control_zone_long
-        
-        if counts[GoalType.CENTER_UPPER] >= GOALS[GoalType.CENTER_UPPER].control_threshold:
-            score += config.control_zone_center_upper
-        if counts[GoalType.CENTER_LOWER] >= GOALS[GoalType.CENTER_LOWER].control_threshold:
-            score += config.control_zone_center_lower
-        
-        # Cleared loaders
-        cleared = sum(1 for count in state["loaders"] if count == 0)
-        score += cleared * config.cleared_loader
-        
-        # Parked robots
-        parked_count = sum(1 for a in state["agents"].values() if a.get("parked", False))
-        if config.is_skills:
-            score += parked_count * config.park_single
-        else:
-            if parked_count >= 2:
-                score += config.park_double
-            elif parked_count == 1:
-                score += config.park_single
-        
-        return score
-    
-    def compute_team_scores(self, state: Dict) -> Dict[str, int]:
-        """Compute scores per team."""
-        config = self._get_scoring_config()
-        scores = {"red": 0, "blue": 0}
-        
-        for block in state["blocks"]:
-            if BlockStatus.IN_LONG_1 <= block["status"] <= BlockStatus.IN_CENTER_LOWER:
-                team = block.get("team", "red")
-                scores[team] += config.block_points
-        
-        return scores
+    @abstractmethod
+    def compute_score(self, state: Dict) -> Dict[str, int]:
+        """Compute the score for the current state.
+        Returns:
+            Dict[str, int]: Team scores
+        """
+        pass
     
     def get_team_for_agent(self, agent: str) -> str:
         """Get team for an agent."""
@@ -975,10 +936,9 @@ class PushBackGame(VexGame):
         - They have parked
         """
         agent_state = state["agents"][agent]
-        config = self._get_scoring_config()
         
         # Time limit exceeded
-        if agent_state["gameTime"] >= config.total_time:
+        if agent_state["gameTime"] >= self.total_time:
             return True
         
         # Parked (Push Back specific)
@@ -1085,13 +1045,40 @@ class PushBackGame(VexGame):
             )
             ax.add_patch(circle)
             
-            num_blocks = state["loaders"][idx]
+            # Find actual blocks in this loader
+            loader_status = BlockStatus.IN_LOADER_TL + idx
+            loader_blocks = [b for b in state["blocks"] if b["status"] == loader_status]
+            
+            # Blocks are stored Top-to-Bottom in list (index 0 is Top)
+            # We want to render them in a stack.
+            # Let's say we render Top at positive Y offset (visually "up")?
+            # Or just splayed out.
+            
+            num_blocks = len(loader_blocks)
             if num_blocks > 0:
-                block_spacing = 1.0
-                start_y = loader.position[1] - (num_blocks - 1) * block_spacing / 2
-                for block_idx in range(num_blocks):
-                    block_y = start_y + block_idx * block_spacing
-                    block_color = 'red' if block_idx % 2 == 0 else 'blue'
+                block_spacing = 2.5 # Splay them out to be visible
+                # Start centered
+                
+                # Render Bottom-to-Top visually so they stack?
+                # Or just list them.
+                # Let's render index 0 (Top) at the "top" (Highest Y)
+                
+                for i, block in enumerate(loader_blocks):
+                    # Visual offset: Top block (i=0) should be highest/most visible?
+                    # Let's splay them along Y axis.
+                    # Top block at offset +Y. Bottom at -Y.
+                    # num_blocks=6. i=0 (Top).
+                    # y_offset = (num_blocks-1-i) * spacing - (height/2)
+                    
+                    # Simpler: Just Stack them. Center is loader pos.
+                    # spread from y = pos + 3 to pos - 3
+                    
+                    # Reverse index for Y position so First(Top) is Highest
+                    y_offset = ((num_blocks - 1) * 0.5 - i) * block_spacing
+                    
+                    block_y = loader.position[1] + y_offset
+                    block_color = block.get("team", "grey")
+                    
                     hexagon = patches.RegularPolygon(
                         (loader.position[0], block_y),
                         numVertices=6, radius=1.8, orientation=0,
@@ -1142,3 +1129,104 @@ class PushBackGame(VexGame):
                 facecolor='yellow', alpha=0.15, edgecolor='yellow', linewidth=0.5
             )
             ax.add_patch(fov_wedge)
+
+    @staticmethod
+    def split_action(action: int, observation: np.ndarray) -> List[str]:
+        """
+        Split a high-level action into low-level robot instructions.
+        """
+        # Initialize path planner (can be optimized to be a class member)
+        path_planner = PathPlanner(15, 15, 2, 70, 70)
+        
+        actions = []
+        
+        if action == Actions.PICK_UP_NEAREST_BLOCK.value:
+            positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[0.5,0.5], obstacles=[])
+            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
+
+            actions.append("INTAKE;100")
+            actions.append(f"FOLLOW;{points_str};50")
+            actions.append("WAIT;0.5")
+            actions.append("INTAKE;0")
+
+        elif action == Actions.SCORE_IN_LONG_GOAL_1.value:
+            positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[3.0, 1.0], obstacles=[])
+            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
+
+            actions.append(f"FOLLOW;{points_str};60")
+            actions.append("TURN;30;40")
+            actions.append("DRIVE;6;40")
+            actions.append("INTAKE;0")
+
+        elif action == Actions.SCORE_IN_LONG_GOAL_2.value:
+            positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[-3.0, 1.0], obstacles=[])
+            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
+
+            actions.append(f"FOLLOW;{points_str};60")
+            actions.append("TURN;-30;40")
+            actions.append("DRIVE;6;40")
+            actions.append("INTAKE;0")
+
+        elif action == Actions.SCORE_IN_CENTER_UPPER.value:
+            positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[1.5, 1.5], obstacles=[])
+            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
+
+            actions.append(f"FOLLOW;{points_str};55")
+            actions.append("TURN;45;40")
+            actions.append("DRIVE;4;40")
+            actions.append("INTAKE;0")
+
+        elif action == Actions.SCORE_IN_CENTER_LOWER.value:
+            positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[-1.5, 1.5], obstacles=[])
+            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
+
+            actions.append(f"FOLLOW;{points_str};55")
+            actions.append("TURN;-45;40")
+            actions.append("DRIVE;4;40")
+            actions.append("INTAKE;0")
+
+        elif action == Actions.TAKE_FROM_LOADER_TL.value:
+            positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[-3.0, 4.0], obstacles=[])
+            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
+
+            actions.append(f"FOLLOW;{points_str};50")
+            actions.append("TURN;90;40")
+            actions.append("DRIVE;1;30")
+            actions.append("INTAKE;100")
+            actions.append("WAIT;0.5")
+            actions.append("INTAKE;0")
+
+        elif action == Actions.TAKE_FROM_LOADER_TR.value:
+            positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[3.0, 4.0], obstacles=[])
+            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
+
+            actions.append(f"FOLLOW;{points_str};50")
+            actions.append("TURN;-90;40")
+            actions.append("DRIVE;1;30")
+            actions.append("INTAKE;100")
+            actions.append("WAIT;0.5")
+            actions.append("INTAKE;0")
+
+        elif action == Actions.TAKE_FROM_LOADER_BL.value:
+            positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[-3.0, -4.0], obstacles=[])
+            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
+
+            actions.append(f"FOLLOW;{points_str};50")
+            actions.append("TURN;90;40")
+            actions.append("DRIVE;1;30")
+            actions.append("INTAKE;100")
+            actions.append("WAIT;0.5")
+            actions.append("INTAKE;0")
+
+        elif action == Actions.TAKE_FROM_LOADER_BR.value:
+            positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[3.0, -4.0], obstacles=[])
+            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
+
+            actions.append(f"FOLLOW;{points_str};50")
+            actions.append("TURN;-90;40")
+            actions.append("DRIVE;1;30")
+            actions.append("INTAKE;100")
+            actions.append("WAIT;0.5")
+            actions.append("INTAKE;0")
+
+        return actions

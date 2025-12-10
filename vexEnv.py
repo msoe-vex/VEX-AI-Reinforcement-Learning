@@ -35,14 +35,14 @@ def main():
     parser.add_argument(
         "--mode", 
         type=str, 
-        default="vex_u_skills",
+        default="vex_ai_competition",
         choices=list(GAME_MODES.keys()),
         help="Competition mode to test"
     )
     parser.add_argument(
         "--steps",
         type=int,
-        default=20,
+        default=100,
         help="Number of steps to run"
     )
     parser.add_argument(
@@ -74,7 +74,7 @@ def main():
         game=game,
         render_mode=render_mode,
         output_directory=args.output_dir,
-        randomize=True,
+        randomize=False,
     )
     
     # Reset environment

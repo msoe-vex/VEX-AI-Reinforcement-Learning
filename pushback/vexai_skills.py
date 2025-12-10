@@ -11,37 +11,99 @@ Rules per VAIRS:
 from typing import Dict, List, Tuple, Optional
 import numpy as np
 
-from .pushback import PushBackGame, ScoringConfig, BlockStatus, LOADERS, NUM_BLOCKS_FIELD
-
+from .pushback import PushBackGame, BlockStatus, LOADERS, NUM_BLOCKS_FIELD, GoalType, GOALS
 
 class VexAISkillsGame(PushBackGame):
     """VEX AI Skills game variant."""
     
-    def _get_scoring_config(self) -> ScoringConfig:
-        return ScoringConfig(
-            total_time=60.0,
-            block_points=3,  # Majority color blocks
-            control_zone_long=0,  # Not used in AI Skills (VAIRS7e)
-            control_zone_center_upper=0,
-            control_zone_center_lower=0,
-            park_single=5,
-            park_double=5,
-            cleared_loader=0,  # Different system - loader matching
-            cleared_park_zone=0,
-            is_skills=True,
-        )
+    @property
+    def total_time(self) -> float:
+        return 60.0
+    
+    def compute_score(self, state: Dict) -> Dict[str, int]:
+        """
+        Compute score for VEX AI Skills.
+        Returns:
+            Dict[str, int]: {"red": score}
+        """
+        
+        """
+        - Loader Matching: 
+            - 3 pts per matching block (Red in Left, Blue in Right).
+            - 5 pts bonus if loader full (6) of matching color.
+        - Parked Robot: 5 pts.
+        """
+        score = 0
+        
+        # Scoring values
+        BLOCK_POINTS = 3
+        LOADER_BLOCK_POINTS = 3
+        LOADER_FULL_BONUS = 5
+        PARK_ROBOT = 5
+        
+        # 1. Goal Majority
+        goal_counts = {
+            gt: {"red": 0, "blue": 0} 
+            for gt in [GoalType.LONG_1, GoalType.LONG_2, GoalType.CENTER_UPPER, GoalType.CENTER_LOWER]
+        }
+        
+        for block in state["blocks"]:
+            goal_type = BlockStatus.get_goal_type(block["status"])
+            if goal_type:
+                team = block.get("team", "red")
+                goal_counts[goal_type][team] += 1
+        
+        for gt in goal_counts:
+            r = goal_counts[gt]["red"]
+            b = goal_counts[gt]["blue"]
+            if r > b:
+                score += r * BLOCK_POINTS
+            elif b > r:
+                score += b * BLOCK_POINTS
+            # Tie = 0 points
+            
+        # 2. Loader Matching
+        # Loaders 0, 2 are Left (Red). Loaders 1, 3 are Right (Blue).
+        loader_stats = {0: {"red": 0, "blue": 0}, 
+                        1: {"red": 0, "blue": 0}, 
+                        2: {"red": 0, "blue": 0}, 
+                        3: {"red": 0, "blue": 0}}
+        
+        for block in state["blocks"]:
+            if BlockStatus.IN_LOADER_TL <= block["status"] <= BlockStatus.IN_LOADER_BR:
+                loader_idx = block["status"] - BlockStatus.IN_LOADER_TL
+                team = block.get("team", "red")
+                loader_stats[loader_idx][team] += 1
+        
+        # Red Loaders (0, 2) check Red blocks
+        for idx in [0, 2]:
+            count = loader_stats[idx]["red"]
+            score += count * LOADER_BLOCK_POINTS
+            if count == 6:
+                score += LOADER_FULL_BONUS
+        
+        # Blue Loaders (1, 3) check Blue blocks
+        for idx in [1, 3]:
+            count = loader_stats[idx]["blue"]
+            score += count * LOADER_BLOCK_POINTS
+            if count == 6:
+                score += LOADER_FULL_BONUS
+        
+        # 3. Parked Robots
+        parked_count = sum(1 for a in state["agents"].values() if a.get("parked", False))
+        score += parked_count * PARK_ROBOT
+        
+        return {"red": float(score)}
     
     def _get_agents_config(self) -> List[str]:
-        # One robot from each team, starting opposite sides
+        # One robot from each "team" to allow handling both block colors
         return ["red_robot_0", "blue_robot_0"]
     
     def _get_robot_configs(self) -> Dict[str, Tuple[np.ndarray, str, str]]:
         """
         Per VAIRS4:
-        - 24" robot starts in BLUE Park Zone (parked position)
-        - 15" robot starts in RED Park Zone (parked position)
-        
-        We designate blue_robot_0 as 24" and red_robot_0 as 15".
+        - 24" robot starts in BLUE Park Zone (parked position). We assign it Blue team.
+        - 15" robot starts in RED Park Zone (parked position). We assign it Red team.
         """
         return {
             # 24" robot in blue park zone
@@ -53,73 +115,77 @@ class VexAISkillsGame(PushBackGame):
     def _get_initial_blocks(
         self, randomize: bool, seed: Optional[int]
     ) -> List[Dict]:
-        """Generate initial blocks - NO PRELOADS per VAIRS4."""
-        rng = np.random.default_rng(seed)
+        """Generate initial blocks explicit configuration."""
+        if seed is not None:
+            np.random.seed(seed)
+        
         blocks = []
         
-        # Field blocks - simple grid pattern
-        block_count = 0
-        grid_positions = self._generate_grid_positions()
-        
-        for x, y in grid_positions[:NUM_BLOCKS_FIELD]:
-            if randomize:
-                x += rng.uniform(-6.0, 6.0)
-                y += rng.uniform(-6.0, 6.0)
-            
-            team = "red" if block_count % 2 == 0 else "blue"
+        def add_block(x, y, team, status=BlockStatus.ON_FIELD):
+            if randomize and status == BlockStatus.ON_FIELD:
+                pos = np.random.uniform(-70.0, 70.0, size=2).astype(np.float32)
+            else:
+                pos = np.array([float(x), float(y)], dtype=np.float32)
+
             blocks.append({
-                "position": np.array([x, y], dtype=np.float32),
-                "status": BlockStatus.ON_FIELD,
+                "position": pos,
+                "status": status,
                 "team": team,
                 "held_by": None,
             })
-            block_count += 1
+
+        # --- VEX AI SKILLS BLOCKS ---
         
-        # Loader blocks (6 per loader)
-        for loader in LOADERS:
-            team = "red" if loader.index % 2 == 0 else "blue"
-            for _ in range(6):
-                blocks.append({
-                    "position": loader.position.copy().astype(np.float32),
-                    "status": BlockStatus.IN_LOADER_TL + loader.index,
-                    "team": team,
-                    "held_by": None,
-                })
+        # Blue Blocks
+        blue_coords = [
+            (48, 48), (48, 48), (48, -48), (48, -48),
+            (-48, 48), (-48, -48),
+            (24, 24), (24, 24), (24, 24),
+            (24, 28), (28, 24),
+            (24, -24), (24, -24), (24, -24),
+            (24, -28), (28, -24),
+            (-24, 28), (-24, 28), (-28, 24), (-28, 24),
+            (-24, -28), (-24, -28), (-28, -24), (-28, -24)
+        ]
+        for x, y in blue_coords:
+            add_block(x, y, "blue")
+            
+        # Red Blocks
+        red_coords = [
+            (48, 48), (48, -48), (-48, 48), (-48, 48),
+            (-48, -48), (-48, -48),
+            (-24, 24), (-24, 24), (-24, 24),
+            (-24, 28), (-28, 24),
+            (-24, -24), (-24, -24), (-24, -24),
+            (-24, -28), (-28, -24),
+            (24, 28), (24, 28), (28, 24), (28, 24),
+            (24, -28), (24, -28), (28, -24), (28, -24)
+        ]
+        for x, y in red_coords:
+            add_block(x, y, "red")
+            
+        # --- LOADERS (AI Skills) ---
+        # TL: Red, Blue, Blue, Blue, Blue, Blue
+        # TR: Blue, Red, Red, Red, Red, Red
+        # BL: Red, Blue, Blue, Blue, Blue, Blue
+        # BR: Blue, Red, Red, Red, Red, Red
+        
+        loaders_config = [
+            (0, ["red"] + ["blue"]*5),  # TL
+            (1, ["blue"] + ["red"]*5),  # TR
+            (2, ["red"] + ["blue"]*5),  # BL
+            (3, ["blue"] + ["red"]*5),  # BR
+        ]
+        
+        for l_idx, colors in loaders_config:
+            loader_pos = LOADERS[l_idx].position
+            # Add Top-to-Bottom (Standard Order)
+            for color in colors:
+                add_block(loader_pos[0], loader_pos[1], color, status=BlockStatus.IN_LOADER_TL + l_idx)
         
         # NO PRELOADS in VEX AI Skills (VAIRS4)
-        
+            
         return blocks
     
     def _get_loader_counts(self) -> List[int]:
         return [6, 6, 6, 6]
-    
-    def _generate_grid_positions(self) -> List[Tuple[float, float]]:
-        """Generate a grid of block positions."""
-        positions = []
-        
-        # Quadrants around center
-        for dx in [-24.0, 24.0]:
-            for dy in [-24.0, 24.0]:
-                for ox in range(3):
-                    for oy in range(3):
-                        x = dx + ox * 6.0
-                        y = dy + oy * 6.0
-                        if abs(x) > 12 or abs(y) > 12:
-                            positions.append((x, y))
-        
-        # Near long goals
-        for y in [36.0, -36.0]:
-            for x in [-36.0, -24.0, -12.0, 12.0, 24.0, 36.0]:
-                positions.append((x, y))
-        
-        # Near park zones
-        for x in [-48.0, 48.0]:
-            for y in [-24.0, -12.0, 0.0, 12.0, 24.0]:
-                positions.append((x, y))
-        
-        return positions
-    
-    # TODO: Implement AI Skills-specific scoring (VAIRS7)
-    # - Majority color scoring per goal
-    # - Loader matching points (blocks matching adjacent park zone color)
-    # - Filled loader bonus

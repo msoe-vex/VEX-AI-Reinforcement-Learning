@@ -118,30 +118,13 @@ class VexGame(ABC):
         pass
     
     @abstractmethod
-    def compute_score(self, state: Dict) -> int:
-        """
-        Compute the total score for the current state.
-        
-        Args:
-            state: Current game state
-            
+    def compute_score(self, state: Dict) -> Dict[str, int]:
+        """Compute the score for the current state.
         Returns:
-            Total score
+            Dict[str, int]: Team scores (e.g., {"red": 10, "blue": 5})
         """
         pass
-    
-    @abstractmethod
-    def compute_team_scores(self, state: Dict) -> Dict[str, int]:
-        """
-        Compute scores per team.
-        
-        Args:
-            state: Current game state
-            
-        Returns:
-            Dictionary mapping team names to scores
-        """
-        pass
+
     
     @abstractmethod
     def get_team_for_agent(self, agent: str) -> str:
@@ -156,6 +139,12 @@ class VexGame(ABC):
         """
         pass
     
+    @staticmethod
+    @abstractmethod
+    def split_action(action: int, observation: np.ndarray) -> List[str]:
+        """Convert a high-level action into a list of low-level commands."""
+        pass
+
     @abstractmethod
     def is_agent_terminated(self, agent: str, state: Dict) -> bool:
         """

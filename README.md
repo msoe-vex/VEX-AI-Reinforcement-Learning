@@ -44,7 +44,7 @@ pip install -r requirements.txt
    The training script will automatically compile the best checkpoint. If you need to recompile (e.g., if training ends early or you want to compile a different checkpoint), run:
 
    ```bash
-   python vexEnvCompile.py --checkpoint-path /path/to/checkpoint_000005 --output-path /path/to/output
+   python vexModelCompile.py --checkpoint-path /path/to/checkpoint_000005 --output-path /path/to/output
    ```
    - Loads a PPO checkpoint and saves the policy as a TorchScript `.pt` file.
 
@@ -130,7 +130,7 @@ RLlib training script.
 
 ---
 
-### vexEnvCompile.py
+### vexModelCompile.py
 
 Compile RLlib checkpoint to TorchScript.
 
