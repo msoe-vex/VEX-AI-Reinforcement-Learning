@@ -9,10 +9,24 @@ import warnings
 import time
 import os
 
-from vexEnv import env_creator
+# Import from new modular architecture
+from vex_core import VexMultiAgentEnv
+from pushback import VexUSkillsGame
 
 from vexEnvCompile import compile_checkpoint_to_torchscript
 import sys
+
+
+def env_creator(config=None):
+    """Create environment instance for RLlib registration."""
+    config = config or {}
+    game = VexUSkillsGame()  # TODO: Support other game modes via config
+    return VexMultiAgentEnv(
+        game=game,
+        render_mode=None,
+        randomize=config.get("randomize", True),
+    )
+
 
 # Policy mapping function to assign agents to policies.
 def policy_mapping_fn(agent_id, episode):
@@ -52,7 +66,7 @@ if __name__ == "__main__":
 
     print("Initializing training configuration...")
     # Register your environment with RLlib so it can be created by name
-    register_env("High_Stakes_Multi_Agent_Env", env_creator)
+    register_env("VEX_Multi_Agent_Env", env_creator)
 
     # Create a temporary instance to retrieve observation and action spaces for a sample agent.
     temp_env = env_creator()
@@ -61,7 +75,7 @@ if __name__ == "__main__":
     policies = {
         agent_id: (None, temp_env.observation_space(agent_id), temp_env.action_space(agent_id), {}) for agent_id in temp_env.possible_agents
     }
-    policies["shared_policy"] = (None, temp_env.observation_space("shared_policy"), temp_env.action_space("shared_policy"), {})
+    policies["shared_policy"] = (None, temp_env.observation_space(temp_env.possible_agents[0]), temp_env.action_space(temp_env.possible_agents[0]), {})
 
     # Initialize Ray with GPU detection
     ray.init(ignore_reinit_error=True, include_dashboard=False)
@@ -70,7 +84,7 @@ if __name__ == "__main__":
     config = (
         PPOConfig()
         .environment(
-            env="High_Stakes_Multi_Agent_Env",
+            env="VEX_Multi_Agent_Env",
             env_config={"randomize": args.randomize}
         )
         .framework("torch")  # change to "tf" for TensorFlow

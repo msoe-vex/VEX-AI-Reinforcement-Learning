@@ -6,8 +6,21 @@ from ray.tune.registry import register_env
 from ray.rllib.utils.framework import try_import_torch
 import warnings
 
-# Ensure env.py is accessible
-from vexEnv import env_creator
+# Import from new modular architecture
+from vex_core import VexMultiAgentEnv
+from pushback import VexUSkillsGame
+
+
+def env_creator(config=None):
+    """Create environment instance for RLlib registration."""
+    config = config or {}
+    game = VexUSkillsGame()
+    return VexMultiAgentEnv(
+        game=game,
+        render_mode=None,
+        randomize=config.get("randomize", True),
+    )
+
 
 def compile_checkpoint_to_torchscript(checkpoint_path: str, output_path: str = None):
     """
@@ -30,7 +43,7 @@ def compile_checkpoint_to_torchscript(checkpoint_path: str, output_path: str = N
         ray.init(ignore_reinit_error=True)
 
     # Register the environment
-    register_env("High_Stakes_Multi_Agent_Env", env_creator)
+    register_env("VEX_Multi_Agent_Env", env_creator)
 
     # Restore the algorithm from the checkpoint
     try:
@@ -58,7 +71,9 @@ def compile_checkpoint_to_torchscript(checkpoint_path: str, output_path: str = N
         
         # Create a temporary environment to get the observation space shape for tracing.
         temp_env = env_creator(None)
-        obs_space = temp_env.observation_space(policy_id)
+        # Use first agent's observation space for shared policies
+        agent_for_obs = policy_id if policy_id in temp_env.possible_agents else temp_env.possible_agents[0]
+        obs_space = temp_env.observation_space(agent_for_obs)
         temp_env.close()
 
         # Create a dummy observation tensor

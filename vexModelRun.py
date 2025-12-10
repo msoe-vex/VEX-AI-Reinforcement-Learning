@@ -3,10 +3,8 @@ import argparse
 import os
 import numpy as np
 
-# Ensure vexEnv.py is accessible
-# If vexEnvRun.py and vexEnv.py are in the same directory, this should work.
-from vexEnv import Push_Back_Multi_Agent_Env
-from vexEnv import Actions
+# Import from new modular architecture
+from pushback import Actions
 from path_planner import PathPlanner
 
 def is_valid_action(action, observation):

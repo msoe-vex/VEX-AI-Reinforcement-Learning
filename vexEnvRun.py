@@ -3,14 +3,13 @@ import argparse
 import os
 import numpy as np
 
-# Ensure vexEnv.py is accessible
-# If vexEnvRun.py and vexEnv.py are in the same directory, this should work.
-from vexEnv import Push_Back_Multi_Agent_Env
-from vexEnv import Actions
+# Import from new modular architecture
+from vex_core import VexMultiAgentEnv
+from pushback import VexUSkillsGame
 
 def run_simulation(model_path):
     """
-    Loads a trained model and runs a simulation in the High_Stakes_Multi_Agent_Env.
+    Loads a trained model and runs a simulation in the VEX environment.
 
     Args:
         model_path (str): Path to the trained TorchScript model (.pt file).
@@ -28,9 +27,14 @@ def run_simulation(model_path):
         print(f"Error loading model: {e}")
         return
 
-    # Initialize the environment
-    # The render_mode "human" is assumed to be available in your High_Stakes_Multi_Agent_Env
-    env = Push_Back_Multi_Agent_Env(render_mode="all", output_directory="vexEnvRun", randomize=False)
+    # Initialize the environment using new modular architecture
+    game = VexUSkillsGame()
+    env = VexMultiAgentEnv(
+        game=game,
+        render_mode="all", 
+        output_directory="vexEnvRun", 
+        randomize=False
+    )
     
     # Get observation and action space shapes for a sample agent
     # These are used to correctly shape tensors for the model
