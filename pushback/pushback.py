@@ -22,8 +22,27 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from vex_core.base_game import VexGame
-from vex_core.base_game import VexGame
 from path_planner import PathPlanner
+
+# Forward declarations for get_game method
+def _get_game_class(game_name: str):
+    """Helper to get game class by name (avoids circular imports)."""
+    from .vexu_skills import VexUSkillsGame
+    from .vexu_comp import VexUCompGame
+    from .vexai_skills import VexAISkillsGame
+    from .vexai_comp import VexAICompGame
+    
+    GAME_MAP = {
+        'vexu_skills': VexUSkillsGame,
+        'vexu_comp': VexUCompGame,
+        'vexai_skills': VexAISkillsGame,
+        'vexai_comp': VexAICompGame,
+    }
+    
+    if game_name not in GAME_MAP:
+        raise ValueError(f"Unknown game: {game_name}. Available: {list(GAME_MAP.keys())}")
+    
+    return GAME_MAP[game_name]
 
 NUM_BLOCKS_FIELD = 36
 NUM_BLOCKS_LOADER = 24
@@ -35,9 +54,6 @@ NUM_BLOCKS_LOADER = 24
 
 FIELD_SIZE_INCHES = 144  # 12 feet = 144 inches
 FIELD_HALF = FIELD_SIZE_INCHES / 2  # 72 inches
-
-# Robot dimensions - Moved to Robot objects
-
 
 # Block dimensions
 BLOCK_RADIUS = 2.4
@@ -57,9 +73,6 @@ CENTER_GOAL_CONTROL_THRESHOLD = 7
 
 # Field of view for robot vision
 FOV = np.pi / 2
-
-# Robot speed
-# ROBOT_SPEED = 60.0  # inches per second - Moved to Robot objects
 
 # Default penalty for invalid actions
 DEFAULT_PENALTY = -0.1
@@ -436,6 +449,20 @@ class PushBackGame(VexGame):
     def field_size_inches(self) -> float:
         return FIELD_SIZE_INCHES
     
+    @staticmethod
+    def get_game(game_name: str) -> VexGame:
+        """
+        Factory method to create a game instance from a string identifier.
+        
+        Args:
+            game_name: String identifier (e.g., 'vexu_skills', 'vexai_comp')
+            
+        Returns:
+            VexGame instance
+        """
+        game_class = _get_game_class(game_name)
+        return game_class()
+    
     @property
     @abstractmethod
     def total_time(self) -> float:
@@ -467,7 +494,7 @@ class PushBackGame(VexGame):
             agents_dict[robot.name] = {
                 "position": robot.start_position.copy().astype(np.float32),
                 "orientation": np.array([robot.start_orientation], dtype=np.float32),
-                "team": robot.team,
+                "team": robot.team.value,
                 "robot_size": robot.size.value,
                 "held_blocks": 0,
                 "parked": False,
@@ -646,7 +673,7 @@ class PushBackGame(VexGame):
             )
         
         elif action == Actions.PARK.value:
-            duration, penalty = self._action_park(agent_state, duration, penalty)
+            duration, penalty = self._action_park(agent_state, state, duration, penalty)
         
         elif action == Actions.TURN_TOWARD_CENTER.value:
             duration, penalty = self._action_turn_toward_center(agent_state, duration, penalty)
@@ -903,11 +930,21 @@ class PushBackGame(VexGame):
         return duration, penalty
     
     def _action_park(
-        self, agent_state: Dict, duration: float, penalty: float
+        self, agent_state: Dict, state: Dict, duration: float, penalty: float
     ) -> Tuple[float, float]:
         """Park in team's zone."""
         team = agent_state["team"]
         park_zone = PARK_ZONES[team]
+
+        # If parking before 10 seconds left, apply penalty
+        if agent_state["gameTime"] < self.total_time - 10.0:
+            penalty += 1000
+
+        # Only one robot can park per team
+        for other_agent, other_state in state["agents"].items():
+            if other_agent != agent_state["agent_name"]:
+                if other_state["team"] == team and other_state.get("parked", False):
+                    return duration, penalty + DEFAULT_PENALTY
         
         movement = park_zone.center - agent_state["position"]
         dist = np.linalg.norm(movement)

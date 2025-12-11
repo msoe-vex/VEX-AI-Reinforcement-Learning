@@ -1,3 +1,0 @@
-- Parking early should have big penalty
-- Only one robot can park at a time for simplicity
-- Finish creating split_actions function

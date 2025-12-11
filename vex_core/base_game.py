@@ -9,6 +9,42 @@ from abc import ABC, abstractmethod
 from typing import Dict, List, Tuple, Optional, Any
 import numpy as np
 from gymnasium import spaces
+from dataclasses import dataclass, field
+from enum import Enum
+
+class RobotSize(Enum):
+    """Robot size categories."""
+    INCH_15 = 15
+    INCH_24 = 24
+
+class Team(Enum):
+    """Robot teams."""
+    RED = "red"
+    BLUE = "blue"
+
+@dataclass
+class Robot:
+    """Robot configuration."""
+    name: str  # Agent name, e.g., "red_robot_0"
+    team: Team  # 'red' or 'blue'
+    size: RobotSize
+    start_position: Optional[np.ndarray] = field(default_factory=lambda: np.array([0.0, 0.0], dtype=np.float32))
+    start_orientation: Optional[float] = None  # Radians, None = auto based on team
+    length: Optional[float] = None
+    width: Optional[float] = None
+    max_speed: Optional[float] = 60.0
+    max_acceleration: Optional[float] = 60.0
+    buffer: Optional[float] = 1.0
+    
+    def __post_init__(self):
+        # Default dimensions based on size
+        if self.length is None:
+            self.length = float(self.size.value)
+        if self.width is None:
+            self.width = float(self.size.value)
+        # Default orientation: face toward center (red=0, blue=π)
+        if self.start_orientation is None:
+            self.start_orientation = np.float32(0.0) if self.team == Team.RED else np.float32(np.pi)
 
 
 class VexGame(ABC):
@@ -19,10 +55,24 @@ class VexGame(ABC):
     to define game-specific mechanics, scoring, and rendering.
     """
     
-    def __init__(self, robots: list = None):
+    def __init__(self, robots: list[Robot] = None):
         """Initialize with robot configurations."""
         self.robots = robots or []
         self._robot_map = {r.name: r for r in self.robots}
+    
+    @staticmethod
+    @abstractmethod
+    def get_game(game_name: str) -> 'VexGame':
+        """
+        Factory method to create a game instance from a string identifier.
+        
+        Args:
+            game_name: String identifier for the game variant
+            
+        Returns:
+            VexGame instance
+        """
+        pass
     
     # =========================================================================
     # Configuration Properties

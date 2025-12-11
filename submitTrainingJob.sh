@@ -19,6 +19,7 @@ while [[ "$#" -gt 0 ]]; do
         --num-iters) NUM_ITERS="$2"; shift 2 ;;
         --algorithm) ALGORITHM="$2"; shift 2 ;;
         --verbose) VERBOSE="$2"; shift 2 ;;
+        --game) GAME="$2"; shift 2 ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
 done
@@ -38,4 +39,5 @@ python vexEnvTraining.py \
     --partition $SLURM_JOB_PARTITION \
     --algorithm ${ALGORITHM:-PPO} \
     --checkpoint-path ${CHECKPOINT_PATH:-""} \
-    --verbose ${VERBOSE:-0}
+    --verbose ${VERBOSE:-0} \
+    --game ${GAME:-vexai_skills}

@@ -12,7 +12,7 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 
 from .pushback import PushBackGame, BlockStatus, LOADERS, NUM_BLOCKS_FIELD, GoalType, GOALS, PARK_ZONES
-from vex_core.base_env import Robot, RobotSize
+from vex_core.base_env import Robot, RobotSize, Team
 
 class VexUSkillsGame(PushBackGame):
     """VEX U Skills game variant."""
@@ -21,9 +21,9 @@ class VexUSkillsGame(PushBackGame):
         # Default: both robots red, start on red side (per VURS2)
         if robots is None:
             robots = [
-                Robot(name="red_robot_0", team="red", size=RobotSize.INCH_24, 
+                Robot(name="red_robot_0", team=Team.RED, size=RobotSize.INCH_24, 
                       start_position=np.array([-42.0, 24.0], dtype=np.float32)),
-                Robot(name="red_robot_1", team="red", size=RobotSize.INCH_15, 
+                Robot(name="red_robot_1", team=Team.RED, size=RobotSize.INCH_15, 
                       start_position=np.array([-46.5, -24.0], dtype=np.float32)),
             ]
         super().__init__(robots)

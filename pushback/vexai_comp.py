@@ -11,7 +11,7 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 
 from .pushback import PushBackGame, BlockStatus, LOADERS, NUM_BLOCKS_FIELD, GoalType, GOALS
-from vex_core.base_env import Robot, RobotSize
+from vex_core.base_env import Robot, RobotSize, Team
 
 class VexAICompGame(PushBackGame):
     """VEX AI Competition game variant."""
@@ -20,13 +20,13 @@ class VexAICompGame(PushBackGame):
         # Default: 2v2 (2 per team, 24" and 15")
         if robots is None:
             robots = [
-                Robot(name="red_robot_0", team="red", size=RobotSize.INCH_24, 
+                Robot(name="red_robot_0", team=Team.RED, size=RobotSize.INCH_24, 
                       start_position=np.array([-42.0, 24.0], dtype=np.float32)),
-                Robot(name="red_robot_1", team="red", size=RobotSize.INCH_15, 
+                Robot(name="red_robot_1", team=Team.RED, size=RobotSize.INCH_15, 
                       start_position=np.array([-46.5, -24.0], dtype=np.float32)),
-                Robot(name="blue_robot_0", team="blue", size=RobotSize.INCH_24, 
+                Robot(name="blue_robot_0", team=Team.BLUE, size=RobotSize.INCH_24, 
                       start_position=np.array([42.0, 24.0], dtype=np.float32)),
-                Robot(name="blue_robot_1", team="blue", size=RobotSize.INCH_15, 
+                Robot(name="blue_robot_1", team=Team.BLUE, size=RobotSize.INCH_15, 
                       start_position=np.array([46.5, -24.0], dtype=np.float32)),
             ]
         super().__init__(robots)

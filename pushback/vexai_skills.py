@@ -12,7 +12,7 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 
 from .pushback import PushBackGame, BlockStatus, LOADERS, NUM_BLOCKS_FIELD, GoalType, GOALS
-from vex_core.base_env import Robot, RobotSize
+from vex_core.base_env import Robot, RobotSize, Team
 
 class VexAISkillsGame(PushBackGame):
     """VEX AI Skills game variant."""
@@ -21,9 +21,9 @@ class VexAISkillsGame(PushBackGame):
         # Default: 24" in blue park zone, 15" in red park zone (per VAIRS4)
         if robots is None:
             robots = [
-                Robot(name="blue_robot_0", team="blue", size=RobotSize.INCH_24, length=15, width=15,
+                Robot(name="blue_robot_0", team=Team.BLUE, size=RobotSize.INCH_24, length=15, width=15,
                       start_position=np.array([60.0, 0.0], dtype=np.float32)),
-                Robot(name="red_robot_0", team="red", size=RobotSize.INCH_15, length=15, width=15,
+                Robot(name="red_robot_0", team=Team.RED, size=RobotSize.INCH_15, length=15, width=15,
                       start_position=np.array([-60.0, 0.0], dtype=np.float32)),
             ]
         super().__init__(robots)

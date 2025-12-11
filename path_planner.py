@@ -5,7 +5,8 @@ from matplotlib.transforms import Affine2D
 import random
 from math import sqrt, exp  # Added missing imports if needed
 import time
-from vex_core.base_env import Robot
+import os
+from vex_core.base_env import Robot, Team, RobotSize
 
 # =============================================================================
 # Obstacle Definitions
@@ -33,7 +34,7 @@ GRID_SIZE = 128
 # =============================================================================
 class PathPlanner:
     # All values are based on a scale from 0 to 1, where 1 is the length of the field
-    def __init__(self, field_size_inches=144, field_center=(0, 0)):
+    def __init__(self, field_size_inches=144, field_center=(0, 0), output_dir="path_planner"):
         # -------------------------------------------------------------------------
         # Initialization: Field parameters
         # -------------------------------------------------------------------------
@@ -48,6 +49,8 @@ class PathPlanner:
         # Field coordinate system parameters
         self.field_size_inches = field_size_inches
         self.field_center = np.array(field_center, dtype=np.float64)
+        self.output_dir = output_dir
+        os.makedirs(self.output_dir, exist_ok=True)
     
     def inches_to_normalized(self, pos_inches):
         """Convert position from inches (field coordinates) to normalized scale (0-1)."""
@@ -416,11 +419,10 @@ class PathPlanner:
         ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), borderaxespad=0., frameon=False)
         ax.set_aspect('equal', adjustable='box')
         ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.grid()
-        plt.savefig('path.png')
+        plt.savefig(f'{self.output_dir}/path.png')
         plt.close(fig)  # Close the figure to free memory
 
-        print("Path saved to path.png")
-
+        print(f"Path saved to {self.output_dir}/path.png")
         
     
     def getPath(self, positions, dt):
@@ -529,7 +531,7 @@ class PathPlanner:
         path.append((current[0] / grid_size, current[1] / grid_size))
         return path[::-1]
 
-    def generate_grid_png(self, obstacles, start_point, end_point, robot: Robot, filename="grid.png"):
+    def generate_grid_png(self, obstacles, start_point, end_point, robot: Robot):
         """
         Generate a PNG of the grid based on obstacles, swap black/white, and add dots for start and end points.
         All inputs are in inches.
@@ -574,16 +576,25 @@ class PathPlanner:
         plt.tight_layout()
 
         # Save the grid as a PNG
-        plt.savefig(filename)
+        plt.savefig(f"{self.output_dir}/grid.png")
         plt.close(fig)
-        print(f"Grid PNG saved as {filename}")
+        print(f"Grid PNG saved as {self.output_dir}/grid.png")
 
 # =============================================================================
 # Main Execution
 # =============================================================================
 
 if __name__ == "__main__":
-    robot = Robot(length=15.0, width=15.0, max_speed=70.0, max_acceleration=70.0, buffer=1.0)
+    robot = Robot(
+        name="TestRobot",
+        team=Team.RED,
+        size=RobotSize.INCH_24,
+        max_speed=60,
+        max_acceleration=60,
+        buffer=1.0,
+        length=18.0,
+        width=18.0,
+    )
 
     planner = PathPlanner(
         field_size_inches=INCHES_PER_FIELD,

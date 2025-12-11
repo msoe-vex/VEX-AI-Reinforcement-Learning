@@ -11,16 +11,17 @@ import os
 
 # Import from new modular architecture
 from vex_core import VexMultiAgentEnv
-from pushback import VexUSkillsGame
+from pushback import PushBackGame
 
 from vexModelCompile import compile_checkpoint_to_torchscript
 import sys
+import json
 
 
 def env_creator(config=None):
     """Create environment instance for RLlib registration."""
     config = config or {}
-    game = VexUSkillsGame()  # TODO: Support other game modes via config
+    game = PushBackGame.get_game(config.get("game", "vexu_skills"))
     return VexMultiAgentEnv(
         game=game,
         render_mode=None,
@@ -59,7 +60,8 @@ if __name__ == "__main__":
     parser.add_argument('--partition', type=str, default="teaching", help='SLURM partition to use')
     parser.add_argument('--algorithm', type=str, default="PPO", help='Algorithm to use for training')
     parser.add_argument('--checkpoint-path', type=str, default="", help='Path to the checkpoint directory')
-    parser.add_argument('--verbose', type=int, default=0, help='Verbosity mode: 0 = silent, 1 = default, 2 = verbose')
+    parser.add_argument('--verbose', type=int, default=1, help='Verbosity mode: 0 = silent, 1 = default, 2 = verbose')
+    parser.add_argument('--game', type=str, required=True, help='Game variant to train')
 
     args = parser.parse_args()
 
@@ -72,7 +74,7 @@ if __name__ == "__main__":
     register_env("VEX_Multi_Agent_Env", env_creator)
 
     # Create a temporary instance to retrieve observation and action spaces for a sample agent.
-    temp_env = env_creator()
+    temp_env = env_creator({"game": args.game, "randomize": args.randomize})
 
     # Define a policy for each agent.
     policies = {
@@ -88,7 +90,7 @@ if __name__ == "__main__":
         PPOConfig()
         .environment(
             env="VEX_Multi_Agent_Env",
-            env_config={"randomize": args.randomize}
+            env_config={"randomize": args.randomize, "game": args.game}
         )
         .framework("torch")  # change to "tf" for TensorFlow
         .resources(
@@ -154,8 +156,36 @@ if __name__ == "__main__":
     # Use the best checkpoint directly from the analysis
     best_checkpoint = analysis.best_checkpoint
     best_checkpoint_path = best_checkpoint.path
+    
+    # Get the actual trial directory (PPO_2025-...) where results are stored
+    # The checkpoint path typically looks like: .../PPO_2025-12-11_09-08-15/PPO_VEX_Multi_Agent_Env_xxxxx/checkpoint_xxx
+    # We want the PPO_2025-... directory
+    trial_dir = best_checkpoint_path
+    while not os.path.basename(trial_dir).startswith('PPO_'):
+        parent = os.path.dirname(trial_dir)
+        if parent == trial_dir:  # Reached root
+            trial_dir = output_directory
+            break
+        trial_dir = parent
+    
+    print(f"Saving results to: {trial_dir}")
+    
+    # Save game metadata to the trial directory
+    metadata = {
+        "game": args.game,
+        "learning_rate": args.learning_rate,
+        "discount_factor": args.discount_factor,
+        "entropy": args.entropy,
+        "num_layers": args.num_layers,
+        "num_nodes": args.num_nodes,
+        "randomize": args.randomize,
+    }
+    metadata_path = os.path.join(trial_dir, "training_metadata.json")
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    print(f"Saved training metadata to {metadata_path}")
 
-    compile_checkpoint_to_torchscript(temp_env, best_checkpoint_path, output_directory)
+    compile_checkpoint_to_torchscript(temp_env.game, best_checkpoint_path, trial_dir)
 
     # Shutdown Ray
     ray.shutdown()

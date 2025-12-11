@@ -18,41 +18,9 @@ from pettingzoo import ParallelEnv
 from ray.rllib.env import MultiAgentEnv
 from typing import Dict, List, Tuple, Optional, Any
 
-from .base_game import VexGame
+from .base_game import VexGame, Robot, RobotSize, Team
 
-
-from dataclasses import dataclass, field
-from enum import Enum
 from typing import Optional
-
-class RobotSize(Enum):
-    """Robot size categories."""
-    INCH_15 = 15
-    INCH_24 = 24
-
-@dataclass
-class Robot:
-    """Robot configuration."""
-    name: str  # Agent name, e.g., "red_robot_0"
-    team: str  # 'red' or 'blue'
-    size: RobotSize
-    start_position: np.ndarray
-    start_orientation: Optional[float] = None  # Radians, None = auto based on team
-    length: Optional[float] = None
-    width: Optional[float] = None
-    max_speed: float = 60.0
-    max_acceleration: float = 60.0
-    buffer: float = 1.0
-    
-    def __post_init__(self):
-        # Default dimensions based on size
-        if self.length is None:
-            self.length = float(self.size.value)
-        if self.width is None:
-            self.width = float(self.size.value)
-        # Default orientation: face toward center (red=0, blue=π)
-        if self.start_orientation is None:
-            self.start_orientation = np.float32(0.0) if self.team == 'red' else np.float32(np.pi)
 
 
 class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
@@ -187,28 +155,40 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         
         self.num_moves += 1
         
-        # First, remove any agents that were terminated in the PREVIOUS step
-        # We do this at the start because RLlib validates that returned obs 
-        # match self.agents after step() returns
-        self.agents = [
-            agent for agent in self.agents 
-            if not self.game.is_agent_terminated(agent, self.environment_state)
-        ]
-        
-        # If all agents are already terminated, end the episode
-        if not self.agents:
-            return {}, {}, {"__all__": True}, {"__all__": True}, {}
-        
-        # Only process agents that are currently active
+        # Keep all agents in self.agents until all are terminated
         active_agents = list(self.agents)
+        
+        # Check which agents are terminated
+        terminated_agents = {
+            agent for agent in active_agents
+            if self.game.is_agent_terminated(agent, self.environment_state)
+        }
+        
+        # If all agents are terminated, end the episode
+        if len(terminated_agents) == len(active_agents):
+            terminations = {agent: True for agent in active_agents}
+            terminations["__all__"] = True
+            truncations = {agent: False for agent in active_agents}
+            truncations["__all__"] = False
+            observations = {
+                agent: self.game.get_observation(agent, self.environment_state)
+                for agent in active_agents
+            }
+            rewards = {agent: 0.0 for agent in active_agents}
+            infos = {agent: {} for agent in active_agents}
+            return observations, rewards, terminations, truncations, infos
         
         rewards = {agent: 0.0 for agent in active_agents}
         
-        # Get current minimum game time for action synchronization
-        min_game_time = min(
-            self.environment_state["agents"][agent]["gameTime"]
-            for agent in active_agents
-        )
+        # Get current minimum game time for action synchronization (only from non-terminated agents)
+        non_terminated_agents = [a for a in active_agents if a not in terminated_agents]
+        if non_terminated_agents:
+            min_game_time = min(
+                self.environment_state["agents"][agent]["gameTime"]
+                for agent in non_terminated_agents
+            )
+        else:
+            min_game_time = 0
         
         total_time = self.game.total_time
         
@@ -217,6 +197,11 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 continue
                 
             agent_state = self.environment_state["agents"][agent]
+            
+            # Skip terminated agents
+            if agent in terminated_agents:
+                agent_state["action_skipped"] = True
+                continue
             
             # Skip agent if their time is ahead
             if agent_state["gameTime"] > min_game_time:
@@ -255,31 +240,38 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         # Update total score (stored as property)
         self.score = self.game.compute_score(self.environment_state)
         
-        # Check terminations AFTER executing actions
-        terminations = {
+        # Check terminations AFTER actions to see which agents just terminated
+        new_terminations = {
             agent: self.game.is_agent_terminated(agent, self.environment_state)
             for agent in active_agents
         }
-        terminations["__all__"] = all(terminations.values())
         
-        truncations = {agent: False for agent in active_agents}
+        # Determine which agents were newly terminated this step
+        newly_terminated = set()
+        for agent in active_agents:
+            if agent not in terminated_agents and new_terminations[agent]:
+                newly_terminated.add(agent)
+        
+        # Only return observations/rewards/infos for non-terminated or newly terminated
+        agents_to_return = [a for a in active_agents if a not in terminated_agents or a in newly_terminated]
+        
+        terminations = {agent: new_terminations[agent] for agent in agents_to_return}
+        terminations["__all__"] = all(new_terminations.values())
+        
+        truncations = {agent: False for agent in agents_to_return}
         truncations["__all__"] = False
         
-        # Build observations for ALL currently active agents
-        # (terminated agents will be removed at the START of the next step)
+        # Return observations only for agents that should receive them
         observations = {
             agent: self.game.get_observation(agent, self.environment_state)
-            for agent in active_agents
+            for agent in agents_to_return
         }
         
-        # Infos for all active agents
-        infos = {agent: {} for agent in active_agents}
+        # Only return rewards/infos for agents receiving observations
+        filtered_rewards = {agent: rewards.get(agent, 0.0) for agent in agents_to_return}
+        infos = {agent: {} for agent in agents_to_return}
         
-        # NOTE: Do NOT update self.agents here - RLlib validates that returned
-        # observations match self.agents. We remove terminated agents at the 
-        # START of the next step() call.
-        
-        return observations, rewards, terminations, truncations, infos
+        return observations, filtered_rewards, terminations, truncations, infos
     
     def is_valid_action(
         self, 
@@ -362,7 +354,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 # Fallback if no specific robot found
                 if robot_config is None:
                     robot_config = Robot(
-                        name=agent, team="red", size=RobotSize.INCH_24,
+                        name=agent, team=Team.RED, size=RobotSize.INCH_24,
                         start_position=np.array([0.0, 0.0])
                     )
 

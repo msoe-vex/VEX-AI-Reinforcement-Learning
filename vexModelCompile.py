@@ -1,5 +1,6 @@
 import argparse
 import os
+import json
 import ray
 from ray.rllib.algorithms.algorithm import Algorithm
 from ray.tune.registry import register_env
@@ -9,7 +10,7 @@ import warnings
 # Import from new modular architecture
 from vex_core.base_game import VexGame
 from vex_core.base_env import VexMultiAgentEnv
-from pushback.vexai_skills import VexAISkillsGame
+from pushback import PushBackGame
 
 
 def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, output_path: str = None):
@@ -114,6 +115,21 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compile an RLLib checkpoint to a TorchScript model.")
     parser.add_argument("--checkpoint-path", type=str, required=True, help="Path to the RLLib checkpoint directory.")
     parser.add_argument("--output-path", type=str, required=True, help="Output directory for the TorchScript model(s).")
+    parser.add_argument("--game", type=str, default=None, help="Game variant (if not provided, reads from training_metadata.json)")
     args = parser.parse_args()
-
-    compile_checkpoint_to_torchscript(VexAISkillsGame(), args.checkpoint_path, args.output_path)
+    
+    # Try to read game from metadata if not provided
+    game_name = args.game
+    if game_name is None:
+        metadata_path = os.path.join(args.output_path, "training_metadata.json")
+        if os.path.exists(metadata_path):
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+                game_name = metadata.get("game", "vexai_skills")
+            print(f"Read game variant from metadata: {game_name}")
+        else:
+            game_name = "vexai_skills"
+            print(f"No metadata found, using default game: {game_name}")
+    
+    game = PushBackGame.get_game(game_name)
+    compile_checkpoint_to_torchscript(game, args.checkpoint_path, args.output_path)

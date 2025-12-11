@@ -5,9 +5,10 @@ import numpy as np
 
 # Import from new modular architecture
 from vex_core import VexMultiAgentEnv
-from pushback import VexUSkillsGame
+from pushback import PushBackGame
+import json
 
-def run_simulation(model_path):
+def run_simulation(model_path, game_name, output_dir):
     """
     Loads a trained model and runs a simulation in the VEX environment.
 
@@ -28,11 +29,11 @@ def run_simulation(model_path):
         return
 
     # Initialize the environment using new modular architecture
-    game = VexUSkillsGame()
+    game = PushBackGame.get_game(game_name)
     env = VexMultiAgentEnv(
         game=game,
         render_mode="all", 
-        output_directory="vexEnvRun", 
+        output_directory=output_dir, 
         randomize=False
     )
     
@@ -129,7 +130,34 @@ if __name__ == "__main__":
         required=True,
         help="Path to the trained TorchScript model (.pt file, e.g., traced_model.pt)."
     )
+    parser.add_argument(
+        "--game",
+        type=str,
+        default=None,
+        help="Game variant (if not provided, reads from training_metadata.json in model directory)"
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="vexEnvRun",
+        help="Output directory for renders"
+    )
     
     args = parser.parse_args()
     
-    run_simulation(args.model_path)
+    # Try to read game from metadata if not provided
+    game_name = args.game
+    if game_name is None:
+        # Look for metadata in the same directory as the model
+        model_dir = os.path.dirname(args.model_path)
+        metadata_path = os.path.join(model_dir, "training_metadata.json")
+        if os.path.exists(metadata_path):
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+                game_name = metadata.get("game", "vexai_skills")
+            print(f"Read game variant from metadata: {game_name}")
+        else:
+            game_name = "vexai_skills"
+            print(f"No metadata found, using default game: {game_name}")
+    
+    run_simulation(args.model_path, game_name, args.output_dir)

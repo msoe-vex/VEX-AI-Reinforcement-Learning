@@ -14,32 +14,16 @@ import argparse
 import numpy as np
 
 from vex_core.base_env import VexMultiAgentEnv
-from pushback import (
-    VexUSkillsGame,
-    VexUCompGame,
-    VexAISkillsGame,
-    VexAICompGame,
-    Actions,
-)
-
-
-# Game variant mapping
-GAME_MODES = {
-    "vex_u_skills": VexUSkillsGame,
-    "vex_u_competition": VexUCompGame,
-    "vex_ai_skills": VexAISkillsGame,
-    "vex_ai_competition": VexAICompGame,
-}
+from pushback import PushBackGame, Actions
 
 
 def main():
     parser = argparse.ArgumentParser(description="VEX Push Back Environment Test")
     parser.add_argument(
-        "--mode", 
+        "--game", 
         type=str, 
-        default="vex_ai_skills",
-        choices=list(GAME_MODES.keys()),
-        help="Competition mode to test"
+        default="vexai_skills",
+        help="Game variant to test"
     )
     parser.add_argument(
         "--steps",
@@ -60,16 +44,15 @@ def main():
     )
     args = parser.parse_args()
     
-    # Create game instance (uses default robots for the mode)
-    game_class = GAME_MODES[args.mode]
-    game = game_class()
+    # Create game instance using factory method
+    game = PushBackGame.get_game(args.game)
     
     # Determine render mode
     render_mode = None if args.no_render else "all"
     
     print(f"Testing VEX Push Back environment...")
-    print(f"Mode: {args.mode}")
-    print(f"Game class: {game_class.__name__}")
+    print(f"Game: {args.game}")
+    print(f"Game class: {game.__class__.__name__}")
     
     # Create environment
     env = VexMultiAgentEnv(
