@@ -3,7 +3,6 @@ import argparse
 from ray.tune.registry import register_env
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.tune.logger import JsonLoggerCallback, CSVLoggerCallback, TBXLoggerCallback
-from ray.train import CheckpointConfig, RunConfig
 from ray import tune
 import warnings
 import time
@@ -132,11 +131,9 @@ if __name__ == "__main__":
         "PPO",
         config=config.to_dict(),
         storage_path=output_directory,
-        checkpoint_config=CheckpointConfig(
-            checkpoint_score_attribute="env_runners/episode_return_mean",
-            checkpoint_score_order="max",
-            num_to_keep=1,
-        ),
+        checkpoint_freq=1,  # Checkpoint every iteration
+        keep_checkpoints_num=1,  # Keep only the best checkpoint
+        checkpoint_score_attr="env_runners/episode_return_mean",  # Use this metric for best checkpoint
         stop={"training_iteration": args.num_iters},
         callbacks=[
             JsonLoggerCallback(),
