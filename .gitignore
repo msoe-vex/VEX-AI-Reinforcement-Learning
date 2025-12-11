@@ -8,4 +8,5 @@ path.png
 grid.png
 **/steps
 /path_planner
-/vex_*/
+/vex_model_*/
+/vex_env_*/
