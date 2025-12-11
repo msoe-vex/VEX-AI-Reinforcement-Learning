@@ -34,18 +34,21 @@ def policy_mapping_fn(agent_id, episode):
     # return agent_id # Change to agent_id if you want to use different policies for each agent
 
 if __name__ == "__main__":
-    # Suppress excessive experiment checkpoint warnings
-    os.environ["TUNE_WARN_EXCESSIVE_EXPERIMENT_CHECKPOINT_SYNC_THRESHOLD_S"] = "1.0"
+    # Suppress excessive experiment checkpoint warnings completely
+    os.environ["TUNE_WARN_EXCESSIVE_EXPERIMENT_CHECKPOINT_SYNC_THRESHOLD_S"] = "0"
     
     # Suppress all deprecation warnings
     warnings.filterwarnings("ignore", category=DeprecationWarning)
-
+    
+    # Suppress gymnasium precision/space warnings (RLlib internal env creation)
+    warnings.filterwarnings("ignore", module="gymnasium")
+    
     # Get parameters from command line arguments
     parser = argparse.ArgumentParser(description="Train multiple agents concurrently.")
     parser.add_argument('--learning-rate', type=float, default=0.0005, help='Learning rate')  # Default: 0.0005
     parser.add_argument('--discount-factor', type=float, default=0.99, help='Discount factor')  # Default: 0.99
     parser.add_argument('--entropy', type=float, default=0.01, help='Entropy coefficient')  # Default: 0.01
-    parser.add_argument('--num-iters', type=int, default=1, help='Number of training iterations')  # Default: 10
+    parser.add_argument('--num-iters', type=int, default=10, help='Number of training iterations')  # Default: 10
     parser.add_argument('--cpus-per-task', type=int, default=1, help='Number of CPUs per task')  # Default: 1
     parser.add_argument('--job-id', type=str, default="", help='SLURM job ID')  # Job ID for logging
     parser.add_argument('--model-path', type=str, default="", help='Path to save/load the model')
@@ -98,14 +101,16 @@ if __name__ == "__main__":
             policies=policies,
             policy_mapping_fn=policy_mapping_fn,
         )
+        .rl_module(
+            model_config={
+                "fcnet_hiddens": [args.num_nodes] * args.num_layers,
+                "fcnet_activation": "relu"
+            }
+        )
         .training(
             lr=args.learning_rate,
             gamma=args.discount_factor,
             entropy_coeff=args.entropy,
-            model={
-                "fcnet_hiddens": [args.num_nodes] * args.num_layers,  # Set hidden layers and nodes
-                "fcnet_activation": "relu"  # Activation function for the layers
-            }
         )
         .debugging(log_level="ERROR")  # Reduce logging verbosity
     )
@@ -150,7 +155,7 @@ if __name__ == "__main__":
     best_checkpoint = analysis.best_checkpoint
     best_checkpoint_path = best_checkpoint.path
 
-    compile_checkpoint_to_torchscript(best_checkpoint_path, output_directory)
+    compile_checkpoint_to_torchscript(temp_env, best_checkpoint_path, output_directory)
 
     # Shutdown Ray
     ray.shutdown()

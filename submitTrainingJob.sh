@@ -4,7 +4,7 @@
 #SBATCH --error=job_results/job_%j/error.txt        # Error file (%j will be replaced with the job ID)
 #SBATCH --time=0-12:0                                # Time limit (DD-HH:MM)
 #SBATCH --partition=teaching --gpus=1               # Partition to submit to. `teaching` (for the T4 GPUs) is default on Rosie, but it's still being specified here
-#SBATCH --cpus-per-task=32 --tasks=1                # Number of CPU cores to use
+#SBATCH --cpus-per-task=8 --tasks=1                # Number of CPU cores to use
 
 # Parse command line arguments
 while [[ "$#" -gt 0 ]]; do

@@ -21,10 +21,10 @@ class VexAISkillsGame(PushBackGame):
         # Default: 24" in blue park zone, 15" in red park zone (per VAIRS4)
         if robots is None:
             robots = [
-                Robot(name="blue_robot_0", team="blue", size=RobotSize.INCH_24, 
-                      start_position=np.array([60.0, 0.0])),
-                Robot(name="red_robot_0", team="red", size=RobotSize.INCH_15, 
-                      start_position=np.array([-60.0, 0.0])),
+                Robot(name="blue_robot_0", team="blue", size=RobotSize.INCH_24, length=15, width=15,
+                      start_position=np.array([60.0, 0.0], dtype=np.float32)),
+                Robot(name="red_robot_0", team="red", size=RobotSize.INCH_15, length=15, width=15,
+                      start_position=np.array([-60.0, 0.0], dtype=np.float32)),
             ]
         super().__init__(robots)
     
@@ -105,11 +105,21 @@ class VexAISkillsGame(PushBackGame):
         parked_count = sum(1 for a in state["agents"].values() if a.get("parked", False))
         score += parked_count * PARK_ROBOT
         
-        return {"red": float(score)}
+        return {"red": score}
     
-
-    
-
+    def compute_reward(
+        self, 
+        agent: str, 
+        initial_scores: Dict[str, int], 
+        new_scores: Dict[str, int],
+        penalty: float
+    ) -> float:
+        """
+        Skills mode: All robots are rewarded based on the red team score
+        improvement, regardless of their team color.
+        """
+        red_delta = new_scores.get("red", 0) - initial_scores.get("red", 0)
+        return red_delta - penalty
     
     def _get_initial_blocks(
         self, randomize: bool, seed: Optional[int]

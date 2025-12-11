@@ -52,7 +52,7 @@ class Robot:
             self.width = float(self.size.value)
         # Default orientation: face toward center (red=0, blue=π)
         if self.start_orientation is None:
-            self.start_orientation = 0.0 if self.team == 'red' else np.pi
+            self.start_orientation = np.float32(0.0) if self.team == 'red' else np.float32(np.pi)
 
 
 class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
@@ -239,25 +239,9 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             
             agent_state["gameTime"] += duration
             
-            # Calculate reward
+            # Calculate reward via game (allows variant overrides)
             new_scores = self.game.compute_score(self.environment_state)
-            
-            # Unified Scoring Logic (Always Dict)
-            # Calculate reward based on team improvement
-            # For competitive: (My Delta) - (Opponent Delta)
-            # For skills: (My Delta) - (Opponent Delta [which is 0])
-            try:
-                agent_team = self.game.get_team_for_agent(agent)
-                opposing_team = "blue" if agent_team == "red" else "red"
-                
-                own_delta = new_scores.get(agent_team, 0) - initial_scores.get(agent_team, 0)
-                opp_delta = new_scores.get(opposing_team, 0) - initial_scores.get(opposing_team, 0)
-                
-                # Reward is net improvement over opponent
-                reward = own_delta - opp_delta - penalty
-            except (KeyError, AttributeError):
-                # Fallback if team structure unclear
-                reward = -penalty
+            reward = self.game.compute_reward(agent, initial_scores, new_scores, penalty)
             
             rewards[agent] = reward
             
@@ -455,7 +439,10 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 if st.get("action_skipped", False):
                     action_text = "--"
                 else:
-                    action_text = str(actions[agent])
+                    try:
+                        action_text = self.game.action_to_name(actions[agent])
+                    except Exception:
+                        action_text = str(actions[agent])
             
             reward_text = ""
             if rewards and agent in rewards:

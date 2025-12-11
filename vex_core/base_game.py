@@ -128,6 +128,38 @@ class VexGame(ABC):
             Dict[str, int]: Team scores (e.g., {"red": 10, "blue": 5})
         """
         pass
+    
+    def compute_reward(
+        self, 
+        agent: str, 
+        initial_scores: Dict[str, int], 
+        new_scores: Dict[str, int],
+        penalty: float
+    ) -> float:
+        """
+        Compute reward for an agent based on score changes.
+        
+        Override this for game modes where the reward logic differs from
+        standard team-based scoring (e.g., skills where all robots
+        contribute to the same score regardless of their team).
+        
+        Args:
+            agent: Agent name
+            initial_scores: Scores before action
+            new_scores: Scores after action
+            penalty: Penalty from action execution
+            
+        Returns:
+            Reward value for the agent
+        """
+        # Default: competitive scoring - my delta minus opponent delta
+        agent_team = self.get_team_for_agent(agent)
+        opposing_team = "blue" if agent_team == "red" else "red"
+        
+        own_delta = new_scores.get(agent_team, 0) - initial_scores.get(agent_team, 0)
+        opp_delta = new_scores.get(opposing_team, 0) - initial_scores.get(opposing_team, 0)
+        
+        return own_delta - opp_delta - penalty
 
     
     @abstractmethod
@@ -185,6 +217,19 @@ class VexGame(ABC):
         
         Returns:
             List of obstacle objects
+        """
+        pass
+
+    @abstractmethod
+    def action_to_name(self, action: int) -> str:
+        """
+        Convert an action index to a human-readable name.
+        
+        Args:
+            action: Action index
+            
+        Returns:
+            Human-readable action name
         """
         pass
     

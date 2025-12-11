@@ -7,28 +7,23 @@ from ray.rllib.utils.framework import try_import_torch
 import warnings
 
 # Import from new modular architecture
-from vex_core import VexMultiAgentEnv
-from pushback import VexUSkillsGame, PushBackGame
+from vex_core.base_game import VexGame
+from vex_core.base_env import VexMultiAgentEnv
+from pushback.vexai_skills import VexAISkillsGame
 
 
-def env_creator(config=None):
-    """Create environment instance for RLlib registration."""
-    config = config or {}
-    game = VexUSkillsGame()
-    return VexMultiAgentEnv(
-        game=game,
-        render_mode=None,
-        randomize=config.get("randomize", True),
-    )
-
-
-def compile_checkpoint_to_torchscript(checkpoint_path: str, output_path: str = None):
+def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, output_path: str = None):
     """
     Loads an agent from a checkpoint and saves its RL Modules as TorchScript files.
 
     Args:
+        game (VexGame): The environment to use for the game.
         checkpoint_path (str): Path to the RLLib checkpoint directory.
     """
+    def env_creator(config=None):
+        """Create environment instance for RLlib registration."""
+        return VexMultiAgentEnv(game=game, render_mode=None)
+
     if not os.path.isdir(checkpoint_path):
         print(f"Error: Checkpoint path {checkpoint_path} not found or not a directory.")
         return
@@ -69,8 +64,8 @@ def compile_checkpoint_to_torchscript(checkpoint_path: str, output_path: str = N
             ray.shutdown()
             return
         
-        # Use static method to get observation shape (assuming 2 agents for VEX U)
-        obs_shape = PushBackGame.get_observation_space_shape(2)
+        # Use static method to get observation shape
+        obs_shape = game.observation_space(game.possible_agents[0]).shape
 
         # Create a dummy observation tensor
         dummy_obs = torch.randn(1, *obs_shape).clone().detach()
@@ -121,4 +116,4 @@ if __name__ == "__main__":
     parser.add_argument("--output-path", type=str, required=True, help="Output directory for the TorchScript model(s).")
     args = parser.parse_args()
 
-    compile_checkpoint_to_torchscript(args.checkpoint_path, args.output_path)
+    compile_checkpoint_to_torchscript(VexAISkillsGame(), args.checkpoint_path, args.output_path)

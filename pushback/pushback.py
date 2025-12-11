@@ -474,6 +474,9 @@ class PushBackGame(VexGame):
                 "gameTime": 0.0,
                 "active": True,
                 "agent_name": robot.name,
+                # Per-agent tracking for observation
+                "goals_added": [0, 0, 0, 0],  # [LONG_1, LONG_2, CENTER_UPPER, CENTER_LOWER]
+                "loaders_taken": [0, 0, 0, 0],  # [TL, TR, BL, BR]
             }
         
         # Get blocks
@@ -496,50 +499,86 @@ class PushBackGame(VexGame):
         """Build observation vector for an agent."""
         agent_state = state["agents"][agent]
         
-        # Block data
-        block_data = []
-        for b in state["blocks"]:
-            block_data.extend([b["position"][0], b["position"][1], float(b["status"])])
+        # Constants for observation space
+        MAX_AVAILABLE_BLOCKS = 20  # Maximum blocks to track positions for
         
-        # Goal counts
-        goal_counts = self.goal_manager.get_goal_counts()
-        goal_data = [
-            float(goal_counts[GoalType.LONG_1]),
-            float(goal_counts[GoalType.LONG_2]),
-            float(goal_counts[GoalType.CENTER_UPPER]),
-            float(goal_counts[GoalType.CENTER_LOWER]),
-        ]
+        obs_parts = []
         
-        total_blocks = len(state["blocks"])
-        obs = np.concatenate([
-            agent_state["position"],
-            agent_state["orientation"],
-            [float(agent_state["held_blocks"])],
-            [1.0 if agent_state["parked"] else 0.0],
-            [float(self.total_time - agent_state["gameTime"])],
-            np.array(block_data, dtype=np.float32),
-            np.array(state["loaders"], dtype=np.float32),
-            np.array(goal_data, dtype=np.float32),
-        ])
+        # 1. Self position (2) and orientation (1)
+        obs_parts.append(float(agent_state["position"][0]))
+        obs_parts.append(float(agent_state["position"][1]))
+        obs_parts.append(float(agent_state["orientation"][0]))
         
-        return obs.astype(np.float32)
+        # 2. Teammate robots only: position (2) + orientation (1) each, max 1 teammate
+        MAX_TEAMMATES = 1  # Support up to 2 robots per team
+        my_team = agent_state["team"]
+        teammate_data = []
+        for other_agent, other_state in state["agents"].items():
+            if other_agent != agent and other_state["team"] == my_team:
+                teammate_data.extend([
+                    float(other_state["position"][0]),
+                    float(other_state["position"][1]),
+                    float(other_state["orientation"][0])
+                ])
+        # Pad with zeros if no teammate
+        while len(teammate_data) < MAX_TEAMMATES * 3:
+            teammate_data.extend([0.0, 0.0, 0.0])
+        obs_parts.extend(teammate_data[:MAX_TEAMMATES * 3])
+        
+        # 3. Self held blocks (1)
+        obs_parts.append(float(agent_state["held_blocks"]))
+        
+        # 4. Self parked status (1)
+        obs_parts.append(1.0 if agent_state["parked"] else 0.0)
+        
+        # 5. Time remaining (1)
+        obs_parts.append(float(self.total_time - agent_state["gameTime"]))
+        
+        # 6. Count available blocks (ON_FIELD status)
+        available_blocks = [b for b in state["blocks"] if b["status"] == BlockStatus.ON_FIELD]
+        obs_parts.append(float(len(available_blocks)))
+        
+        # 7. Positions of available blocks (MAX_AVAILABLE_BLOCKS * 2), padded with zeros
+        block_positions = []
+        for i, block in enumerate(available_blocks[:MAX_AVAILABLE_BLOCKS]):
+            block_positions.extend([float(block["position"][0]), float(block["position"][1])])
+        # Pad remaining slots
+        while len(block_positions) < MAX_AVAILABLE_BLOCKS * 2:
+            block_positions.extend([0.0, 0.0])
+        obs_parts.extend(block_positions)
+        
+        # 8. Blocks added to each goal BY THIS AGENT (4)
+        obs_parts.extend([float(x) for x in agent_state["goals_added"]])
+        
+        # 9. Blocks taken from each loader BY THIS AGENT (4)
+        obs_parts.extend([float(x) for x in agent_state["loaders_taken"]])
+        
+        return np.array(obs_parts, dtype=np.float32)
     
     def observation_space(self, agent: str) -> spaces.Space:
         """Get observation space for an agent."""
-        shape = self.get_observation_space_shape(len(self.possible_agents))
+        shape = self.get_observation_space_shape()
         
-        low = np.full(shape, -float('inf'), dtype=np.float32)
-        high = np.full(shape, float('inf'), dtype=np.float32)
+        # Create explicit float32 arrays to avoid precision warnings
+        low = np.full(shape, -1e10, dtype=np.float32)
+        high = np.full(shape, 1e10, dtype=np.float32)
         
         return spaces.Box(low=low, high=high, dtype=np.float32)
     
     @staticmethod
-    def get_observation_space_shape(num_agents: int) -> Tuple[int]:
+    def get_observation_space_shape() -> Tuple[int]:
         """Get the shape of the observation space."""
-        # Calculate observation size based on expected blocks
-        total_blocks = NUM_BLOCKS_FIELD + NUM_BLOCKS_LOADER + num_agents
-        obs_size = 6 + (total_blocks * 3) + 4 + 4  # agent state + blocks + loaders + goals
-        return (obs_size,)
+        # Self: pos(2) + orient(1) = 3
+        # Teammate: 1 * 3 = 3
+        # Held blocks: 1
+        # Parked: 1
+        # Time remaining: 1
+        # Available blocks count: 1
+        # Block positions: 20 * 2 = 40
+        # Goals added by this agent: 4
+        # Loaders taken by this agent: 4
+        # Total: 3 + 3 + 1 + 1 + 1 + 1 + 40 + 4 + 4 = 58
+        return (58,)
     
     def action_space(self, agent: str) -> spaces.Space:
         """Get action space for an agent."""
@@ -763,6 +802,10 @@ class PushBackGame(VexGame):
         # Update block positions in goal
         self._update_goal_block_positions(goal, target_status, state)
         
+        # Track per-agent goals added
+        goal_idx = [GoalType.LONG_1, GoalType.LONG_2, GoalType.CENTER_UPPER, GoalType.CENTER_LOWER].index(goal_type)
+        agent_state["goals_added"][goal_idx] += scored_count
+        
         agent_state["held_blocks"] = 0
         duration += 0.5 * scored_count
         
@@ -827,6 +870,9 @@ class PushBackGame(VexGame):
                     block["held_by"] = agent_state["agent_name"]
                     block["position"] = agent_state["position"].copy()
                     break
+            
+            # Track per-agent loaders taken
+            agent_state["loaders_taken"][loader_idx] += 1
         
         return duration, penalty
     
@@ -1095,6 +1141,18 @@ class PushBackGame(VexGame):
                 facecolor='yellow', alpha=0.15, edgecolor='yellow', linewidth=0.5
             )
             ax.add_patch(fov_wedge)
+    
+    def action_to_name(self, action: int) -> str:
+        """
+        Convert an action index to a human-readable name.
+        
+        Args:
+            action: Action index
+            
+        Returns:
+            Human-readable action name
+        """
+        return Actions(action).name
 
     @staticmethod
     def split_action(action: int, observation: np.ndarray) -> List[str]:

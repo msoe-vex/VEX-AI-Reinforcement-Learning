@@ -42,7 +42,7 @@ def run_simulation(model_path):
     obs_shape = env.observation_space(sample_agent).shape
     act_shape = env.action_space(sample_agent).shape # For Discrete, this is ()
 
-    print("Starting simulation...")
+    print("Running simulation...")
     observations, infos = env.reset()
     env.clearStepsDirectory()
     
