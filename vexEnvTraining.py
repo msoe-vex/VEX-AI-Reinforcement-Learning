@@ -56,8 +56,6 @@ if __name__ == "__main__":
     parser.add_argument('--job-id', type=str, default="", help='SLURM job ID')  # Job ID for logging
     parser.add_argument('--model-path', type=str, default="", help='Path to save/load the model')
     parser.add_argument('--randomize', type=bool, default=True, help='Enable or disable randomization (True or False)')
-    parser.add_argument('--num-layers', type=int, default=2, help='Number of layers in the model')
-    parser.add_argument('--num-nodes', type=int, default=64, help='Number of nodes per layer in the model')
     parser.add_argument('--num-gpus', type=int, default=0, help='Number of GPUs to use')
     parser.add_argument('--partition', type=str, default="teaching", help='SLURM partition to use')
     parser.add_argument('--algorithm', type=str, default="PPO", help='Algorithm to use for training')
@@ -125,10 +123,7 @@ if __name__ == "__main__":
                 module_class=VexCustomPPO,  # Use custom model with clean architecture
                 observation_space=obs_space,
                 action_space=act_space,
-                model_config={
-                    "fcnet_hiddens": [args.num_nodes] * args.num_layers,
-                    "fcnet_activation": "relu"
-                }
+                model_config={}  # Model architecture defined in vex_custom_model.py
             )
         )
         .fault_tolerance(
@@ -206,8 +201,6 @@ if __name__ == "__main__":
         "learning_rate": args.learning_rate,
         "discount_factor": args.discount_factor,
         "entropy": args.entropy,
-        "num_layers": args.num_layers,
-        "num_nodes": args.num_nodes,
         "randomize": args.randomize,
     }
     metadata_path = os.path.join(trial_dir, "training_metadata.json")
