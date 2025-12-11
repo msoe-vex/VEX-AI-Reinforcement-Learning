@@ -75,12 +75,17 @@ if __name__ == "__main__":
     # Create a temporary instance to retrieve observation and action spaces for a sample agent.
     temp_env = env_creator({"game": args.game, "randomize": args.randomize})
 
-    # Get agent IDs for multi-agent setup
-    agent_ids = temp_env.possible_agents
+    # Get observation and action spaces for module spec
+    sample_agent = temp_env.possible_agents[0]
+    obs_space = temp_env.observation_space(sample_agent)
+    act_space = temp_env.action_space(sample_agent)
     
     # Initialize Ray with GPU detection
     ray.init(ignore_reinit_error=True, include_dashboard=False)
 
+    # Import RLModule specs for new API
+    from ray.rllib.core.rl_module.rl_module import RLModuleSpec
+    
     # Configure the RLlib Trainer using PPO with new API stack
     config = (
         PPOConfig()
@@ -98,6 +103,7 @@ if __name__ == "__main__":
         )
         .env_runners(
             num_env_runners=args.cpus_per_task-1,  # Use 1 runner for each CPU core plus 1 for the main process
+            max_restarts=0,  # Disable actor restarts to avoid object store issues
         )
         .multi_agent(
             policies={"shared_policy"},  # Define policy IDs
@@ -105,10 +111,14 @@ if __name__ == "__main__":
             policies_to_train=["shared_policy"],
         )
         .rl_module(
-            model_config={
-                "fcnet_hiddens": [args.num_nodes] * args.num_layers,
-                "fcnet_activation": "relu"
-            }
+            rl_module_spec=RLModuleSpec(
+                observation_space=obs_space,
+                action_space=act_space,
+                model_config={
+                    "fcnet_hiddens": [args.num_nodes] * args.num_layers,
+                    "fcnet_activation": "relu"
+                }
+            )
         )
         .training(
             lr=args.learning_rate,
@@ -133,9 +143,12 @@ if __name__ == "__main__":
         "PPO",
         config=config.to_dict(),
         storage_path=output_directory,
-        checkpoint_freq=1,  # Checkpoint every iteration
-        keep_checkpoints_num=1,  # Keep only the best checkpoint
+        checkpoint_freq=5,  # Checkpoint every 5 iterations to reduce overhead
+        keep_checkpoints_num=2,  # Keep 2 best checkpoints
         checkpoint_score_attr="env_runners/episode_return_mean",  # Use this metric for best checkpoint
+        sync_config=tune.SyncConfig(
+            sync_period=300,  # Sync every 5 minutes instead of constantly
+        ),
         stop={"training_iteration": args.num_iters},
         callbacks=[
             JsonLoggerCallback(),
