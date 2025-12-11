@@ -80,8 +80,16 @@ if __name__ == "__main__":
     obs_space = temp_env.observation_space(sample_agent)
     act_space = temp_env.action_space(sample_agent)
     
-    # Initialize Ray with GPU detection
-    ray.init(ignore_reinit_error=True, include_dashboard=False)
+    # Initialize Ray with GPU detection and runtime environment config
+    ray.init(
+        ignore_reinit_error=True, 
+        include_dashboard=False,
+        runtime_env={
+            "env_vars": {
+                "RAY_max_restarts": "0"  # Disable actor restarts
+            }
+        }
+    )
 
     # Import RLModule specs for new API
     from ray.rllib.core.rl_module.rl_module import RLModuleSpec
@@ -103,7 +111,6 @@ if __name__ == "__main__":
         )
         .env_runners(
             num_env_runners=args.cpus_per_task-1,  # Use 1 runner for each CPU core plus 1 for the main process
-            max_restarts=0,  # Disable actor restarts to avoid object store issues
         )
         .multi_agent(
             policies={"shared_policy"},  # Define policy IDs
@@ -119,6 +126,9 @@ if __name__ == "__main__":
                     "fcnet_activation": "relu"
                 }
             )
+        )
+        .fault_tolerance(
+            max_num_env_runner_restarts=0,  # Disable env runner restarts to avoid object store issues
         )
         .training(
             lr=args.learning_rate,
