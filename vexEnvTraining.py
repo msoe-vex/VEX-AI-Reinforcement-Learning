@@ -38,7 +38,7 @@ if __name__ == "__main__":
     os.environ["TUNE_WARN_EXCESSIVE_EXPERIMENT_CHECKPOINT_SYNC_THRESHOLD_S"] = "0"
     
     # Suppress all deprecation warnings
-    warnings.filterwarnings("ignore", category=DeprecationWarning)
+    # warnings.filterwarnings("ignore", category=DeprecationWarning)
     
     # Suppress gymnasium precision/space warnings (RLlib internal env creation)
     warnings.filterwarnings("ignore", module="gymnasium")
@@ -75,18 +75,19 @@ if __name__ == "__main__":
     # Create a temporary instance to retrieve observation and action spaces for a sample agent.
     temp_env = env_creator({"game": args.game, "randomize": args.randomize})
 
-    # Define a policy for each agent.
-    policies = {
-        agent_id: (None, temp_env.observation_space(agent_id), temp_env.action_space(agent_id), {}) for agent_id in temp_env.possible_agents
-    }
-    policies["shared_policy"] = (None, temp_env.observation_space(temp_env.possible_agents[0]), temp_env.action_space(temp_env.possible_agents[0]), {})
-
+    # Get agent IDs for multi-agent setup
+    agent_ids = temp_env.possible_agents
+    
     # Initialize Ray with GPU detection
     ray.init(ignore_reinit_error=True, include_dashboard=False)
 
-    # Configure the RLlib Trainer using PPO (you can switch to another algorithm if desired)
+    # Configure the RLlib Trainer using PPO with new API stack
     config = (
         PPOConfig()
+        .api_stack(
+            enable_rl_module_and_learner=True,
+            enable_env_runner_and_connector_v2=True,
+        )
         .environment(
             env="VEX_Multi_Agent_Env",
             env_config={"randomize": args.randomize, "game": args.game}
@@ -99,11 +100,12 @@ if __name__ == "__main__":
             num_env_runners=args.cpus_per_task-1,  # Use 1 runner for each CPU core plus 1 for the main process
         )
         .multi_agent(
-            policies=policies,
+            policies={"shared_policy"},  # Define policy IDs
             policy_mapping_fn=policy_mapping_fn,
+            policies_to_train=["shared_policy"],
         )
         .rl_module(
-            model_config={
+            model_config_dict={
                 "fcnet_hiddens": [args.num_nodes] * args.num_layers,
                 "fcnet_activation": "relu"
             }
