@@ -14,8 +14,6 @@ while [[ "$#" -gt 0 ]]; do
         --learning-rate) LR_I="$2"; shift 2 ;;
         --discount-factor) DISCOUNT_I="$2"; shift 2 ;;
         --randomize) RANDOMIZE="$2"; shift 2 ;;
-        --num-layers) NUM_LAYERS="$2"; shift 2 ;;
-        --num-nodes) NUM_NODES="$2"; shift 2 ;;
         --num-iters) NUM_ITERS="$2"; shift 2 ;;
         --algorithm) ALGORITHM="$2"; shift 2 ;;
         --verbose) VERBOSE="$2"; shift 2 ;;
@@ -33,8 +31,6 @@ python vex_model_training.py \
     --discount-factor ${DISCOUNT_I:-0.99} \
     --job-id $SLURM_JOB_ID \
     --randomize ${RANDOMIZE:-True} \
-    --num-layers ${NUM_LAYERS:-2} \
-    --num-nodes ${NUM_NODES:-64} \
     --num-gpus $SLURM_GPUS \
     --partition $SLURM_JOB_PARTITION \
     --algorithm ${ALGORITHM:-PPO} \
