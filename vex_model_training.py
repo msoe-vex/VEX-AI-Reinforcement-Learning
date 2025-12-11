@@ -95,6 +95,10 @@ if __name__ == "__main__":
     # Import RLModule specs for new API
     from ray.rllib.core.rl_module.rl_module import RLModuleSpec
     
+    # Detect available GPUs
+    num_gpus_available = int(ray.available_resources().get("GPU", 0))
+    print(f"GPUs detected by Ray: {num_gpus_available}")
+    
     # Configure the RLlib Trainer using PPO with new API stack
     config = (
         PPOConfig()
@@ -108,7 +112,11 @@ if __name__ == "__main__":
         )
         .framework("torch")  # change to "tf" for TensorFlow
         .resources(
-            num_gpus=ray.available_resources().get("GPU", 0)  # Use available GPUs
+            num_gpus=0,  # Don't assign GPUs at top level with new API
+        )
+        .learners(
+            num_learners=1 if num_gpus_available > 0 else 0,  # Use 1 GPU learner if available
+            num_gpus_per_learner=1 if num_gpus_available > 0 else 0,  # Assign GPU to learner
         )
         .env_runners(
             num_env_runners=args.cpus_per_task-1,  # Use 1 runner for each CPU core plus 1 for the main process
