@@ -35,7 +35,7 @@ def policy_mapping_fn(agent_id, episode):
 
 if __name__ == "__main__":
     # Suppress excessive experiment checkpoint warnings completely
-    os.environ["TUNE_WARN_EXCESSIVE_EXPERIMENT_CHECKPOINT_SYNC_THRESHOLD_S"] = "0"
+    # os.environ["TUNE_WARN_EXCESSIVE_EXPERIMENT_CHECKPOINT_SYNC_THRESHOLD_S"] = "0"
     
     # Suppress all deprecation warnings
     # warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -105,7 +105,7 @@ if __name__ == "__main__":
             policies_to_train=["shared_policy"],
         )
         .rl_module(
-            model_config_dict={
+            model_config={
                 "fcnet_hiddens": [args.num_nodes] * args.num_layers,
                 "fcnet_activation": "relu"
             }
