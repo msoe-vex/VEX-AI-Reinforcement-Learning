@@ -4,7 +4,7 @@ Custom RLModule for VEX robotics with clean, exportable architecture.
 
 import torch
 import torch.nn as nn
-from ray.rllib.algorithms.ppo.torch.ppo_torch_rl_module import PPOTorchRLModule
+from ray.rllib.algorithms.ppo.torch.default_ppo_torch_rl_module import DefaultPPOTorchRLModule
 from ray.rllib.core.columns import Columns
 from ray.rllib.core.rl_module.rl_module import RLModule
 from ray.rllib.utils.annotations import override
@@ -13,7 +13,7 @@ from gymnasium.spaces import Discrete, Box
 # Import internal constants required for the output dictionary
 from ray.rllib.core.models.base import ENCODER_OUT, CRITIC, ACTOR
 
-class VexCustomPPO(PPOTorchRLModule):
+class VexCustomPPO(DefaultPPOTorchRLModule):
     """
     Custom PPO RLModule with clean PyTorch architecture.
     """

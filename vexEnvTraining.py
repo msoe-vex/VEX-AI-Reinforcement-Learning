@@ -2,7 +2,9 @@ import ray
 import argparse
 from ray.tune.registry import register_env
 from ray.rllib.algorithms.ppo import PPOConfig
-from ray.tune.logger import JsonLoggerCallback, CSVLoggerCallback, TBXLoggerCallback
+from ray.tune.logger.json import JsonLoggerCallback
+from ray.tune.logger.csv import CSVLoggerCallback
+# from ray.tune.logger.tensorboardx import TBXLoggerCallback  # Uncomment if you want TensorBoard
 from ray import tune
 import warnings
 import time
@@ -37,12 +39,9 @@ def policy_mapping_fn(agent_id, episode):
 if __name__ == "__main__":
     # Suppress excessive experiment checkpoint warnings completely
     os.environ["TUNE_WARN_EXCESSIVE_EXPERIMENT_CHECKPOINT_SYNC_THRESHOLD_S"] = "0"
-    # os.environ["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] = "0"
     
-    # Suppress all deprecation warnings
-    # warnings.filterwarnings("ignore", category=DeprecationWarning)
-    # warnings.filterwarnings("ignore", category=FutureWarning)
-    # os.environ["PYTHONWARNINGS"] = "ignore::DeprecationWarning"
+    # Suppress deprecation warnings from RLlib internal code
+    os.environ["PYTHONWARNINGS"] = "ignore::DeprecationWarning"
     
     # Suppress gymnasium precision/space warnings (RLlib internal env creation)
     warnings.filterwarnings("ignore", module="gymnasium")
