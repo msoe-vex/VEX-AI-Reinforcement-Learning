@@ -161,30 +161,40 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             return {}, {}, {"__all__": True}, {"__all__": True}, {}
         
         self.num_moves += 1
-        rewards = {agent: 0.0 for agent in self.agents}
+        
+        # First, remove any agents that were terminated in the PREVIOUS step
+        # We do this at the start because RLlib validates that returned obs 
+        # match self.agents after step() returns
+        self.agents = [
+            agent for agent in self.agents 
+            if not self.game.is_agent_terminated(agent, self.environment_state)
+        ]
+        
+        # If all agents are already terminated, end the episode
+        if not self.agents:
+            return {}, {}, {"__all__": True}, {"__all__": True}, {}
+        
+        # Only process agents that are currently active
+        active_agents = list(self.agents)
+        
+        rewards = {agent: 0.0 for agent in active_agents}
         
         # Get current minimum game time for action synchronization
         min_game_time = min(
             self.environment_state["agents"][agent]["gameTime"]
-            for agent in self.agents
+            for agent in active_agents
         )
         
         total_time = self.game.total_time
         
-        # Check terminations - delegate to game for game-specific termination logic
-        terminations = {
-            agent: self.game.is_agent_terminated(agent, self.environment_state)
-            for agent in self.agents
-        }
-        terminations["__all__"] = all(terminations.values())
-        truncations = {agent: False for agent in self.agents}
-        truncations["__all__"] = False
-        
         for agent, action in actions.items():
+            if agent not in active_agents:
+                continue
+                
             agent_state = self.environment_state["agents"][agent]
             
             # Skip agent if their time is ahead
-            if agent_state["gameTime"] > min_game_time or not agent_state.get("active", True):
+            if agent_state["gameTime"] > min_game_time:
                 agent_state["action_skipped"] = True
                 continue
             
@@ -236,15 +246,29 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         # Update total score (stored as property)
         self.score = self.game.compute_score(self.environment_state)
         
+        # Check terminations AFTER executing actions
+        terminations = {
+            agent: self.game.is_agent_terminated(agent, self.environment_state)
+            for agent in active_agents
+        }
+        terminations["__all__"] = all(terminations.values())
+        
+        truncations = {agent: False for agent in active_agents}
+        truncations["__all__"] = False
+        
+        # Build observations for ALL currently active agents
+        # (terminated agents will be removed at the START of the next step)
         observations = {
             agent: self.game.get_observation(agent, self.environment_state)
-            for agent in self.agents
+            for agent in active_agents
         }
         
-        if terminations["__all__"]:
-            self.agents = []
+        # Infos for all active agents
+        infos = {agent: {} for agent in active_agents}
         
-        infos = {agent: {} for agent in self.agents}
+        # NOTE: Do NOT update self.agents here - RLlib validates that returned
+        # observations match self.agents. We remove terminated agents at the 
+        # START of the next step() call.
         
         return observations, rewards, terminations, truncations, infos
     
