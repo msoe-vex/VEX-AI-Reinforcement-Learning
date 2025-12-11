@@ -4,132 +4,103 @@ import json
 import ray
 from ray.rllib.algorithms.algorithm import Algorithm
 from ray.tune.registry import register_env
-from ray.rllib.utils.framework import try_import_torch
-import warnings
+import torch
+import torch.nn as nn
 
 # Import from new modular architecture
 from vex_core.base_game import VexGame
 from vex_core.base_env import VexMultiAgentEnv
 from pushback import PushBackGame
-
+# Import your custom model class to ensure pickle can find it
+from vex_custom_model import VexCustomPPO
 
 def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, output_path: str = None):
-    """
-    Loads an agent from a checkpoint and saves its RL Modules as TorchScript files.
-
-    Args:
-        game (VexGame): The environment to use for the game.
-        checkpoint_path (str): Path to the RLLib checkpoint directory.
-    """
     def env_creator(config=None):
-        """Create environment instance for RLlib registration."""
         return VexMultiAgentEnv(game=game, render_mode=None)
 
-    if not os.path.isdir(checkpoint_path):
-        print(f"Error: Checkpoint path {checkpoint_path} not found or not a directory.")
-        return
-
-    torch, nn = try_import_torch()
-    if not torch:
-        print("Error: PyTorch not found. Please install PyTorch.")
-        return
-
-    # Initialize Ray if not already initialized
     if not ray.is_initialized():
         ray.init(ignore_reinit_error=True)
 
-    # Register the environment
     register_env("VEX_Multi_Agent_Env", env_creator)
 
-    # Restore the algorithm from the checkpoint
+    print(f"Loading checkpoint: {checkpoint_path}")
     try:
-        # Use Algorithm.from_checkpoint to be generic for any algorithm
         algo = Algorithm.from_checkpoint(checkpoint_path)
-        print(f"Successfully restored algorithm from checkpoint: {checkpoint_path}")
     except Exception as e:
-        print(f"Error restoring algorithm from checkpoint: {e}")
-        ray.shutdown()
+        print(f"Error restoring algorithm: {e}")
         return
 
-    # Iterate over all policies/modules in the algorithm
     for policy_id in algo.config.policies:
-        print(f"Saving module for policy: {policy_id}")
+        print(f"--- Exporting Policy: {policy_id} ---")
         
-        # This is the modern way to access the underlying neural network (RLModule).
-        try:
-            module = algo.get_module(policy_id)
-            module.eval()  # Set the module to evaluation mode
-        except Exception as e:
-            print(f"Error getting RLModule: {e}")
-            algo.stop()
-            ray.shutdown()
-            return
+        rl_module = algo.get_module(policy_id)
+        rl_module.eval()
         
-        # Use static method to get observation shape
-        obs_shape = game.observation_space(game.possible_agents[0]).shape
+        if hasattr(rl_module, 'clean_encoder'):
+            clean_encoder = rl_module.clean_encoder
+            clean_head = rl_module.pi
+            
+            # CRITICAL: Convert any numpy types to Python native types
+            # This is necessary for torch.jit.script compatibility
+            def convert_module_to_native_types(module):
+                """Recursively convert numpy types in module attributes to Python types."""
+                import numpy as np
+                for name, value in module.__dict__.items():
+                    if isinstance(value, np.integer):
+                        setattr(module, name, int(value))
+                    elif isinstance(value, np.floating):
+                        setattr(module, name, float(value))
+                # Also check submodules
+                for submodule in module.children():
+                    convert_module_to_native_types(submodule)
+            
+            # Apply conversion to both encoder and head
+            convert_module_to_native_types(clean_encoder)
+            convert_module_to_native_types(clean_head)
+            
+            # Combine them into a simple container for export
+            class ExportModel(nn.Module):
+                def __init__(self, encoder, head):
+                    super().__init__()
+                    self.encoder = encoder
+                    self.head = head
+                
+                def forward(self, obs):
+                    # Pure Tensor operations!
+                    feats = self.encoder(obs)
+                    return self.head(feats)
+            
+            export_model = ExportModel(clean_encoder, clean_head)
+            export_model.eval()
+            
+            # Save using JIT SCRIPT (Best for C++)
+            save_path = os.path.join(output_path, f"{policy_id}.pt")
+            obs_shape = game.observation_space(game.possible_agents[0]).shape
+            dummy_obs = torch.randn(1, *obs_shape)
+            
+            try:
+                # We can script this directly because it has no dicts/kwargs!
+                scripted = torch.jit.script(export_model)
+                scripted.save(save_path)
+                print(f"✓ SUCCESS: Saved fully JIT Scripted model to {save_path}")
+            except Exception as e:
+                print(f"Scripting failed ({e}), trying trace...")
+                # Fallback to trace if needed
+                traced = torch.jit.trace(export_model, dummy_obs)
+                traced.save(save_path)
+                print(f"✓ SUCCESS: Saved JIT Traced model to {save_path}")
 
-        # Create a dummy observation tensor
-        dummy_obs = torch.randn(1, *obs_shape).clone().detach()
+        else:
+            print("Could not find clean encoder in custom model.")
 
-        # The new RLModule uses a dictionary for input and `forward_inference` for output.
-        class TracedModel(torch.nn.Module):
-            def __init__(self, original_module):
-                super().__init__()
-                self.original_module = original_module
-
-            def forward(self, obs):
-                # The RLModule's forward_inference expects a batched dictionary.
-                input_dict = {"obs": obs}
-                # The output is also a dictionary. We extract the action logits.
-                output_dict = self.original_module.forward_inference(input_dict)
-                # 'action_dist_inputs' is the standard key for action logits.
-                return output_dict['action_dist_inputs']
-
-        traced_wrapper = TracedModel(module)
-
-        # Trace the model
-        try:
-            final_traced_model = torch.jit.trace(traced_wrapper, (dummy_obs))
-        except Exception as e:
-            print(f"Error during model tracing: {e}")
-            algo.stop()
-            ray.shutdown()
-            return
-
-        # Determine the path to save the traced model
-        os.makedirs(output_path, exist_ok=True)
-        traced_model_path = os.path.join(output_path, f"{policy_id}.pt")
-        
-        try:
-            final_traced_model.save(traced_model_path)
-            print(f"Traced TorchScript model saved to: {traced_model_path}")
-        except Exception as e:
-            print(f"Error saving traced model: {e}")
-
-    # Clean up
-    algo.stop()
     ray.shutdown()
 
 if __name__ == "__main__":
-    warnings.filterwarnings("ignore", category=DeprecationWarning)
-    parser = argparse.ArgumentParser(description="Compile an RLLib checkpoint to a TorchScript model.")
-    parser.add_argument("--checkpoint-path", type=str, required=True, help="Path to the RLLib checkpoint directory.")
-    parser.add_argument("--output-path", type=str, required=True, help="Output directory for the TorchScript model(s).")
-    parser.add_argument("--game", type=str, default=None, help="Game variant (if not provided, reads from training_metadata.json)")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--checkpoint-path", type=str, required=True)
+    parser.add_argument("--output-path", type=str, required=True)
+    parser.add_argument("--game", type=str, default="vexai_skills")
     args = parser.parse_args()
     
-    # Try to read game from metadata if not provided
-    game_name = args.game
-    if game_name is None:
-        metadata_path = os.path.join(args.output_path, "training_metadata.json")
-        if os.path.exists(metadata_path):
-            with open(metadata_path, 'r') as f:
-                metadata = json.load(f)
-                game_name = metadata.get("game", "vexai_skills")
-            print(f"Read game variant from metadata: {game_name}")
-        else:
-            game_name = "vexai_skills"
-            print(f"No metadata found, using default game: {game_name}")
-    
-    game = PushBackGame.get_game(game_name)
+    game = PushBackGame.get_game(args.game)
     compile_checkpoint_to_torchscript(game, args.checkpoint_path, args.output_path)

@@ -39,5 +39,5 @@ python vexEnvTraining.py \
     --partition $SLURM_JOB_PARTITION \
     --algorithm ${ALGORITHM:-PPO} \
     --checkpoint-path ${CHECKPOINT_PATH:-""} \
-    --verbose ${VERBOSE:-0} \
+    --verbose ${VERBOSE:-1} \
     --game ${GAME:-vexai_skills}

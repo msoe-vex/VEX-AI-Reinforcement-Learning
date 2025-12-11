@@ -11,6 +11,7 @@ import os
 # Import from new modular architecture
 from vex_core import VexMultiAgentEnv
 from pushback import PushBackGame
+from vex_custom_model import VexCustomPPO
 
 from vexModelCompile import compile_checkpoint_to_torchscript
 import sys
@@ -51,7 +52,7 @@ if __name__ == "__main__":
     parser.add_argument('--learning-rate', type=float, default=0.0005, help='Learning rate')  # Default: 0.0005
     parser.add_argument('--discount-factor', type=float, default=0.99, help='Discount factor')  # Default: 0.99
     parser.add_argument('--entropy', type=float, default=0.01, help='Entropy coefficient')  # Default: 0.01
-    parser.add_argument('--num-iters', type=int, default=10, help='Number of training iterations')  # Default: 10
+    parser.add_argument('--num-iters', type=int, default=1, help='Number of training iterations')  # Default: 10
     parser.add_argument('--cpus-per-task', type=int, default=1, help='Number of CPUs per task')  # Default: 1
     parser.add_argument('--job-id', type=str, default="", help='SLURM job ID')  # Job ID for logging
     parser.add_argument('--model-path', type=str, default="", help='Path to save/load the model')
@@ -122,6 +123,7 @@ if __name__ == "__main__":
         )
         .rl_module(
             rl_module_spec=RLModuleSpec(
+                module_class=VexCustomPPO,  # Use custom model with clean architecture
                 observation_space=obs_space,
                 action_space=act_space,
                 model_config={
@@ -151,12 +153,17 @@ if __name__ == "__main__":
     else:
         output_directory = os.path.join(script_directory, "vexEnvTraining")  # Default directory if no job ID is provided
 
+    # Calculate checkpoint frequency - ensure at least one checkpoint is created
+    # Checkpoint at the end and at reasonable intervals
+    checkpoint_freq = max(1, min(5, args.num_iters))  # Every 5 iters, but at least once
+    print(f"Checkpoint frequency: every {checkpoint_freq} iterations")
+
     # Run the training process with logger callbacks
     analysis = tune.run(
         "PPO",
         config=config.to_dict(),
         storage_path=output_directory,
-        checkpoint_freq=5,  # Checkpoint every 5 iterations to reduce overhead
+        checkpoint_freq=checkpoint_freq,
         keep_checkpoints_num=1,  # Keep 1 best checkpoint
         checkpoint_score_attr="env_runners/episode_return_mean",  # Use this metric for best checkpoint
         sync_config=tune.SyncConfig(
