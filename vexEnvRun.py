@@ -19,11 +19,19 @@ def run_simulation(model_path, game_name, output_dir):
         print(f"Error: Model file not found at {model_path}")
         return
 
+    # Device Awareness: Automatically use GPU (CUDA) if available
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+    
     # Load the TorchScript model
     try:
-        loaded_model = torch.jit.load(model_path)
+        loaded_model = torch.jit.load(model_path, map_location=device)
         loaded_model.eval()  # Set the model to evaluation mode
-        print(f"Successfully loaded model from {model_path}")
+        
+        # Optimize for Inference: Fuses layers for faster execution
+        loaded_model = torch.jit.optimize_for_inference(loaded_model)
+        
+        print(f"Successfully loaded and optimized model from {model_path}")
     except Exception as e:
         print(f"Error loading model: {e}")
         return
@@ -42,6 +50,13 @@ def run_simulation(model_path, game_name, output_dir):
     sample_agent = env.possible_agents[0]
     obs_shape = env.observation_space(sample_agent).shape
     act_shape = env.action_space(sample_agent).shape # For Discrete, this is ()
+    
+    # Warmup Pass: Initialize CUDA context before simulation starts
+    print("Warming up model...")
+    dummy_input = torch.randn(1, *obs_shape, device=device)
+    with torch.no_grad():
+        _ = loaded_model(dummy_input)
+    print("Model warmed up")
 
     print("Running simulation...")
     observations, infos = env.reset()
@@ -71,7 +86,9 @@ def run_simulation(model_path, game_name, output_dir):
                 continue
 
             obs_np = observations[agent_id]
-            obs_tensor = torch.tensor(obs_np, dtype=torch.float32).unsqueeze(0)
+            # Zero-Copy Tensor Creation: Use from_numpy() for better performance
+            obs_np_float = obs_np.astype(np.float32) if obs_np.dtype != np.float32 else obs_np
+            obs_tensor = torch.from_numpy(obs_np_float).unsqueeze(0).to(device)
 
             with torch.no_grad():
                 action_logits = loaded_model(obs_tensor)
