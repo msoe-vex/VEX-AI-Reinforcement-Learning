@@ -38,11 +38,16 @@ def build_vex_model(obs_dim, action_dim):
     encoder_layers = []
     prev_dim = obs_dim
 
-    hidden_layers = [64, 64]
+    # Normalize inputs for better training stability
+    encoder_layers.append(nn.LayerNorm(obs_dim))
+
+    hidden_layers = [256, 128, 64]
+    dropout_rate = 0.1  # Light dropout for regularization
     
     for hidden_size in hidden_layers:
         encoder_layers.append(nn.Linear(prev_dim, hidden_size))
         encoder_layers.append(nn.ReLU())
+        encoder_layers.append(nn.Dropout(dropout_rate))
         
         prev_dim = hidden_size
     
