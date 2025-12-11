@@ -133,7 +133,6 @@ if __name__ == "__main__":
         config=config.to_dict(),
         storage_path=output_directory,
         checkpoint_config=CheckpointConfig(
-            checkpoint_frequency=1,
             checkpoint_score_attribute="env_runners/episode_return_mean",
             checkpoint_score_order="max",
             num_to_keep=1,
