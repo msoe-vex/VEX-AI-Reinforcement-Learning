@@ -10,3 +10,4 @@ grid.png
 /path_planner
 /vex_model_*/
 /vex_env_*/
+.nfs*
