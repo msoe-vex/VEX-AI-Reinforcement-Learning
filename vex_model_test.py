@@ -156,7 +156,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="vexEnvRun",
+        default="vex_model_test",
         help="Output directory for renders"
     )
     

@@ -4,7 +4,7 @@ import numpy as np
 # Import from new modular architecture
 from vex_core.base_game import VexGame
 
-class ModelRunner:
+class VexModelRunner:
     def __init__(self, model_path: str, game: VexGame):
         self.model_path: str = model_path
         self.game: VexGame = game

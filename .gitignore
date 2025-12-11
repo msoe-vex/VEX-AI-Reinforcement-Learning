@@ -7,11 +7,5 @@ train_models_*.sh
 path.png
 grid.png
 **/steps
-/artifacts
-/run_agent_results
-/run_instructions_results
-/Research Results
-/run_petting_zoo
-/vexEnvRun
-/vexEnvTraining
 /path_planner
+/vex_*/

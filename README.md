@@ -31,20 +31,20 @@ pip install -r requirements.txt
 
    ```bash
    # Default: vex_ai_competition
-   python vexEnv.py --mode vex_ai_competition --steps 100
+   python vex_env_test.py --mode vex_ai_competition --steps 100
    
    # Other modes: vex_u_competition, vex_u_skills, vex_ai_skills
-   python vexEnv.py --mode vexu_skills
+   python vex_env_test.py --mode vexu_skills
    ```
    - Runs a random policy simulation.
-   - Saves GIFs to `vexEnv/steps`.
+   - Saves GIFs to `vex_env_test/steps`.
 
 2. **Train the Model**
 
    Train a PPO agent using RLlib. The script automatically compiles the best checkpoint to TorchScript after training.
 
    ```bash
-   python vexEnvTraining.py --num-iters 100 --learning-rate 0.0003 --algorithm PPO
+   python vex_model_training.py --num-iters 100 --learning-rate 0.0003 --algorithm PPO
    ```
 
 3. **Compile a Checkpoint (Manual)**
@@ -52,7 +52,7 @@ pip install -r requirements.txt
    If you need to recompile a specific checkpoint:
 
    ```bash
-   python vexModelCompile.py --checkpoint-path /path/to/checkpoint_000005
+   python vex_model_compile.py --checkpoint-path /path/to/checkpoint_000005
    ```
 
 4. **Run a Trained Model**
@@ -60,14 +60,14 @@ pip install -r requirements.txt
    Visualize a trained policy:
 
    ```bash
-   python vexEnvRun.py --model-path /path/to/policy.pt
+   python vex_model_test.py --model-path /path/to/policy.pt
    ```
 
 ---
 
 ## Detailed Argument Descriptions
 
-### vexEnv.py
+### vex_env_test.py
 
 Environment definition and random simulation runner.
 
@@ -77,7 +77,7 @@ Environment definition and random simulation runner.
 | `--steps`        | int     | 100                  | Number of simulation steps.                      |
 | `--render_mode`  | str     | `rgb_array`          | Rendering mode.                                  |
 
-### vexEnvTraining.py
+### vex_model_training.py
 
 RLlib training script.
 
@@ -90,7 +90,7 @@ RLlib training script.
 | `--randomize`       | bool    | True      | Enable full-field block randomization                                       |
 | `--model-path`      | str     | ""        | Path to load a pre-trained model (for transfer learning)                    |
 
-### vexModelCompile.py
+### vex_model_compile.py
 
 Compile RLlib checkpont to TorchScript.
 
@@ -99,7 +99,7 @@ Compile RLlib checkpont to TorchScript.
 | `--checkpoint-path` | str     | Yes      | Path to the RLlib checkpoint directory                                      |
 | `--output-path`     | str     | No       | Output directory for `.pt` file                                             |
 
-### vexEnvRun.py
+### vex_model_test.py
 
 Run simulation using a TorchScript model.
 
@@ -111,7 +111,7 @@ Run simulation using a TorchScript model.
 
 ### SLURM Submission (submitTrainingJob.sh)
 
-Wrapper script for submitting `vexEnvTraining.py` jobs to SLURM (e.g., on ROSIE). Arguments passed to this script are forwarded to the python script.
+Wrapper script for submitting `vex_model_training.py` jobs to SLURM (e.g., on ROSIE). Arguments passed to this script are forwarded to the python script.
 
 ```bash
 sbatch submitTrainingJob.sh --num-iters 1000 --learning-rate 0.0001

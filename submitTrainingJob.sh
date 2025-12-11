@@ -25,7 +25,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 # Run your code here
-python vexEnvTraining.py \
+python vex_model_training.py \
     --num-iters ${NUM_ITERS:-10} \
     --cpus-per-task $SLURM_CPUS_PER_TASK \
     --entropy ${ENTROPY_I:-0.01} \

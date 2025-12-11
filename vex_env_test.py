@@ -5,8 +5,8 @@ A test/demo script for the VEX Push Back reinforcement learning environment.
 Uses the new modular architecture from vex_core and pushback modules.
 
 Usage:
-    python vexEnv.py --mode vex_u_skills --steps 20
-    python vexEnv.py --mode vex_ai_skills --steps 30 --no-render
+    python vex_env_test.py --mode vex_u_skills --steps 20
+    python vex_env_test.py --mode vex_ai_skills --steps 30 --no-render
 """
 
 import argparse
@@ -39,7 +39,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="vexEnv",
+        default="vex_env_test",
         help="Output directory for renders"
     )
     args = parser.parse_args()
