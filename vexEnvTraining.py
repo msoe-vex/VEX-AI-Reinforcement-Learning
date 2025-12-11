@@ -35,10 +35,13 @@ def policy_mapping_fn(agent_id, episode):
 
 if __name__ == "__main__":
     # Suppress excessive experiment checkpoint warnings completely
-    # os.environ["TUNE_WARN_EXCESSIVE_EXPERIMENT_CHECKPOINT_SYNC_THRESHOLD_S"] = "0"
+    os.environ["TUNE_WARN_EXCESSIVE_EXPERIMENT_CHECKPOINT_SYNC_THRESHOLD_S"] = "0"
+    # os.environ["RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO"] = "0"
     
     # Suppress all deprecation warnings
     # warnings.filterwarnings("ignore", category=DeprecationWarning)
+    # warnings.filterwarnings("ignore", category=FutureWarning)
+    # os.environ["PYTHONWARNINGS"] = "ignore::DeprecationWarning"
     
     # Suppress gymnasium precision/space warnings (RLlib internal env creation)
     warnings.filterwarnings("ignore", module="gymnasium")
@@ -154,7 +157,7 @@ if __name__ == "__main__":
         config=config.to_dict(),
         storage_path=output_directory,
         checkpoint_freq=5,  # Checkpoint every 5 iterations to reduce overhead
-        keep_checkpoints_num=2,  # Keep 2 best checkpoints
+        keep_checkpoints_num=1,  # Keep 1 best checkpoint
         checkpoint_score_attr="env_runners/episode_return_mean",  # Use this metric for best checkpoint
         sync_config=tune.SyncConfig(
             sync_period=300,  # Sync every 5 minutes instead of constantly
