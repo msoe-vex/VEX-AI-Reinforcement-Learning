@@ -11,7 +11,9 @@ Usage:
 
 import argparse
 
-from vex_core import VexMultiAgentEnv
+import numpy as np
+
+from vex_core.base_env import VexMultiAgentEnv
 from pushback import (
     VexUSkillsGame,
     VexUCompGame,
@@ -35,7 +37,7 @@ def main():
     parser.add_argument(
         "--mode", 
         type=str, 
-        default="vex_ai_competition",
+        default="vex_ai_skills",
         choices=list(GAME_MODES.keys()),
         help="Competition mode to test"
     )
@@ -58,7 +60,7 @@ def main():
     )
     args = parser.parse_args()
     
-    # Create game instance
+    # Create game instance (uses default robots for the mode)
     game_class = GAME_MODES[args.mode]
     game = game_class()
     

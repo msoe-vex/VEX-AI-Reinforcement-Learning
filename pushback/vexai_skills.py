@@ -12,9 +12,21 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 
 from .pushback import PushBackGame, BlockStatus, LOADERS, NUM_BLOCKS_FIELD, GoalType, GOALS
+from vex_core.base_env import Robot, RobotSize
 
 class VexAISkillsGame(PushBackGame):
     """VEX AI Skills game variant."""
+    
+    def __init__(self, robots: list = None):
+        # Default: 24" in blue park zone, 15" in red park zone (per VAIRS4)
+        if robots is None:
+            robots = [
+                Robot(name="blue_robot_0", team="blue", size=RobotSize.INCH_24, 
+                      start_position=np.array([60.0, 0.0])),
+                Robot(name="red_robot_0", team="red", size=RobotSize.INCH_15, 
+                      start_position=np.array([-60.0, 0.0])),
+            ]
+        super().__init__(robots)
     
     @property
     def total_time(self) -> float:
@@ -95,22 +107,9 @@ class VexAISkillsGame(PushBackGame):
         
         return {"red": float(score)}
     
-    def _get_agents_config(self) -> List[str]:
-        # One robot from each "team" to allow handling both block colors
-        return ["red_robot_0", "blue_robot_0"]
+
     
-    def _get_robot_configs(self) -> Dict[str, Tuple[np.ndarray, str, str]]:
-        """
-        Per VAIRS4:
-        - 24" robot starts in BLUE Park Zone (parked position). We assign it Blue team.
-        - 15" robot starts in RED Park Zone (parked position). We assign it Red team.
-        """
-        return {
-            # 24" robot in blue park zone
-            "blue_robot_0": (np.array([60.0, 0.0], dtype=np.float32), "24", "blue"),
-            # 15" robot in red park zone  
-            "red_robot_0": (np.array([-60.0, 0.0], dtype=np.float32), "15", "red"),
-        }
+
     
     def _get_initial_blocks(
         self, randomize: bool, seed: Optional[int]

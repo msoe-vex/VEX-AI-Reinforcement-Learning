@@ -11,9 +11,25 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 
 from .pushback import PushBackGame, BlockStatus, LOADERS, NUM_BLOCKS_FIELD, GoalType, GOALS
+from vex_core.base_env import Robot, RobotSize
 
 class VexUCompGame(PushBackGame):
     """VEX U Competition game variant."""
+    
+    def __init__(self, robots: list = None):
+        # Default: 2v2 (2 per team, 24" and 15")
+        if robots is None:
+            robots = [
+                Robot(name="red_robot_0", team="red", size=RobotSize.INCH_24, 
+                      start_position=np.array([-42.0, 24.0])),
+                Robot(name="red_robot_1", team="red", size=RobotSize.INCH_15, 
+                      start_position=np.array([-46.5, -24.0])),
+                Robot(name="blue_robot_0", team="blue", size=RobotSize.INCH_24, 
+                      start_position=np.array([42.0, 24.0])),
+                Robot(name="blue_robot_1", team="blue", size=RobotSize.INCH_15, 
+                      start_position=np.array([46.5, -24.0])),
+            ]
+        super().__init__(robots)
     
     @property
     def total_time(self) -> float:
@@ -92,28 +108,9 @@ class VexUCompGame(PushBackGame):
         
         return scores
     
-    def _get_agents_config(self) -> List[str]:
-        # 2v2: red vs blue
-        return ["red_robot_0", "red_robot_1", "blue_robot_0", "blue_robot_1"]
+
     
-    def _get_robot_configs(self) -> Dict[str, Tuple[np.ndarray, str, str]]:
-        """
-        Explicit starting positions.
-        Robots start contacting the Park Zone barrier (x = +/- 54).
-        Red (Left): Starts at x = -54 + radius.
-        Blue (Right): Starts at x = 54 - radius.
-        """
-        # Red 15" (Radius 7.5) -> -46.5
-        # Red 24" (Radius 12.0) -> -42.0
-        # Blue 15" (Radius 7.5) -> 46.5
-        # Blue 24" (Radius 12.0) -> 42.0
-        
-        return {
-            "red_robot_0": (np.array([-42.0, 24.0], dtype=np.float32), "24", "red"),
-            "red_robot_1": (np.array([-46.5, -24.0], dtype=np.float32), "15", "red"),
-            "blue_robot_0": (np.array([42.0, 24.0], dtype=np.float32), "24", "blue"),
-            "blue_robot_1": (np.array([46.5, -24.0], dtype=np.float32), "15", "blue"),
-        }
+
     
     def _get_initial_blocks(
         self, randomize: bool, seed: Optional[int]
@@ -186,15 +183,10 @@ class VexUCompGame(PushBackGame):
             for color in colors:
                 add_block(loader_pos[0], loader_pos[1], color, status=BlockStatus.IN_LOADER_TL + l_idx)
         
-        # Preloads: 1 per robot (Red gets Red, Blue gets Blue)
-        for agent_name, config in self._get_robot_configs().items():
-            # config: (pos, size, team)
-            team = config[2]
-            # Preload starts HELD by agent
-            # Position doesn't matter much if held, but sync with robot
-            start_pos = config[0]
-            add_block(start_pos[0], start_pos[1], team, status=BlockStatus.HELD)
-            blocks[-1]["held_by"] = agent_name
+        # Preloads: 1 per robot
+        for robot in self.robots:
+            add_block(robot.start_position[0], robot.start_position[1], robot.team, status=BlockStatus.HELD)
+            blocks[-1]["held_by"] = robot.name
             
         return blocks
     

@@ -12,9 +12,21 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 
 from .pushback import PushBackGame, BlockStatus, LOADERS, NUM_BLOCKS_FIELD, GoalType, GOALS, PARK_ZONES
+from vex_core.base_env import Robot, RobotSize
 
 class VexUSkillsGame(PushBackGame):
     """VEX U Skills game variant."""
+    
+    def __init__(self, robots: list = None):
+        # Default: both robots red, start on red side (per VURS2)
+        if robots is None:
+            robots = [
+                Robot(name="red_robot_0", team="red", size=RobotSize.INCH_24, 
+                      start_position=np.array([-42.0, 24.0])),
+                Robot(name="red_robot_1", team="red", size=RobotSize.INCH_15, 
+                      start_position=np.array([-46.5, -24.0])),
+            ]
+        super().__init__(robots)
     
     @property
     def total_time(self) -> float:
@@ -89,19 +101,9 @@ class VexUSkillsGame(PushBackGame):
         
         return {"red": float(score)}
     
-    def _get_agents_config(self) -> List[str]:
-        # Both robots are red, working together
-        return ["red_robot_0", "red_robot_1"]
+
     
-    def _get_robot_configs(self) -> Dict[str, Tuple[np.ndarray, str, str]]:
-        """
-        Both robots start on red (left) side contacting barrier.
-        Barrier at x = -54. Robots at x = -54 + radius.
-        """
-        return {
-            "red_robot_0": (np.array([-42.0, 24.0], dtype=np.float32), "24", "red"),
-            "red_robot_1": (np.array([-46.5, -24.0], dtype=np.float32), "15", "red"),
-        }
+
     
     def _get_initial_blocks(
         self, randomize: bool, seed: Optional[int]
@@ -169,11 +171,9 @@ class VexUSkillsGame(PushBackGame):
                 add_block(loader_pos[0], loader_pos[1], color, status=BlockStatus.IN_LOADER_TL + l_idx)
         
         # Preloads: 1 per robot (Both Red in skills)
-        for agent_name, config in self._get_robot_configs().items():
-            team = "red" # Skills - both are red
-            start_pos = config[0]
-            add_block(start_pos[0], start_pos[1], team, status=BlockStatus.HELD)
-            blocks[-1]["held_by"] = agent_name
+        for robot in self.robots:
+            add_block(robot.start_position[0], robot.start_position[1], "red", status=BlockStatus.HELD)
+            blocks[-1]["held_by"] = robot.name
             
         return blocks
     

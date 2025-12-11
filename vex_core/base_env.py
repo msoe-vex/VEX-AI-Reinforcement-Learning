@@ -21,8 +21,38 @@ from typing import Dict, List, Tuple, Optional, Any
 from .base_game import VexGame
 
 
-# Robot speed constant (can be overridden per game)
-DEFAULT_ROBOT_SPEED = 60.0  # inches per second
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Optional
+
+class RobotSize(Enum):
+    """Robot size categories."""
+    INCH_15 = 15
+    INCH_24 = 24
+
+@dataclass
+class Robot:
+    """Robot configuration."""
+    name: str  # Agent name, e.g., "red_robot_0"
+    team: str  # 'red' or 'blue'
+    size: RobotSize
+    start_position: np.ndarray
+    start_orientation: Optional[float] = None  # Radians, None = auto based on team
+    length: Optional[float] = None
+    width: Optional[float] = None
+    max_speed: float = 60.0
+    max_acceleration: float = 60.0
+    buffer: float = 1.0
+    
+    def __post_init__(self):
+        # Default dimensions based on size
+        if self.length is None:
+            self.length = float(self.size.value)
+        if self.width is None:
+            self.width = float(self.size.value)
+        # Default orientation: face toward center (red=0, blue=π)
+        if self.start_orientation is None:
+            self.start_orientation = 0.0 if self.team == 'red' else np.pi
 
 
 class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
@@ -52,7 +82,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         Initialize the VEX environment.
         
         Args:
-            game: VexGame instance defining game-specific mechanics
+            game: VexGame instance defining game-specific mechanics (with robots)
             render_mode: 'human' for display, 'rgb_array' or 'all' to save frames
             output_directory: Directory for saving renders
             randomize: Whether to randomize initial positions
@@ -60,6 +90,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         super().__init__()
         
         self.game = game
+            
         self.render_mode = render_mode
         self.output_directory = output_directory
         self.randomize = randomize
@@ -97,14 +128,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         try:
             from path_planner import PathPlanner
             field_size = self.game.field_size_inches
-            robot_len, robot_wid = self.game.get_robot_dimensions("", {})
             
             self.path_planner = PathPlanner(
-                robot_length=robot_len / field_size,
-                robot_width=robot_wid / field_size,
-                buffer_radius=2.0 / field_size,
-                max_velocity=80.0 / field_size,
-                max_accel=100.0 / field_size,
                 field_size_inches=field_size,
                 field_center=(0, 0)
             )
@@ -184,7 +209,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             agent_state = self.environment_state["agents"][agent]
             
             # Skip agent if their time is ahead
-            if agent_state["gameTime"] > min_game_time or not agent_state.get("active", True):
+            if agent_state["gameTime"] > min_game_time:
                 agent_state["action_skipped"] = True
                 continue
             
@@ -323,11 +348,22 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             color = 'red' if team == 'red' else 'blue'
             
             try:
+                # Get robot for this agent via direct lookup
+                robot_config = self.game.get_robot_for_agent(agent)
+                
+                # Fallback if no specific robot found
+                if robot_config is None:
+                    robot_config = Robot(
+                        name=agent, team="red", size=RobotSize.INCH_24,
+                        start_position=np.array([0.0, 0.0])
+                    )
+
                 obstacles = self.game.get_permanent_obstacles()
                 positions_inches, _, _ = self.path_planner.Solve(
                     start_point=start_pos,
                     end_point=end_pos,
-                    obstacles=obstacles
+                    obstacles=obstacles,
+                    robot=robot_config
                 )
                 ax.plot(
                     positions_inches[:, 0], positions_inches[:, 1],

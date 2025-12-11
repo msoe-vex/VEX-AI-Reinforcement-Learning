@@ -19,6 +19,11 @@ class VexGame(ABC):
     to define game-specific mechanics, scoring, and rendering.
     """
     
+    def __init__(self, robots: list = None):
+        """Initialize with robot configurations."""
+        self.robots = robots or []
+        self._robot_map = {r.name: r for r in self.robots}
+    
     # =========================================================================
     # Configuration Properties
     # =========================================================================
@@ -36,10 +41,9 @@ class VexGame(ABC):
         pass
     
     @property
-    @abstractmethod
     def possible_agents(self) -> List[str]:
-        """List of agent names for this game mode."""
-        pass
+        """List of agent names derived from robots."""
+        return [r.name for r in self.robots]
     
     @property
     @abstractmethod
@@ -203,18 +207,23 @@ class VexGame(ABC):
         """
         return True
     
-    def get_robot_dimensions(self, agent: str, state: Dict) -> Tuple[float, float]:
-        """
-        Get robot dimensions for an agent.
-        
-        Args:
-            agent: Agent name
-            state: Current game state
-            
-        Returns:
-            Tuple of (length, width) in inches
-        """
-        return (18.0, 18.0)  # Default 18x18 inch robot
+    def get_robot_for_agent(self, agent: str) -> Any:
+        """Get Robot object for an agent by name."""
+        return self._robot_map.get(agent)
+
+    def get_robot_dimensions(self, agent: str, state: dict) -> tuple:
+        """Get robot dimensions for an agent."""
+        robot = self.get_robot_for_agent(agent)
+        if robot:
+            return (robot.length, robot.width)
+        return (18.0, 18.0)
+    
+    def get_robot_speed(self, agent: str, state: dict) -> float:
+        """Get robot speed for an agent."""
+        robot = self.get_robot_for_agent(agent)
+        if robot:
+            return robot.max_speed
+        return 60.0
     
     def reset(self) -> None:
         """

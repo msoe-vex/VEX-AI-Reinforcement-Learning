@@ -36,10 +36,8 @@ NUM_BLOCKS_LOADER = 24
 FIELD_SIZE_INCHES = 144  # 12 feet = 144 inches
 FIELD_HALF = FIELD_SIZE_INCHES / 2  # 72 inches
 
-# Robot dimensions
-ROBOT_24_SIZE = 24.0  # 24" robot
-ROBOT_15_SIZE = 15.0  # 15" robot
-DEFAULT_ROBOT_SIZE = 18.0  # Default/generic size
+# Robot dimensions - Moved to Robot objects
+
 
 # Block dimensions
 BLOCK_RADIUS = 2.4
@@ -61,7 +59,7 @@ CENTER_GOAL_CONTROL_THRESHOLD = 7
 FOV = np.pi / 2
 
 # Robot speed
-ROBOT_SPEED = 60.0  # inches per second
+# ROBOT_SPEED = 60.0  # inches per second - Moved to Robot objects
 
 # Default penalty for invalid actions
 DEFAULT_PENALTY = -0.1
@@ -82,10 +80,9 @@ class Actions(Enum):
     TAKE_FROM_LOADER_TR = 6       # Top Right loader
     TAKE_FROM_LOADER_BL = 7       # Bottom Left loader
     TAKE_FROM_LOADER_BR = 8       # Bottom Right loader
-    CLEAR_LOADER = 9              # Dispense blocks from nearest loader
-    PARK = 10                     # Park in team's zone
-    TURN_TOWARD_CENTER = 11       # Turn to face center of field
-    IDLE = 12
+    PARK = 9                      # Park in team's zone
+    TURN_TOWARD_CENTER = 10       # Turn to face center of field
+    IDLE = 11
 
 
 def is_scoring_action(action: Actions) -> bool:
@@ -393,14 +390,6 @@ class GoalManager:
         for goal in self.goals.values():
             goal.clear()
 
-
-# =============================================================================
-# Scoring Configuration
-# =============================================================================
-
-
-
-
 # =============================================================================
 # Push Back Game Base Class
 # =============================================================================
@@ -418,7 +407,8 @@ class PushBackGame(VexGame):
     """
     
     
-    def __init__(self):
+    def __init__(self, robots: list = None):
+        super().__init__(robots)
         self.goal_manager = GoalManager()
         self._agents: Optional[List[str]] = None
     
@@ -426,22 +416,7 @@ class PushBackGame(VexGame):
     # Abstract methods for variants
     # =========================================================================
     
-    @abstractmethod
-    def _get_agents_config(self) -> List[str]:
-        """Get list of agent names for this variant."""
-        pass
-    
-    @abstractmethod
-    def _get_robot_configs(self) -> Dict[str, Tuple[np.ndarray, str, str]]:
-        """
-        Get robot configurations.
-        
-        Returns:
-            Dict mapping agent_name -> (start_position, robot_size, team)
-            robot_size is '24' or '15'
-            team is 'red' or 'blue'
-        """
-        pass
+
     
     @abstractmethod
     def _get_initial_blocks(self, randomize: bool, seed: Optional[int]) -> List[Dict]:
@@ -468,12 +443,6 @@ class PushBackGame(VexGame):
         pass
     
     @property
-    def possible_agents(self) -> List[str]:
-        if self._agents is None:
-            self._agents = self._get_agents_config()
-        return self._agents
-    
-    @property
     def num_actions(self) -> int:
         return len(Actions)
     
@@ -492,21 +461,19 @@ class PushBackGame(VexGame):
         seed: Optional[int] = None
     ) -> Dict:
         """Create initial game state."""
-        robot_configs = self._get_robot_configs()
-        
-        # Initialize agents
+        # Initialize agents from Robot objects
         agents_dict = {}
-        for agent_name, (position, robot_size, team) in robot_configs.items():
-            agents_dict[agent_name] = {
-                "position": position.copy().astype(np.float32),
-                "orientation": np.array([0.0], dtype=np.float32),
-                "team": team,
-                "robot_size": robot_size,
-                "held_blocks": 0,  # Will be set based on preloads
+        for robot in self.robots:
+            agents_dict[robot.name] = {
+                "position": robot.start_position.copy().astype(np.float32),
+                "orientation": np.array([robot.start_orientation], dtype=np.float32),
+                "team": robot.team,
+                "robot_size": robot.size.value,
+                "held_blocks": 0,
                 "parked": False,
                 "gameTime": 0.0,
                 "active": True,
-                "agent_name": agent_name,
+                "agent_name": robot.name,
             }
         
         # Get blocks
@@ -639,9 +606,6 @@ class PushBackGame(VexGame):
                 agent_state, idx, state, duration, penalty
             )
         
-        elif action == Actions.CLEAR_LOADER.value:
-            duration, penalty = self._action_clear_loader(agent_state, state, duration, penalty)
-        
         elif action == Actions.PARK.value:
             duration, penalty = self._action_park(agent_state, duration, penalty)
         
@@ -697,7 +661,10 @@ class PushBackGame(VexGame):
             
             if dist_travelled > 0:
                 agent_state["orientation"][0] = np.arctan2(movement[1], movement[0])
-            duration += dist_travelled / ROBOT_SPEED
+            
+            # Use dynamic robot speed
+            speed = self.get_robot_speed(agent_state["agent_name"], state)
+            duration += dist_travelled / speed
             
             state["blocks"][target_idx]["status"] = BlockStatus.HELD
             state["blocks"][target_idx]["held_by"] = agent_state["agent_name"]
@@ -723,7 +690,7 @@ class PushBackGame(VexGame):
         scoring_side = goal.get_nearest_side(agent_state["position"])
         
         # Calculate robot position based on goal type
-        robot_len = ROBOT_24_SIZE if agent_state.get("robot_size") == "24" else ROBOT_15_SIZE
+        robot_len, _ = self.get_robot_dimensions(agent_state["agent_name"], state)
         
         if goal_type == GoalType.LONG_1:
             if scoring_side == "left":
@@ -760,7 +727,10 @@ class PushBackGame(VexGame):
         dist = np.linalg.norm(movement)
         agent_state["position"] = robot_pos.astype(np.float32)
         agent_state["orientation"] = np.array([orientation], dtype=np.float32)
-        duration += dist / ROBOT_SPEED
+        
+        # Dynamic speed
+        speed = self.get_robot_speed(agent_state["agent_name"], state)
+        duration += dist / speed
         
         # Score blocks
         scored_count = 0
@@ -821,7 +791,7 @@ class PushBackGame(VexGame):
     ) -> Tuple[float, float]:
         """Take a block from a loader."""
         loader_pos = LOADERS[loader_idx].position
-        robot_len = ROBOT_24_SIZE if agent_state.get("robot_size") == "24" else ROBOT_15_SIZE
+        robot_len, _ = self.get_robot_dimensions(agent_state["agent_name"], state)
         offset = robot_len / 2 + 8.0
         
         if loader_idx == 0:  # Top Left
@@ -841,7 +811,9 @@ class PushBackGame(VexGame):
         dist = np.linalg.norm(movement)
         agent_state["position"] = robot_pos.astype(np.float32)
         agent_state["orientation"] = np.array([orientation], dtype=np.float32)
-        duration += dist / ROBOT_SPEED
+        # Dynamic speed
+        speed = self.get_robot_speed(agent_state["agent_name"], state)
+        duration += dist / speed
         
         if state["loaders"][loader_idx] > 0:
             state["loaders"][loader_idx] -= 1
@@ -894,7 +866,9 @@ class PushBackGame(VexGame):
         movement = park_zone.center - agent_state["position"]
         dist = np.linalg.norm(movement)
         agent_state["position"] = park_zone.center.copy()
-        duration += dist / ROBOT_SPEED
+        # Dynamic speed     
+        speed = self.get_robot_speed(agent_state["agent_name"], {})
+        duration += dist / speed
         agent_state["parked"] = True
         agent_state["orientation"] = np.array([np.random.choice([np.pi/2, -np.pi/2])], dtype=np.float32)
         
@@ -963,15 +937,7 @@ class PushBackGame(VexGame):
                     if block["status"] == BlockStatus.HELD and block.get("held_by") == agent_name:
                         block["position"] = agent_state["position"].copy()
     
-    def get_robot_dimensions(self, agent: str, state: Dict) -> Tuple[float, float]:
-        """Get robot dimensions."""
-        if state and "agents" in state and agent in state["agents"]:
-            size = state["agents"][agent].get("robot_size", "18")
-            if size == "24":
-                return (ROBOT_24_SIZE, ROBOT_24_SIZE)
-            elif size == "15":
-                return (ROBOT_15_SIZE, ROBOT_15_SIZE)
-        return (DEFAULT_ROBOT_SIZE, DEFAULT_ROBOT_SIZE)
+
     
     def get_permanent_obstacles(self) -> List[Obstacle]:
         """Get permanent obstacles."""
@@ -1134,6 +1100,14 @@ class PushBackGame(VexGame):
     def split_action(action: int, observation: np.ndarray) -> List[str]:
         """
         Split a high-level action into low-level robot instructions.
+
+        Possible actions:
+        INTAKE;speed
+        FOLLOW;(x1,y1),(x2,y2),...;speed
+        WAIT;time
+        DRIVE;inches;speed
+        TURN;degrees;speed
+        TURN_TO;(x,y);speed
         """
         # Initialize path planner (can be optimized to be a class member)
         path_planner = PathPlanner(15, 15, 2, 70, 70)

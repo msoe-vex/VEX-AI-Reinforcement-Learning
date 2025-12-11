@@ -5,6 +5,7 @@ from matplotlib.transforms import Affine2D
 import random
 from math import sqrt, exp  # Added missing imports if needed
 import time
+from vex_core.base_env import Robot
 
 # =============================================================================
 # Obstacle Definitions
@@ -32,9 +33,9 @@ GRID_SIZE = 128
 # =============================================================================
 class PathPlanner:
     # All values are based on a scale from 0 to 1, where 1 is the length of the field
-    def __init__(self, robot_length, robot_width, buffer_radius, max_velocity, max_accel, field_size_inches=144, field_center=(0, 0)):
+    def __init__(self, field_size_inches=144, field_center=(0, 0)):
         # -------------------------------------------------------------------------
-        # Initialization: Robot and field parameters
+        # Initialization: Field parameters
         # -------------------------------------------------------------------------
 
         self.NUM_OF_ACTS = 2   # Number of MPC actions (vx, vy)
@@ -47,26 +48,6 @@ class PathPlanner:
         # Field coordinate system parameters
         self.field_size_inches = field_size_inches
         self.field_center = np.array(field_center, dtype=np.float64)
-
-        # Store dimensions in inches (for external use)
-        self.robot_length = robot_length
-        self.robot_width = robot_width
-        self.buffer_radius = buffer_radius
-        self.robot_radius = sqrt(self.robot_length**2 + self.robot_width**2) / 2
-
-        # Store normalized dimensions (for internal calculations with 0-1 scale)
-        self.robot_length_norm = robot_length / field_size_inches
-        self.robot_width_norm = robot_width / field_size_inches
-        self.buffer_radius_norm = buffer_radius / field_size_inches
-        self.robot_radius_norm = self.robot_radius / field_size_inches
-
-        # Store velocities in inches (for external use)
-        self.max_velocity = max_velocity
-        self.max_accel = max_accel
-        
-        # Store normalized velocities (for internal solver calculations)
-        self.max_velocity_norm = max_velocity / field_size_inches
-        self.max_accel_norm = max_accel / field_size_inches
     
     def inches_to_normalized(self, pos_inches):
         """Convert position from inches (field coordinates) to normalized scale (0-1)."""
@@ -107,21 +88,25 @@ class PathPlanner:
     
         return (init_x, init_y)
 
-    def Solve(self, start_point, end_point, obstacles):
+    def Solve(self, start_point, end_point, obstacles, robot: Robot):
         """Solve for optimal path. Accepts all inputs in field inches and returns positions in field inches.
         
         Args:
-            start_point: Starting position in field inches (e.g., [-72, 72] to [72, 72])
+            start_point: Starting position in field inches
             end_point: Ending position in field inches
-            obstacles: List of obstacles. Can be:
-                - Obstacle objects with x, y in inches (will be converted internally)
-                - Obstacle objects already in normalized coordinates (0-1)
-            
-        Returns:
-            positions: Nx2 array of waypoint positions in field inches
-            velocities: (N-1)x2 array of velocities
-            dt: Time step duration
+            obstacles: List of obstacles
+            robot: Robot object with dimensions and constraints
         """
+        # Calculate robot parameters locally
+        robot_length_norm = robot.length / self.field_size_inches
+        robot_width_norm = robot.width / self.field_size_inches
+        buffer_radius_norm = robot.buffer / self.field_size_inches
+        robot_radius = sqrt(robot.length**2 + robot.width**2) / 2
+        robot_radius_norm = robot_radius / self.field_size_inches
+        
+        max_velocity_norm = robot.max_speed / self.field_size_inches
+        max_accel_norm = robot.max_acceleration / self.field_size_inches
+
         start_time = time.time()
 
         # Convert input positions from inches to normalized coordinates
@@ -140,6 +125,11 @@ class PathPlanner:
                 obs.radius / self.field_size_inches,  # Convert radius too
                 obs.ignore_collision
             ))
+            
+        # Helper call needs updated parameters
+        # self.a_star_search needs robot info for grid generation if it uses it.
+        # Let's fix a_star_search later, focus on SOLVE logic first.
+
 
         # Calculate steps based on distance in inches
         inches_per_step = 6
@@ -164,7 +154,7 @@ class PathPlanner:
         cost = 0.0
 
         # Perform A* search to get an initial path (using normalized coordinates)
-        a_star_path = self.a_star_search(start_point_norm, end_point_norm, normalized_obstacles)
+        a_star_path = self.a_star_search(start_point_norm, end_point_norm, normalized_obstacles, robot_radius_norm, buffer_radius_norm)
         if a_star_path:
             # Interpolate the A* path to match the number of steps
             a_star_path = np.array(a_star_path)
@@ -178,7 +168,7 @@ class PathPlanner:
         self.init_y = init_y
 
         # Build initial guess using the A* path and zero velocity
-        init_v = [self.max_velocity_norm / 2] * ((self.num_steps - 1) * self.NUM_OF_ACTS)
+        init_v = [max_velocity_norm / 2] * ((self.num_steps - 1) * self.NUM_OF_ACTS)
         init_time_step = self.initial_time_step
         x_ = np.concatenate((init_x, init_y, init_v, [init_time_step]))
 
@@ -204,8 +194,8 @@ class PathPlanner:
             x_lowerbound_[i] = 0 #+ self.robot_radius
             x_upperbound_[i] = 1 #- self.robot_radius
         for i in range(self.indexes.vx, self.indexes.vy + self.num_steps - 1):
-            x_lowerbound_[i] = -self.max_velocity_norm
-            x_upperbound_[i] = self.max_velocity_norm
+            x_lowerbound_[i] = -max_velocity_norm
+            x_upperbound_[i] = max_velocity_norm
 
         # Constrain start and final positions (using normalized coordinates)
         x_lowerbound_[self.indexes.px] = start_point_norm[0]
@@ -247,7 +237,7 @@ class PathPlanner:
             vy = x[curr_vy_index]
             g[g_index] = vx**2 + vy**2
             g_lowerbound_[g_index] = 0
-            g_upperbound_[g_index] = self.max_velocity_norm**2
+            g_upperbound_[g_index] = max_velocity_norm**2
             g_index += 1
         
         # Acceleration constraints
@@ -260,7 +250,7 @@ class PathPlanner:
             ay = (x[next_vy_index] - x[curr_vy_index]) / time_step
             g[g_index] = ax**2 + ay**2
             g_lowerbound_[g_index] = 0
-            g_upperbound_[g_index] = self.max_accel_norm**2
+            g_upperbound_[g_index] = max_accel_norm**2
             g_index += 1
 
         # Dynamics (position update) constraints
@@ -295,7 +285,7 @@ class PathPlanner:
                 if obstacle.ignore_collision:
                     g_lowerbound_[g_index] = exp(-10)
                 else:
-                    g_lowerbound_[g_index] = (obstacle.radius + self.robot_radius_norm + self.buffer_radius_norm)**2
+                    g_lowerbound_[g_index] = (obstacle.radius + robot_radius_norm + buffer_radius_norm)**2
                 g_upperbound_[g_index] = exp(10)
                 g_index += 1
 
@@ -361,11 +351,18 @@ class PathPlanner:
             with open(save_path, 'w') as file:
                 file.write(lemlib_output_string)
 
-    def plotResults(self, positions, velocities, start_point, end_point, obstacles):
+    def plotResults(self, positions, velocities, start_point, end_point, obstacles, robot: Robot):
         # -------------------------------------------------------------------------
         # Plot Results: Display trajectory, obstacles, and robot boundaries
         # All inputs are in inches, convert to normalized for plotting
         # -------------------------------------------------------------------------
+        
+        # Calculate local norms
+        robot_length_norm = robot.length / self.field_size_inches
+        robot_width_norm = robot.width / self.field_size_inches
+        robot_radius_norm = sqrt(robot.length**2 + robot.width**2) / 2 / self.field_size_inches
+        buffer_radius_norm = robot.buffer / self.field_size_inches
+
         fig, ax = plt.subplots(figsize=(8, 8))
         
         # Convert positions from inches to normalized for plotting
@@ -389,12 +386,12 @@ class PathPlanner:
         index = 0
         for px, py, theta in zip(planned_px, planned_py, planned_theta):
             rotation = Affine2D().rotate_around(px, py, theta)
-            rectangle = plt.Rectangle((px - self.robot_length_norm / 2, py - self.robot_width_norm / 2), self.robot_length_norm, self.robot_width_norm,
+            rectangle = plt.Rectangle((px - robot_length_norm / 2, py - robot_width_norm / 2), robot_length_norm, robot_width_norm,
                                       edgecolor='blue', facecolor='none', alpha=1)
             rectangle.set_transform(rotation + ax.transData)
             if index % mod == 0 or index == self.num_steps - 1:
-                robot_circle_x = px + self.robot_radius_norm * np.cos(theta_list)
-                robot_circle_y = py + self.robot_radius_norm * np.sin(theta_list)
+                robot_circle_x = px + robot_radius_norm * np.cos(theta_list)
+                robot_circle_y = py + robot_radius_norm * np.sin(theta_list)
                 ax.plot(robot_circle_x, robot_circle_y, '--', color='blue', alpha=0.5, label='robot radius' if index == 0 else None)
                 ax.add_patch(rectangle)
             index += 1
@@ -407,8 +404,8 @@ class PathPlanner:
             radius_norm = obstacle.radius / self.field_size_inches
             danger_x = obs_norm[0] + (radius_norm - 0.005/self.field_size_inches) * np.cos(theta_list)
             danger_y = obs_norm[1] + (radius_norm - 0.005/self.field_size_inches) * np.sin(theta_list)
-            buffer_x = obs_norm[0] + (radius_norm + self.buffer_radius_norm) * np.cos(theta_list)
-            buffer_y = obs_norm[1] + (radius_norm + self.buffer_radius_norm) * np.sin(theta_list)
+            buffer_x = obs_norm[0] + (radius_norm + buffer_radius_norm) * np.cos(theta_list)
+            buffer_y = obs_norm[1] + (radius_norm + buffer_radius_norm) * np.sin(theta_list)
             if first_obstacle:
                 ax.plot(danger_x, danger_y, 'r-', label='obstacle')
                 ax.plot(buffer_x, buffer_y, 'r--', label='buffer zone', alpha=0.5)
@@ -433,7 +430,7 @@ class PathPlanner:
         total_path_time = dt * len(positions)
         return planned_px, planned_py, total_path_time
 
-    def _generate_obstacle_grid(self, obstacles, start_point, end_point, grid_size=GRID_SIZE):
+    def _generate_obstacle_grid(self, obstacles, start_point, end_point, robot_radius_norm, buffer_radius_norm, grid_size=GRID_SIZE):
         """
         Helper method to generate an obstacle grid for A* search and visualization.
         
@@ -453,14 +450,14 @@ class PathPlanner:
         # Block grid cells based on obstacles
         for obstacle in obstacles:
             cx, cy = int(obstacle.x * grid_size), int(obstacle.y * grid_size)
-            radius = int((obstacle.radius + self.robot_radius_norm + self.buffer_radius_norm) * grid_size)
+            radius = int((obstacle.radius + robot_radius_norm + buffer_radius_norm) * grid_size)
             for x in range(max(0, cx - radius), min(grid_size, cx + radius + 1)):
                 for y in range(max(0, cy - radius), min(grid_size, cy + radius + 1)):
                     if (x - cx)**2 + (y - cy)**2 <= radius**2:
                         grid[y, x] = 1  # Mark as blocked (grid is [row=y, col=x])
         
         # Block any cell within robot radius of the field boundary
-        robot_radius_cells = int(self.robot_radius_norm * grid_size)
+        robot_radius_cells = int(robot_radius_norm * grid_size)
         for i in range(grid_size):
             for j in range(grid_size):
                 if i < robot_radius_cells or i >= grid_size - robot_radius_cells or j < robot_radius_cells or j >= grid_size - robot_radius_cells:
@@ -472,12 +469,12 @@ class PathPlanner:
         
         return grid, start, end
 
-    def a_star_search(self, start_point, end_point, obstacles):
+    def a_star_search(self, start_point, end_point, obstacles, robot_radius_norm, buffer_radius_norm):
         """
         Perform A* search on a 48x48 grid.
         """
         grid_size = GRID_SIZE
-        grid, start, end = self._generate_obstacle_grid(obstacles, start_point, end_point, grid_size)
+        grid, start, end = self._generate_obstacle_grid(obstacles, start_point, end_point, robot_radius_norm, buffer_radius_norm, grid_size)
 
         # A* search
         from heapq import heappop, heappush
@@ -532,12 +529,15 @@ class PathPlanner:
         path.append((current[0] / grid_size, current[1] / grid_size))
         return path[::-1]
 
-    def generate_grid_png(self, obstacles, start_point, end_point, filename="grid.png"):
+    def generate_grid_png(self, obstacles, start_point, end_point, robot: Robot, filename="grid.png"):
         """
         Generate a PNG of the grid based on obstacles, swap black/white, and add dots for start and end points.
         All inputs are in inches.
         """
         grid_size = GRID_SIZE
+        
+        robot_radius_norm = sqrt(robot.length**2 + robot.width**2) / 2 / self.field_size_inches
+        buffer_radius_norm = robot.buffer / self.field_size_inches
         
         # Convert obstacles from inches to normalized
         normalized_obstacles = []
@@ -555,7 +555,7 @@ class PathPlanner:
         end_norm = self.inches_to_normalized(np.array(end_point))
         
         # Generate the grid using the helper method
-        grid, start_grid, end_grid = self._generate_obstacle_grid(normalized_obstacles, start_norm, end_norm, grid_size)
+        grid, start_grid, end_grid = self._generate_obstacle_grid(normalized_obstacles, start_norm, end_norm, robot_radius_norm, buffer_radius_norm, grid_size)
         
         # Invert the grid (0=white, 1=black for display)
         grid = 1 - grid
@@ -583,14 +583,9 @@ class PathPlanner:
 # =============================================================================
 
 if __name__ == "__main__":
-    robot_length = 15
-    robot_width = 15
-    buffer_radius = 1
-    max_velocity = 70
-    max_accel = 70
+    robot = Robot(length=15.0, width=15.0, max_speed=70.0, max_acceleration=70.0, buffer=1.0)
 
     planner = PathPlanner(
-        robot_length, robot_width, buffer_radius, max_velocity, max_accel,
         field_size_inches=INCHES_PER_FIELD,
         field_center=(0, 0)
     )
@@ -625,7 +620,7 @@ if __name__ == "__main__":
             Obstacle(-58.0, 10.0, 0.0, False),     # Red Park Zone Top Corner
                     ]
 
-        positions, velocities, dt = planner.Solve(start_point=start_point, end_point=end_point, obstacles=obstacles)
+        positions, velocities, dt = planner.Solve(start_point=start_point, end_point=end_point, obstacles=obstacles, robot=robot)
 
         if planner.status == 'Solve_Succeeded':
             successful_trials += 1
@@ -637,8 +632,8 @@ if __name__ == "__main__":
         total_solve_time += planner.solve_time
 
         planner.print_trajectory_details(positions, velocities, dt, None)
-        planner.plotResults(positions, velocities, start_point, end_point, obstacles)
-        planner.generate_grid_png(obstacles, start_point, end_point)
+        planner.plotResults(positions, velocities, start_point, end_point, obstacles, robot=robot)
+        planner.generate_grid_png(obstacles, start_point, end_point, robot=robot)
 
         input()
 
