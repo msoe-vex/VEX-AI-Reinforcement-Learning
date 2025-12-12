@@ -2,6 +2,7 @@ import ray
 import argparse
 from ray.tune.registry import register_env
 from ray.rllib.algorithms.ppo import PPOConfig
+from ray.rllib.callbacks.callbacks import RLlibCallback
 from ray.tune.logger.json import JsonLoggerCallback
 from ray.tune.logger.csv import CSVLoggerCallback
 # from ray.tune.logger.tensorboardx import TBXLoggerCallback  # Uncomment if you want TensorBoard
@@ -18,6 +19,42 @@ from vex_custom_model import VexCustomPPO
 from vex_model_compile import compile_checkpoint_to_torchscript
 import sys
 import json
+
+
+class VexScoreCallback(RLlibCallback):
+    """Custom callback to track team scores at the end of each episode."""
+    
+    def on_episode_end(self, *, episode, env_runner, metrics_logger, env, env_index, rl_module, **kwargs):
+        """Called at the end of each episode to log team scores."""
+        try:
+            # Unwrap the OrderEnforcing wrapper to get the actual VexMultiAgentEnv
+            wrapped_env = env.envs[env_index]
+            actual_env = wrapped_env.env if hasattr(wrapped_env, 'env') else wrapped_env
+            
+            # Use the already-computed score stored in the env (updated each step)
+            if hasattr(actual_env, 'score') and actual_env.score:
+                red = actual_env.score.get('red', 0)
+                blue = actual_env.score.get('blue', 0)
+                
+                metrics_logger.log_value("red_team_score_mean", red)
+                metrics_logger.log_value("blue_team_score_mean", blue)
+        except Exception:
+            pass  # Silently ignore errors
+
+    def on_train_result(self, *, algorithm, metrics_logger, result, **kwargs):
+        """Called after each training iteration to print scores to stdout."""
+        env_runner_results = result.get("env_runners", {})
+        episode_return = env_runner_results.get("episode_return_mean")
+        iteration = result.get("training_iteration", 0)
+        
+        red_mean = env_runner_results.get("red_team_score_mean")
+        blue_mean = env_runner_results.get("blue_team_score_mean")
+        
+        if red_mean is not None and episode_return is not None:
+            print(f"[Iter {iteration}] Red Score Mean: {red_mean:.1f}, Blue Score Mean: {blue_mean:.1f}, Episode Return Mean: {episode_return:.1f}")
+        elif episode_return is not None:
+            print(f"[Iter {iteration}] Episode Return Mean: {episode_return:.1f}")
+        sys.stdout.flush()
 
 
 def env_creator(config=None):
@@ -142,6 +179,7 @@ if __name__ == "__main__":
             gamma=args.discount_factor,
             entropy_coeff=args.entropy,
         )
+        .callbacks(VexScoreCallback)  # Track team scores
         .debugging(log_level="ERROR")  # Reduce logging verbosity
     )
 

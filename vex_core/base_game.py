@@ -32,8 +32,8 @@ class Robot:
     start_orientation: Optional[float] = None  # Radians, None = auto based on team
     length: Optional[float] = None
     width: Optional[float] = None
-    max_speed: Optional[float] = 70.0
-    max_acceleration: Optional[float] = 70.0
+    max_speed: Optional[float] = 85.0
+    max_acceleration: Optional[float] = 85.0
     buffer: Optional[float] = 1.0
     
     def __post_init__(self):
