@@ -100,8 +100,7 @@ def run_simulation(model_path, game_name, output_dir):
                     action = candidate_action
                     break
             else:
-                # Fallback: if no valid action found, pick top choice
-                action = torch.argmax(action_logits, dim=1).item()
+                action = env.game.fallback_action()
 
             actions_to_take[agent_id] = action
             last_actions[agent_id] = action  # Update last action for the agent

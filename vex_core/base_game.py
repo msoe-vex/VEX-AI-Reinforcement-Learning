@@ -101,6 +101,11 @@ class VexGame(ABC):
         """Number of possible actions in the action space."""
         pass
     
+    @abstractmethod
+    def fallback_action(self) -> int:
+        """Default action to take if no valid action is available."""
+        pass
+    
     # =========================================================================
     # State Management
     # =========================================================================

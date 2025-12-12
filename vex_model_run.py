@@ -58,7 +58,6 @@ class VexModelRunner:
                 break
         
         if action is None:
-            # Fallback: if no valid action found, pick top choice
-            action = torch.argmax(action_logits, dim=1).item()
+            action = self.game.fallback_action()
 
         return self.game.split_action(action, observation)

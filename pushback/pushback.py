@@ -473,6 +473,10 @@ class PushBackGame(VexGame):
     def num_actions(self) -> int:
         return len(Actions)
     
+    @property
+    def fallback_action(self) -> int:
+        return Actions.IDLE.value
+    
     # =========================================================================
     # VexGame State Management
     # =========================================================================
@@ -724,7 +728,7 @@ class PushBackGame(VexGame):
         
         elif action == Actions.IDLE.value:
             duration = 0.1
-            penalty = 0.0
+            penalty = DEFAULT_PENALTY # Small penalty for idle
         
         # Update held block positions (game-specific)
         self._update_held_blocks(state)
