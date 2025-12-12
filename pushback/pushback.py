@@ -561,18 +561,50 @@ class PushBackGame(VexGame):
         # 5. Time remaining (1)
         obs_parts.append(float(self.total_time - agent_state["gameTime"]))
         
-        # 6. Count available blocks (ON_FIELD status)
-        available_blocks = [b for b in state["blocks"] if b["status"] == BlockStatus.ON_FIELD]
-        obs_parts.append(float(len(available_blocks)))
+        # 6. Count and Position of blocks (Split by Friendly/Opponent)
+        # MAX 15 per type
+        MAX_TRACKED = 15
         
-        # 7. Positions of available blocks (MAX_AVAILABLE_BLOCKS * 2), padded with zeros
-        block_positions = []
-        for i, block in enumerate(available_blocks[:MAX_AVAILABLE_BLOCKS]):
-            block_positions.extend([float(block["position"][0]), float(block["position"][1])])
-        # Pad remaining slots
-        while len(block_positions) < MAX_AVAILABLE_BLOCKS * 2:
-            block_positions.extend([0.0, 0.0])
-        obs_parts.extend(block_positions)
+        friendly_blocks = []
+        opponent_blocks = []
+        
+        robot_pos = agent_state["position"]
+        my_team = agent_state["team"]
+        for block in state["blocks"]:
+            if block["status"] == BlockStatus.ON_FIELD:
+                dist = np.linalg.norm(block["position"] - robot_pos)
+                block_info = (dist, block["position"][0], block["position"][1])
+                
+                if block.get("team") == my_team:
+                    friendly_blocks.append(block_info)
+                else:
+                    opponent_blocks.append(block_info)
+        
+        # Sort by distance
+        friendly_blocks.sort(key=lambda x: x[0])
+        opponent_blocks.sort(key=lambda x: x[0])
+        
+        # Add counts
+        obs_parts.append(float(len(friendly_blocks)))
+        obs_parts.append(float(len(opponent_blocks)))
+        
+        # Add friendly positions
+        f_positions = []
+        for i in range(min(len(friendly_blocks), MAX_TRACKED)):
+            f_positions.extend([friendly_blocks[i][1], friendly_blocks[i][2]])
+        # Pad
+        while len(f_positions) < MAX_TRACKED * 2:
+            f_positions.extend([0.0, 0.0])
+        obs_parts.extend(f_positions)
+        
+        # Add opponent positions
+        o_positions = []
+        for i in range(min(len(opponent_blocks), MAX_TRACKED)):
+            o_positions.extend([opponent_blocks[i][1], opponent_blocks[i][2]])
+        # Pad
+        while len(o_positions) < MAX_TRACKED * 2:
+            o_positions.extend([0.0, 0.0])
+        obs_parts.extend(o_positions)
         
         # 8. Blocks added to each goal BY THIS AGENT (4)
         obs_parts.extend([float(x) for x in agent_state["goals_added"]])
@@ -600,12 +632,23 @@ class PushBackGame(VexGame):
         # Held blocks: 1
         # Parked: 1
         # Time remaining: 1
-        # Available blocks count: 1
-        # Block positions: 20 * 2 = 40
+        # Friendly blocks count: 1 (Index 9)
+        # Opponent blocks count: 1 (Index 10)
+        # Friendly Block positions: 15 * 2 = 30 (Indices 11-40)
+        # Opponent Block positions: 15 * 2 = 30 (Indices 41-70)
         # Goals added by this agent: 4
         # Loaders taken by this agent: 4
-        # Total: 3 + 3 + 1 + 1 + 1 + 1 + 40 + 4 + 4 = 58
-        return (58,)
+        # Total: 3 (self) + 3 (team) + 1 (held) + 1 (park) + 1 (time) + 2 (counts) + 30 (friend) + 30 (opp) + 4 (goals) + 4 (loaders) = 79
+        # Wait, previous was 58.
+        # New calculation: 3+3+1+1+1 = 9.
+        # Counts: 2. Total 11.
+        # Blocks: 60. Total 71.
+        # Goals/Loaders: 8. Total 79.
+        # Let's verify counts.
+        # Old: 3+3+1+1+1+1(count)+40(blocks)+8 = 58.
+        # New: 3+3+1+1+1+2(counts)+30(friend)+30(opp)+8 = 79.
+        
+        return (79,)
     
     def action_space(self, agent: str) -> spaces.Space:
         """Get action space for an agent."""
@@ -638,27 +681,28 @@ class PushBackGame(VexGame):
         if agent_state.get("parked", False):
             return 0.5, 0.0
         
+        # Default values (if action logic falls through or for simple actions)
         duration = 0.5
         penalty = 0.0
         
         if action == Actions.PICK_UP_NEAREST_BLOCK.value:
-            duration, penalty = self._action_pickup_block(agent_state, state, duration, penalty)
+            duration, penalty = self._action_pickup_block(agent_state, state)
         
         elif action == Actions.SCORE_IN_LONG_GOAL_1.value:
             duration, penalty = self._action_score_in_goal(
-                agent_state, GoalType.LONG_1, state, duration, penalty
+                agent_state, GoalType.LONG_1, state
             )
         elif action == Actions.SCORE_IN_LONG_GOAL_2.value:
             duration, penalty = self._action_score_in_goal(
-                agent_state, GoalType.LONG_2, state, duration, penalty
+                agent_state, GoalType.LONG_2, state
             )
         elif action == Actions.SCORE_IN_CENTER_UPPER.value:
             duration, penalty = self._action_score_in_goal(
-                agent_state, GoalType.CENTER_UPPER, state, duration, penalty
+                agent_state, GoalType.CENTER_UPPER, state
             )
         elif action == Actions.SCORE_IN_CENTER_LOWER.value:
             duration, penalty = self._action_score_in_goal(
-                agent_state, GoalType.CENTER_LOWER, state, duration, penalty
+                agent_state, GoalType.CENTER_LOWER, state
             )
         
         elif action in [
@@ -669,17 +713,18 @@ class PushBackGame(VexGame):
         ]:
             idx = action - Actions.TAKE_FROM_LOADER_TL.value
             duration, penalty = self._action_take_from_loader(
-                agent_state, idx, state, duration, penalty
+                agent_state, idx, state
             )
         
         elif action == Actions.PARK.value:
-            duration, penalty = self._action_park(agent_state, state, duration, penalty)
+            duration, penalty = self._action_park(agent_state, state)
         
         elif action == Actions.TURN_TOWARD_CENTER.value:
-            duration, penalty = self._action_turn_toward_center(agent_state, duration, penalty)
+            duration, penalty = self._action_turn_toward_center(agent_state)
         
         elif action == Actions.IDLE.value:
             duration = 0.1
+            penalty = 0.0
         
         # Update held block positions (game-specific)
         self._update_held_blocks(state)
@@ -687,7 +732,7 @@ class PushBackGame(VexGame):
         return duration, penalty
     
     def _action_pickup_block(
-        self, agent_state: Dict, state: Dict, duration: float, penalty: float
+        self, agent_state: Dict, state: Dict
     ) -> Tuple[float, float]:
         """Pick up nearest block in FOV matching robot's team."""
         target_idx = -1
@@ -719,6 +764,9 @@ class PushBackGame(VexGame):
                             min_dist = dist
                             target_idx = i
         
+        duration = 0.5 # Base duration
+        penalty = 0.0
+        
         if target_idx != -1:
             target_pos = state["blocks"][target_idx]["position"]
             movement = target_pos - agent_state["position"]
@@ -744,13 +792,11 @@ class PushBackGame(VexGame):
         self, 
         agent_state: Dict, 
         goal_type: GoalType, 
-        state: Dict, 
-        duration: float, 
-        penalty: float
+        state: Dict
     ) -> Tuple[float, float]:
         """Score held blocks in a goal."""
         if agent_state["held_blocks"] <= 0:
-            return duration, penalty + DEFAULT_PENALTY
+            return 0.5, DEFAULT_PENALTY
         
         goal = self.goal_manager.get_goal(goal_type)
         scoring_side = goal.get_nearest_side(agent_state["position"])
@@ -796,7 +842,7 @@ class PushBackGame(VexGame):
         
         # Dynamic speed
         speed = self.get_robot_speed(agent_state["agent_name"], state)
-        duration += dist / speed
+        duration = 0.5 + (dist / speed)
         
         # Score blocks
         scored_count = 0
@@ -836,7 +882,7 @@ class PushBackGame(VexGame):
         agent_state["held_blocks"] = 0
         duration += 0.5 * scored_count
         
-        return duration, penalty
+        return duration, 0.0
     
     def _update_goal_block_positions(
         self, goal: GoalQueue, target_status: int, state: Dict
@@ -855,9 +901,7 @@ class PushBackGame(VexGame):
         self, 
         agent_state: Dict, 
         loader_idx: int, 
-        state: Dict, 
-        duration: float, 
-        penalty: float
+        state: Dict
     ) -> Tuple[float, float]:
         """Take a block from a loader."""
         loader_pos = LOADERS[loader_idx].position
@@ -883,7 +927,7 @@ class PushBackGame(VexGame):
         agent_state["orientation"] = np.array([orientation], dtype=np.float32)
         # Dynamic speed
         speed = self.get_robot_speed(agent_state["agent_name"], state)
-        duration += dist / speed
+        duration = 0.5 + (dist / speed)
         
         if state["loaders"][loader_idx] > 0:
             state["loaders"][loader_idx] -= 1
@@ -901,40 +945,17 @@ class PushBackGame(VexGame):
             # Track per-agent loaders taken
             agent_state["loaders_taken"][loader_idx] += 1
         
-        return duration, penalty
-    
-    def _action_clear_loader(
-        self, agent_state: Dict, state: Dict, duration: float, penalty: float
-    ) -> Tuple[float, float]:
-        """Clear blocks from nearest loader."""
-        closest_loader = -1
-        
-        for loader in LOADERS:
-            if np.linalg.norm(agent_state["position"] - loader.position) < 18.0:
-                closest_loader = loader.index
-                break
-        
-        if closest_loader != -1 and state["loaders"][closest_loader] > 0:
-            loader_status = BlockStatus.IN_LOADER_TL + closest_loader
-            # Clear from Bottom (Last added)
-            for block in reversed(state["blocks"]):
-                if block["status"] == loader_status:
-                    block["status"] = BlockStatus.ON_FIELD
-                    block["position"] = agent_state["position"] + np.random.uniform(-6.0, 6.0, 2).astype(np.float32)
-                    state["loaders"][closest_loader] -= 1
-                    break
-            duration += 1.0
-        else:
-            penalty = DEFAULT_PENALTY
-        
-        return duration, penalty
+        return duration, 0.0
     
     def _action_park(
-        self, agent_state: Dict, state: Dict, duration: float, penalty: float
+        self, agent_state: Dict, state: Dict
     ) -> Tuple[float, float]:
         """Park in team's zone."""
         team = agent_state["team"]
         park_zone = PARK_ZONES[team]
+
+        duration = 0.5
+        penalty = 0.0
 
         # If parking before 10 seconds left, apply penalty
         if agent_state["gameTime"] < self.total_time - 10.0:
@@ -958,15 +979,14 @@ class PushBackGame(VexGame):
         return duration, penalty
     
     def _action_turn_toward_center(
-        self, agent_state: Dict, duration: float, penalty: float
+        self, agent_state: Dict
     ) -> Tuple[float, float]:
         """Turn robot to face center."""
         direction = np.array([0.0, 0.0]) - agent_state["position"]
         target_angle = np.arctan2(direction[1], direction[0])
         agent_state["orientation"] = np.array([target_angle], dtype=np.float32)
-        duration += 0.3
         
-        return duration, penalty
+        return 0.3, 0.0
     
     @abstractmethod
     def compute_score(self, state: Dict) -> Dict[str, int]:
@@ -1010,6 +1030,51 @@ class PushBackGame(VexGame):
             held_blocks = observation[3]
             if held_blocks <= 0:
                 return False
+        
+        # Mask Pick Up if no FRIENDLY blocks are actionable
+        if action == Actions.PICK_UP_NEAREST_BLOCK.value:
+            # Reconstruct geometric check from observation data
+            robot_pos = observation[0:2]
+            robot_theta = observation[2]
+            
+            # New Observation Layout:
+            # 0-2: Self (3)
+            # 3-5: Teammate (3)
+            # 6: Held (1)
+            # 7: Parked (1)
+            # 8: Time (1)
+            # 9: Friendly Count (1)
+            # 10: Opponent Count (1)
+            # 11..40: Friendly positions (15*2 = 30)
+            # 41..70: Opponent positions (15*2 = 30)
+            
+            friendly_count = int(observation[9])
+            
+            # Start of friendly blocks
+            base_idx = 11
+            MAX_TRACKED = 15
+            
+            found_valid_block = False
+            for i in range(min(friendly_count, MAX_TRACKED)):
+                bx = observation[base_idx + i*2]
+                by = observation[base_idx + i*2 + 1]
+                
+                # Simple distance check first
+                dist = np.linalg.norm([bx - robot_pos[0], by - robot_pos[1]])
+                if dist > 0: # Avoid self if bug
+                    angle_to_block = np.arctan2(by - robot_pos[1], bx - robot_pos[0])
+                    angle_diff = angle_to_block - robot_theta
+                    # Normalize
+                    while angle_diff > np.pi: angle_diff -= 2 * np.pi
+                    while angle_diff < -np.pi: angle_diff += 2 * np.pi
+                    
+                    if abs(angle_diff) <= FOV / 2:
+                        found_valid_block = True
+                        break
+            
+            if not found_valid_block:
+                return False
+        
         return True
     
     def _update_held_blocks(self, state: Dict) -> None:
