@@ -6,7 +6,7 @@ import random
 from math import sqrt, exp  # Added missing imports if needed
 import time
 import os
-from vex_core.base_env import Robot, Team, RobotSize
+from vex_core.base_game import Robot, Team, RobotSize
 
 # =============================================================================
 # Obstacle Definitions

@@ -2,12 +2,13 @@ import torch
 import numpy as np
 
 # Import from new modular architecture
-from vex_core.base_game import VexGame
+from vex_core.base_game import VexGame, Robot
 
 class VexModelRunner:
-    def __init__(self, model_path: str, game: VexGame):
+    def __init__(self, model_path: str, game: VexGame, robot: Robot):
         self.model_path: str = model_path
         self.game: VexGame = game
+        self.robot: Robot = robot
         self.model: torch.jit.ScriptModule = None
         
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -60,4 +61,4 @@ class VexModelRunner:
         if action is None:
             action = self.game.fallback_action()
 
-        return self.game.split_action(action, observation)
+        return self.game.split_action(action, observation, self.robot)

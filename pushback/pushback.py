@@ -21,7 +21,7 @@ from gymnasium import spaces
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from vex_core.base_game import VexGame
+from vex_core.base_game import Robot, VexGame
 from path_planner import PathPlanner
 
 # Forward declarations for get_game method
@@ -84,18 +84,20 @@ DEFAULT_PENALTY = 0.1 # Will be subtracted from reward
 
 class Actions(Enum):
     """Available actions for robots in the Push Back game."""
-    PICK_UP_NEAREST_BLOCK = 0
-    SCORE_IN_LONG_GOAL_1 = 1      # Long goal 1 (y=48)
-    SCORE_IN_LONG_GOAL_2 = 2      # Long goal 2 (y=-48)
-    SCORE_IN_CENTER_UPPER = 3     # Center goal upper
-    SCORE_IN_CENTER_LOWER = 4     # Center goal lower
-    TAKE_FROM_LOADER_TL = 5       # Top Left loader
-    TAKE_FROM_LOADER_TR = 6       # Top Right loader
-    TAKE_FROM_LOADER_BL = 7       # Bottom Left loader
-    TAKE_FROM_LOADER_BR = 8       # Bottom Right loader
-    PARK = 9                      # Park in team's zone
-    TURN_TOWARD_CENTER = 10       # Turn to face center of field
-    IDLE = 11
+    PICK_UP_BLOCK = 0             # Pick up nearest block matching robot's team
+    PICK_UP_RED_BLOCK = 1         # Pick up nearest red block
+    PICK_UP_BLUE_BLOCK = 2        # Pick up nearest blue block
+    SCORE_IN_LONG_GOAL_1 = 3      # Long goal 1 (y=48)
+    SCORE_IN_LONG_GOAL_2 = 4      # Long goal 2 (y=-48)
+    SCORE_IN_CENTER_UPPER = 5     # Center goal upper
+    SCORE_IN_CENTER_LOWER = 6     # Center goal lower
+    TAKE_FROM_LOADER_TL = 7       # Top Left loader
+    TAKE_FROM_LOADER_TR = 8       # Top Right loader
+    TAKE_FROM_LOADER_BL = 9       # Bottom Left loader
+    TAKE_FROM_LOADER_BR = 10      # Bottom Right loader
+    PARK = 11                     # Park in team's zone
+    TURN_TOWARD_CENTER = 12       # Turn to face center of field
+    IDLE = 13
 
 
 def is_scoring_action(action: Actions) -> bool:
@@ -741,8 +743,14 @@ class PushBackGame(VexGame):
         duration = 0.5
         penalty = 0.0
         
-        if action == Actions.PICK_UP_NEAREST_BLOCK.value:
-            duration, penalty = self._action_pickup_block(agent_state, state)
+        if action == Actions.PICK_UP_BLOCK.value:
+            duration, penalty = self._action_pickup_block(agent_state, state, target_team=None)
+        
+        elif action == Actions.PICK_UP_RED_BLOCK.value:
+            duration, penalty = self._action_pickup_block(agent_state, state, target_team="red")
+        
+        elif action == Actions.PICK_UP_BLUE_BLOCK.value:
+            duration, penalty = self._action_pickup_block(agent_state, state, target_team="blue")
         
         elif action == Actions.SCORE_IN_LONG_GOAL_1.value:
             duration, penalty = self._action_score_in_goal(
@@ -788,9 +796,15 @@ class PushBackGame(VexGame):
         return duration, penalty
     
     def _action_pickup_block(
-        self, agent_state: Dict, state: Dict
+        self, agent_state: Dict, state: Dict, target_team: Optional[str] = None
     ) -> Tuple[float, float]:
-        """Pick up nearest block in FOV matching robot's team."""
+        """Pick up nearest block in FOV.
+        
+        Args:
+            agent_state: The agent's state
+            state: The game state
+            target_team: If None, picks up robot's team color. Otherwise "red" or "blue".
+        """
         target_idx = -1
         min_dist = float('inf')
         
@@ -798,9 +812,12 @@ class PushBackGame(VexGame):
         robot_theta = agent_state["orientation"][0]
         robot_team = agent_state["team"]
         
+        # Determine which team's blocks to pick up
+        pickup_team = target_team if target_team is not None else robot_team
+        
         for i, block in enumerate(state["blocks"]):
             if block["status"] == BlockStatus.ON_FIELD:
-                if block.get("team") != robot_team:
+                if block.get("team") != pickup_team:
                     continue
                 
                 block_pos = block["position"]
@@ -1094,48 +1111,64 @@ class PushBackGame(VexGame):
             if held_blocks <= 0:
                 return False
         
-        # Mask Pick Up if no FRIENDLY blocks are actionable
-        if action == Actions.PICK_UP_NEAREST_BLOCK.value:
-            # Reconstruct geometric check from observation data
-            robot_pos = observation[0:2]
-            robot_theta = observation[2]
-            
-            # New Observation Layout:
-            # 0-2: Self (3)
-            # 3-5: Teammate (3)
-            # 6: Held (1)
-            # 7: Parked (1)
-            # 8: Time (1)
-            # 9: Friendly Count (1)
-            # 10: Opponent Count (1)
-            # 11..40: Friendly positions (15*2 = 30)
-            # 41..70: Opponent positions (15*2 = 30)
-            
-            friendly_count = int(observation[9])
-            
-            # Start of friendly blocks
-            base_idx = 11
-            MAX_TRACKED = 15
-            
-            found_valid_block = False
-            for i in range(min(friendly_count, MAX_TRACKED)):
+        # New Observation Layout:
+        # 0-2: Self (3)
+        # 3-5: Teammate (3)
+        # 6: Held (1)
+        # 7: Parked (1)
+        # 8: Time (1)
+        # 9: Friendly Count (1)
+        # 10: Opponent Count (1)
+        # 11..40: Friendly positions (15*2 = 30)
+        # 41..70: Opponent positions (15*2 = 30)
+        
+        robot_pos = observation[0:2]
+        robot_theta = observation[2]
+        friendly_count = int(observation[9])
+        opponent_count = int(observation[10])
+        
+        FRIENDLY_BASE_IDX = 11
+        OPPONENT_BASE_IDX = 41
+        MAX_TRACKED = 15
+        
+        def has_valid_block_in_fov(base_idx: int, count: int) -> bool:
+            """Check if there's a valid block in FOV at given observation indices."""
+            for i in range(min(count, MAX_TRACKED)):
                 bx = observation[base_idx + i*2]
                 by = observation[base_idx + i*2 + 1]
                 
-                # Simple distance check first
                 dist = np.linalg.norm([bx - robot_pos[0], by - robot_pos[1]])
-                if dist > 0: # Avoid self if bug
+                if dist > 0:
                     angle_to_block = np.arctan2(by - robot_pos[1], bx - robot_pos[0])
                     angle_diff = angle_to_block - robot_theta
-                    # Normalize
                     while angle_diff > np.pi: angle_diff -= 2 * np.pi
                     while angle_diff < -np.pi: angle_diff += 2 * np.pi
                     
                     if abs(angle_diff) <= FOV / 2:
-                        found_valid_block = True
-                        break
-            
-            if not found_valid_block:
+                        return True
+            return False
+        
+        # Mask PICK_UP_BLOCK if no friendly blocks are actionable
+        if action == Actions.PICK_UP_BLOCK.value:
+            if not has_valid_block_in_fov(FRIENDLY_BASE_IDX, friendly_count):
+                return False
+        
+        # Mask PICK_UP_RED_BLOCK / PICK_UP_BLUE_BLOCK based on observation
+        # Note: We need to determine which observation section corresponds to red/blue
+        # Friendly = robot's team, Opponent = other team
+        # This requires knowing the robot's team from observation context
+        # For now, we check both sections for the specific color actions
+        if action == Actions.PICK_UP_RED_BLOCK.value:
+            # Red blocks could be in friendly or opponent section depending on robot team
+            # Check both to be safe
+            if not (has_valid_block_in_fov(FRIENDLY_BASE_IDX, friendly_count) or 
+                    has_valid_block_in_fov(OPPONENT_BASE_IDX, opponent_count)):
+                return False
+        
+        if action == Actions.PICK_UP_BLUE_BLOCK.value:
+            # Blue blocks could be in friendly or opponent section depending on robot team
+            if not (has_valid_block_in_fov(FRIENDLY_BASE_IDX, friendly_count) or 
+                    has_valid_block_in_fov(OPPONENT_BASE_IDX, opponent_count)):
                 return False
         
         return True
@@ -1412,8 +1445,7 @@ class PushBackGame(VexGame):
         """
         return Actions(action).name
 
-    @staticmethod
-    def split_action(action: int, observation: np.ndarray) -> List[str]:
+    def split_action(self, action: int, observation: np.ndarray, robot: Robot) -> List[str]:
         """
         Split a high-level action into low-level robot instructions.
 
@@ -1425,13 +1457,11 @@ class PushBackGame(VexGame):
         TURN;degrees;speed
         TURN_TO;(x,y);speed
         """
-        # Initialize path planner (can be optimized to be a class member)
-        path_planner = PathPlanner(15, 15, 2, 70, 70)
         
         actions = []
         
-        if action == Actions.PICK_UP_NEAREST_BLOCK.value:
-            positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[0.5,0.5], obstacles=[])
+        if action in [Actions.PICK_UP_BLOCK.value, Actions.PICK_UP_RED_BLOCK.value, Actions.PICK_UP_BLUE_BLOCK.value]:
+            positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[0.5,0.5], obstacles=[], robot=robot)
             points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
 
             actions.append("INTAKE;100")
@@ -1440,7 +1470,7 @@ class PushBackGame(VexGame):
             actions.append("INTAKE;0")
 
         elif action == Actions.SCORE_IN_LONG_GOAL_1.value:
-            positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[3.0, 1.0], obstacles=[])
+            positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[3.0, 1.0], obstacles=[], robot=robot)
             points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
 
             actions.append(f"FOLLOW;{points_str};60")
@@ -1449,7 +1479,7 @@ class PushBackGame(VexGame):
             actions.append("INTAKE;0")
 
         elif action == Actions.SCORE_IN_LONG_GOAL_2.value:
-            positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[-3.0, 1.0], obstacles=[])
+            positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[-3.0, 1.0], obstacles=[], robot=robot)
             points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
 
             actions.append(f"FOLLOW;{points_str};60")
@@ -1458,7 +1488,7 @@ class PushBackGame(VexGame):
             actions.append("INTAKE;0")
 
         elif action == Actions.SCORE_IN_CENTER_UPPER.value:
-            positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[1.5, 1.5], obstacles=[])
+            positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[1.5, 1.5], obstacles=[], robot=robot)
             points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
 
             actions.append(f"FOLLOW;{points_str};55")
@@ -1467,7 +1497,7 @@ class PushBackGame(VexGame):
             actions.append("INTAKE;0")
 
         elif action == Actions.SCORE_IN_CENTER_LOWER.value:
-            positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[-1.5, 1.5], obstacles=[])
+            positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[-1.5, 1.5], obstacles=[], robot=robot)
             points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
 
             actions.append(f"FOLLOW;{points_str};55")
@@ -1476,7 +1506,7 @@ class PushBackGame(VexGame):
             actions.append("INTAKE;0")
 
         elif action == Actions.TAKE_FROM_LOADER_TL.value:
-            positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[-3.0, 4.0], obstacles=[])
+            positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[-3.0, 4.0], obstacles=[], robot=robot)
             points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
 
             actions.append(f"FOLLOW;{points_str};50")
@@ -1487,7 +1517,7 @@ class PushBackGame(VexGame):
             actions.append("INTAKE;0")
 
         elif action == Actions.TAKE_FROM_LOADER_TR.value:
-            positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[3.0, 4.0], obstacles=[])
+            positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[3.0, 4.0], obstacles=[], robot=robot)
             points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
 
             actions.append(f"FOLLOW;{points_str};50")
@@ -1498,7 +1528,7 @@ class PushBackGame(VexGame):
             actions.append("INTAKE;0")
 
         elif action == Actions.TAKE_FROM_LOADER_BL.value:
-            positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[-3.0, -4.0], obstacles=[])
+            positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[-3.0, -4.0], obstacles=[], robot=robot)
             points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
 
             actions.append(f"FOLLOW;{points_str};50")
@@ -1509,7 +1539,7 @@ class PushBackGame(VexGame):
             actions.append("INTAKE;0")
 
         elif action == Actions.TAKE_FROM_LOADER_BR.value:
-            positions, velocities, dt = path_planner.Solve(start_point=[0,0], end_point=[3.0, -4.0], obstacles=[])
+            positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[3.0, -4.0], obstacles=[], robot=robot)
             points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
 
             actions.append(f"FOLLOW;{points_str};50")

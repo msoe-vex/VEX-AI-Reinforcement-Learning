@@ -269,7 +269,9 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         
         # Only return rewards/infos for agents receiving observations
         filtered_rewards = {agent: rewards.get(agent, 0.0) for agent in agents_to_return}
-        infos = {agent: {} for agent in agents_to_return}
+        infos = {agent: {
+            "action_skipped": self.environment_state["agents"][agent].get("action_skipped", False)
+        } for agent in agents_to_return}
         
         return observations, filtered_rewards, terminations, truncations, infos
     

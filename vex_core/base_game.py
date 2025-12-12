@@ -57,8 +57,10 @@ class VexGame(ABC):
     
     def __init__(self, robots: list[Robot] = None):
         """Initialize with robot configurations."""
+        from path_planner import PathPlanner  # Lazy import to avoid circular dependency
         self.robots = robots or []
         self._robot_map = {r.name: r for r in self.robots}
+        self.path_planner = PathPlanner()
     
     @staticmethod
     @abstractmethod
@@ -230,9 +232,8 @@ class VexGame(ABC):
         """
         pass
     
-    @staticmethod
     @abstractmethod
-    def split_action(action: int, observation: np.ndarray) -> List[str]:
+    def split_action(self, action: int, observation: np.ndarray, robot: Robot) -> List[str]:
         """Convert a high-level action into a list of low-level commands."""
         pass
 

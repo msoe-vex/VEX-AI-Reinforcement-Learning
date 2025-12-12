@@ -86,11 +86,13 @@ def main():
         
         step_count += 1
         print(f"\nStep {step_count}:")
-        for agent, action in actions.items():
-            action_name = Actions(action).name
-            print(f"  {agent}: {action_name}")
         
         observations, rewards, terminations, truncations, infos = env.step(actions)
+        for agent, action in actions.items():
+            action_name = Actions(action).name if \
+                agent in infos and \
+                infos[agent].get("action_skipped", False) == False else "--"
+            print(f"  {agent}: {action_name}")
         done = terminations.get("__all__", False) or truncations.get("__all__", False)
         
         if render_mode:
