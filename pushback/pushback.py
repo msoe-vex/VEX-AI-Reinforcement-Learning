@@ -1221,7 +1221,10 @@ class PushBackGame(VexGame):
         # Blocks (not in loaders)
         for block in state["blocks"]:
             if block["status"] < BlockStatus.IN_LOADER_TL:
-                fill_color = block.get("team", "red")
+                try:
+                    fill_color = block.get("team", "red").value
+                except AttributeError:
+                    fill_color = block.get("team", "red")
                 
                 if block["status"] == BlockStatus.ON_FIELD:
                     edge_color = 'black'
