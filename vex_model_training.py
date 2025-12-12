@@ -160,6 +160,11 @@ if __name__ == "__main__":
     checkpoint_freq = max(1, min(5, args.num_iters))  # Every 5 iters, but at least once
     print(f"Checkpoint frequency: every {checkpoint_freq} iterations")
 
+    # Prepare restore parameter if checkpoint path is provided
+    restore_path = args.checkpoint_path if args.checkpoint_path else None
+    if restore_path:
+        print(f"Restoring from checkpoint: {restore_path}")
+
     # Run the training process with logger callbacks
     analysis = tune.run(
         "PPO",
@@ -181,6 +186,7 @@ if __name__ == "__main__":
         metric="env_runners/episode_return_mean",
         mode="max",
         verbose=args.verbose,  # Use the verbosity level from the argument
+        restore=restore_path,  # Resume from checkpoint if provided
     )
 
     print(f"Training completed at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
