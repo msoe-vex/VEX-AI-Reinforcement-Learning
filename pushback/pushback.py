@@ -768,21 +768,21 @@ class PushBackGame(VexGame):
                             min_dist = dist
                             target_idx = i
         
-        duration = 0.5 # Base duration
+        duration = 0.1 # Base duration
         penalty = 0.0
         
         if target_idx != -1:
             target_pos = state["blocks"][target_idx]["position"]
             movement = target_pos - agent_state["position"]
-            dist_travelled = np.linalg.norm(movement)
+            dist = np.linalg.norm(movement)
             agent_state["position"] = target_pos.copy()
             
-            if dist_travelled > 0:
+            if dist > 0:
                 agent_state["orientation"][0] = np.arctan2(movement[1], movement[0])
             
             # Use dynamic robot speed
             speed = self.get_robot_speed(agent_state["agent_name"], state)
-            duration += dist_travelled / speed
+            duration += dist / speed
             
             state["blocks"][target_idx]["status"] = BlockStatus.HELD
             state["blocks"][target_idx]["held_by"] = agent_state["agent_name"]
@@ -846,7 +846,7 @@ class PushBackGame(VexGame):
         
         # Dynamic speed
         speed = self.get_robot_speed(agent_state["agent_name"], state)
-        duration = 0.5 + (dist / speed)
+        duration = 0.1 + (dist / speed)
         
         # Score blocks
         scored_count = 0
@@ -884,7 +884,7 @@ class PushBackGame(VexGame):
         agent_state["goals_added"][goal_idx] += scored_count
         
         agent_state["held_blocks"] = 0
-        duration += 0.5 * scored_count
+        duration += 0.1 * scored_count
         
         return duration, 0.0
     
@@ -931,12 +931,12 @@ class PushBackGame(VexGame):
         agent_state["orientation"] = np.array([orientation], dtype=np.float32)
         # Dynamic speed
         speed = self.get_robot_speed(agent_state["agent_name"], state)
-        duration = 0.5 + (dist / speed)
+        duration = 0.1 + (dist / speed)
         
         if state["loaders"][loader_idx] > 0:
             state["loaders"][loader_idx] -= 1
             agent_state["held_blocks"] += 1
-            duration += 0.5
+            duration += 0.2
             
             # Take from Bottom (Last added block for this loader)
             for block in reversed(state["blocks"]):
@@ -958,7 +958,7 @@ class PushBackGame(VexGame):
         team = agent_state["team"]
         park_zone = PARK_ZONES[team]
 
-        duration = 0.5
+        duration = 0.1
         penalty = 0.0
 
         # If parking before 10 seconds left, apply penalty
@@ -976,7 +976,7 @@ class PushBackGame(VexGame):
         agent_state["position"] = park_zone.center.copy()
         # Dynamic speed     
         speed = self.get_robot_speed(agent_state["agent_name"], {})
-        duration += dist / speed
+        duration += 2.0 + dist / speed
         agent_state["parked"] = True
         agent_state["orientation"] = np.array([np.random.choice([np.pi/2, -np.pi/2])], dtype=np.float32)
         
@@ -986,11 +986,17 @@ class PushBackGame(VexGame):
         self, agent_state: Dict
     ) -> Tuple[float, float]:
         """Turn robot to face center."""
+
         direction = np.array([0.0, 0.0]) - agent_state["position"]
         target_angle = np.arctan2(direction[1], direction[0])
+
+        # If already facing center, give a small penalty
+        if abs(target_angle - agent_state["orientation"][0]) < 1e-4:
+            return 0.1, DEFAULT_PENALTY
+        
         agent_state["orientation"] = np.array([target_angle], dtype=np.float32)
         
-        return 0.3, 0.0
+        return 0.25, 0.0
     
     @abstractmethod
     def compute_score(self, state: Dict) -> Dict[str, int]:

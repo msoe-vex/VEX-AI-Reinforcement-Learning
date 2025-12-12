@@ -32,8 +32,8 @@ class Robot:
     start_orientation: Optional[float] = None  # Radians, None = auto based on team
     length: Optional[float] = None
     width: Optional[float] = None
-    max_speed: Optional[float] = 60.0
-    max_acceleration: Optional[float] = 60.0
+    max_speed: Optional[float] = 70.0
+    max_acceleration: Optional[float] = 70.0
     buffer: Optional[float] = 1.0
     
     def __post_init__(self):
@@ -307,7 +307,7 @@ class VexGame(ABC):
         """
         return True
     
-    def get_robot_for_agent(self, agent: str) -> Any:
+    def get_robot_for_agent(self, agent: str) -> Robot:
         """Get Robot object for an agent by name."""
         return self._robot_map.get(agent)
 

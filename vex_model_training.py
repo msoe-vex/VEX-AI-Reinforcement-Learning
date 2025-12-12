@@ -23,7 +23,7 @@ import json
 def env_creator(config=None):
     """Create environment instance for RLlib registration."""
     config = config or {}
-    game = PushBackGame.get_game(config.get("game", "vexu_skills"))
+    game = PushBackGame.get_game(config.get("game", "vexai_skills"))
     return VexMultiAgentEnv(
         game=game,
         render_mode=None,
@@ -155,6 +155,28 @@ if __name__ == "__main__":
     else:
         output_directory = os.path.join(script_directory, "vex_model_training")  # Default directory if no job ID is provided
 
+    # Generate experiment name with timestamp so we know the trial directory upfront
+    experiment_name = f"PPO_{time.strftime('%Y-%m-%d_%H-%M-%S', time.localtime())}"
+    experiment_dir = os.path.join(output_directory, experiment_name)
+    os.makedirs(experiment_dir, exist_ok=True)
+    print(f"Experiment directory: {experiment_dir}")
+
+    # Save game metadata early (before training starts)
+    metadata = {
+        "game": args.game,
+        "learning_rate": args.learning_rate,
+        "discount_factor": args.discount_factor,
+        "entropy": args.entropy,
+        "randomize": args.randomize,
+        "num_iters": args.num_iters,
+        "checkpoint_path": args.checkpoint_path,
+        "start_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()),
+    }
+    metadata_path = os.path.join(experiment_dir, "training_metadata.json")
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    print(f"Saved training metadata to {metadata_path}")
+
     # Calculate checkpoint frequency - ensure at least one checkpoint is created
     # Checkpoint at the end and at reasonable intervals
     checkpoint_freq = max(1, min(5, args.num_iters))  # Every 5 iters, but at least once
@@ -168,6 +190,7 @@ if __name__ == "__main__":
     # Run the training process with logger callbacks
     analysis = tune.run(
         "PPO",
+        name=experiment_name,  # Use our pre-generated experiment name
         config=config.to_dict(),
         storage_path=output_directory,
         checkpoint_freq=checkpoint_freq,
@@ -196,33 +219,9 @@ if __name__ == "__main__":
     best_checkpoint = analysis.best_checkpoint
     best_checkpoint_path = best_checkpoint.path
     
-    # Get the actual trial directory (PPO_2025-...) where results are stored
-    # The checkpoint path typically looks like: .../PPO_2025-12-11_09-08-15/PPO_VEX_Multi_Agent_Env_xxxxx/checkpoint_xxx
-    # We want the PPO_2025-... directory
-    trial_dir = best_checkpoint_path
-    while not os.path.basename(trial_dir).startswith('PPO_'):
-        parent = os.path.dirname(trial_dir)
-        if parent == trial_dir:  # Reached root
-            trial_dir = output_directory
-            break
-        trial_dir = parent
-    
-    print(f"Saving results to: {trial_dir}")
-    
-    # Save game metadata to the trial directory
-    metadata = {
-        "game": args.game,
-        "learning_rate": args.learning_rate,
-        "discount_factor": args.discount_factor,
-        "entropy": args.entropy,
-        "randomize": args.randomize,
-    }
-    metadata_path = os.path.join(trial_dir, "training_metadata.json")
-    with open(metadata_path, 'w') as f:
-        json.dump(metadata, f, indent=2)
-    print(f"Saved training metadata to {metadata_path}")
+    print(f"Saving results to: {experiment_dir}")
 
-    compile_checkpoint_to_torchscript(temp_env.game, best_checkpoint_path, trial_dir)
+    compile_checkpoint_to_torchscript(temp_env.game, best_checkpoint_path, experiment_dir)
 
     # Shutdown Ray
     ray.shutdown()
