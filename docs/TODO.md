@@ -1,2 +1,3 @@
 - Finish creating split_actions function
 - Figure out how to improve training
+- Optimize the environment
