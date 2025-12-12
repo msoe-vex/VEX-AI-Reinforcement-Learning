@@ -70,8 +70,8 @@ def env_creator(config=None):
 
 # Policy mapping function to assign agents to policies.
 def policy_mapping_fn(agent_id, episode):
-    return "shared_policy" # Use the same policy for all agents
-    # return agent_id # Change to agent_id if you want to use different policies for each agent
+    # return "shared_policy" # Use the same policy for all agents
+    return agent_id # Change to agent_id if you want to use different policies for each agent
 
 if __name__ == "__main__":
     # Suppress excessive experiment checkpoint warnings completely
@@ -135,6 +135,8 @@ if __name__ == "__main__":
     # Detect available GPUs
     num_gpus_available = int(ray.available_resources().get("GPU", 0))
     print(f"GPUs detected by Ray: {num_gpus_available}")
+
+    all_policies = temp_env.possible_agents
     
     # Configure the RLlib Trainer using PPO with new API stack
     config = (
@@ -159,9 +161,9 @@ if __name__ == "__main__":
             num_env_runners=args.cpus_per_task-1,  # Use 1 runner for each CPU core plus 1 for the main process
         )
         .multi_agent(
-            policies={"shared_policy"},  # Define policy IDs
+            policies=set(all_policies),  # Define policy IDs
             policy_mapping_fn=policy_mapping_fn,
-            policies_to_train=["shared_policy"],
+            policies_to_train=list(all_policies),
         )
         .rl_module(
             rl_module_spec=RLModuleSpec(

@@ -2,39 +2,81 @@ import torch
 import argparse
 import os
 import numpy as np
+import glob
 
 # Import from new modular architecture
 from vex_core import VexMultiAgentEnv
 from pushback import PushBackGame
 import json
 
-def run_simulation(model_path, game_name, output_dir):
+def load_agent_models(model_dir, agents, device):
     """
-    Loads a trained model and runs a simulation in the VEX environment.
+    Load models for each agent from the model directory.
+    
+    Args:
+        model_dir: Directory containing .pt model files
+        agents: List of agent IDs
+        device: torch device to load models to
+        
+    Returns:
+        Dict mapping agent_id to loaded model
+    """
+    models = {}
+    
+    for agent_id in agents:
+        # Search for model files matching the agent_id
+        # Try exact match first, then partial match
+        patterns = [
+            os.path.join(model_dir, f"{agent_id}.pt"),
+            os.path.join(model_dir, f"{agent_id}_*.pt"),
+            os.path.join(model_dir, f"*_{agent_id}.pt"),
+            os.path.join(model_dir, f"*{agent_id}*.pt"),
+        ]
+        
+        model_path = None
+        for pattern in patterns:
+            matches = glob.glob(pattern)
+            if matches:
+                model_path = matches[0]
+                break
+        
+        if model_path is None:
+            # Fall back to shared_policy.pt if no agent-specific model found
+            shared_path = os.path.join(model_dir, "shared_policy.pt")
+            if os.path.exists(shared_path):
+                model_path = shared_path
+                print(f"Using shared policy for agent {agent_id}")
+            else:
+                raise FileNotFoundError(f"No model found for agent {agent_id} in {model_dir}")
+        else:
+            print(f"Found model for agent {agent_id}: {model_path}")
+        
+        try:
+            model = torch.jit.load(model_path, map_location=device)
+            model.eval()
+            model = torch.jit.optimize_for_inference(model)
+            models[agent_id] = model
+        except Exception as e:
+            raise RuntimeError(f"Error loading model for agent {agent_id}: {e}")
+    
+    return models
+
+def run_simulation(model_dir, game_name, output_dir):
+    """
+    Loads trained models and runs a simulation in the VEX environment.
 
     Args:
-        model_path (str): Path to the trained TorchScript model (.pt file).
+        model_dir (str): Path to the directory containing trained TorchScript models (.pt files).
+        game_name (str): Name of the game variant to use.
+        output_dir (str): Output directory for renders.
     """
-    if not os.path.exists(model_path):
-        print(f"Error: Model file not found at {model_path}")
+    if not os.path.exists(model_dir):
+        print(f"Error: Model directory not found at {model_dir}")
         return
 
     # Device Awareness: Automatically use GPU (CUDA) if available
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
-    
-    # Load the TorchScript model
-    try:
-        loaded_model = torch.jit.load(model_path, map_location=device)
-        loaded_model.eval()  # Set the model to evaluation mode
-        
-        # Optimize for Inference: Fuses layers for faster execution
-        loaded_model = torch.jit.optimize_for_inference(loaded_model)
-        
-        print(f"Successfully loaded and optimized model from {model_path}")
-    except Exception as e:
-        print(f"Error loading model: {e}")
-        return
 
     # Initialize the environment using new modular architecture
     game = PushBackGame.get_game(game_name)
@@ -45,18 +87,27 @@ def run_simulation(model_path, game_name, output_dir):
         randomize=False
     )
     
+    # Load models for each agent
+    print(f"Loading models from {model_dir}...")
+    try:
+        models = load_agent_models(model_dir, env.possible_agents, device)
+        print(f"Successfully loaded models for {len(models)} agents")
+    except Exception as e:
+        print(f"Error loading models: {e}")
+        return
+    
     # Get observation and action space shapes for a sample agent
     # These are used to correctly shape tensors for the model
     sample_agent = env.possible_agents[0]
     obs_shape = env.observation_space(sample_agent).shape
-    act_shape = env.action_space(sample_agent).shape # For Discrete, this is ()
     
     # Warmup Pass: Initialize CUDA context before simulation starts
-    print("Warming up model...")
+    print("Warming up models...")
     dummy_input = torch.randn(1, *obs_shape, device=device)
     with torch.no_grad():
-        _ = loaded_model(dummy_input)
-    print("Model warmed up")
+        for agent_id, model in models.items():
+            _ = model(dummy_input)
+    print("Models warmed up")
 
     print("Running simulation...")
     observations, infos = env.reset()
@@ -90,8 +141,10 @@ def run_simulation(model_path, game_name, output_dir):
             obs_np_float = obs_np.astype(np.float32) if obs_np.dtype != np.float32 else obs_np
             obs_tensor = torch.from_numpy(obs_np_float).unsqueeze(0).to(device)
 
+            # Use the agent-specific model
+            model = models[agent_id]
             with torch.no_grad():
-                action_logits = loaded_model(obs_tensor)
+                action_logits = model(obs_tensor)
             # Sort actions by descending logit value (best first)
             sorted_actions = torch.argsort(action_logits, dim=1, descending=True).squeeze(0).tolist()
             # Find the first valid action
@@ -139,12 +192,12 @@ def run_simulation(model_path, game_name, output_dir):
     env.close()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run VEX environment simulation with a trained model.")
+    parser = argparse.ArgumentParser(description="Run VEX environment simulation with trained models.")
     parser.add_argument(
-        "--model-path",
+        "--model-dir",
         type=str,
         required=True,
-        help="Path to the trained TorchScript model (.pt file, e.g., traced_model.pt)."
+        help="Path to the directory containing trained TorchScript models (.pt files)."
     )
     parser.add_argument(
         "--game",
@@ -164,9 +217,8 @@ if __name__ == "__main__":
     # Try to read game from metadata if not provided
     game_name = args.game
     if game_name is None:
-        # Look for metadata in the same directory as the model
-        model_dir = os.path.dirname(args.model_path)
-        metadata_path = os.path.join(model_dir, "training_metadata.json")
+        # Look for metadata in the model directory
+        metadata_path = os.path.join(args.model_dir, "training_metadata.json")
         if os.path.exists(metadata_path):
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
@@ -176,4 +228,4 @@ if __name__ == "__main__":
             game_name = "vexai_skills"
             print(f"No metadata found, using default game: {game_name}")
     
-    run_simulation(args.model_path, game_name, args.output_dir)
+    run_simulation(args.model_dir, game_name, args.output_dir)
