@@ -800,7 +800,7 @@ class PushBackGame(VexGame):
     ) -> Tuple[float, float]:
         """Score held blocks in a goal."""
         if agent_state["held_blocks"] <= 0:
-            return 0.5, DEFAULT_PENALTY
+            return 0.5, 0 # Do not penalize to encourage scoring
         
         goal = self.goal_manager.get_goal(goal_type)
         scoring_side = goal.get_nearest_side(agent_state["position"])
