@@ -288,6 +288,29 @@ class VexGame(ABC):
         """
         pass
     
+    @abstractmethod
+    def render_info_panel(
+        self, 
+        ax_info: Any, 
+        state: Dict, 
+        agents: List[str],
+        actions: Optional[Dict],
+        rewards: Optional[Dict],
+        num_moves: int
+    ) -> None:
+        """
+        Render game-specific info panel.
+        
+        Args:
+            ax_info: Matplotlib axes for info panel
+            state: Current game state
+            agents: List of active agent names
+            actions: Dict of actions taken (or None)
+            rewards: Dict of rewards received (or None)
+            num_moves: Current step number
+        """
+        pass
+    
     # =========================================================================
     # Optional Methods (with default implementations)
     # =========================================================================

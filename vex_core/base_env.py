@@ -382,12 +382,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         actions: Optional[Dict], 
         rewards: Optional[Dict]
     ) -> None:
-        """Render robots and info panel."""
-        info_y = 0.95
-        ax_info.text(0.5, info_y, "Agent Actions", fontsize=12, fontweight='bold',
-                    ha='center', va='top')
-        info_y -= 0.08
-        
+        """Render robots and delegate info panel to game."""
+        # Draw robots on field
         for i, agent in enumerate(self.agents):
             st = self.environment_state["agents"][agent]
             team = self.game.get_team_for_agent(agent)
@@ -424,51 +420,16 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             ax.text(x, y, str(i), fontsize=12, ha='center', va='center',
                    color='white', fontweight='bold', zorder=11,
                    bbox=dict(boxstyle='circle,pad=0.2', facecolor='black', alpha=0.8))
-            
-            # Info panel text
-            action_text = "---"
-            if actions and agent in actions:
-                if st.get("action_skipped", False):
-                    action_text = "--"
-                else:
-                    try:
-                        action_text = self.game.action_to_name(actions[agent])
-                    except Exception:
-                        action_text = str(actions[agent])
-            
-            reward_text = ""
-            if rewards and agent in rewards:
-                reward_text = f" (R: {rewards[agent]:.2f})"
-            
-            ax_info.text(0.05, info_y, f"Robot {i} ({team}):",
-                        fontsize=9, color=robot_color, fontweight='bold', va='top')
-            info_y -= 0.05
-            ax_info.text(0.1, info_y, f"{action_text}{reward_text}", fontsize=8, va='top')
-            info_y -= 0.03
-            ax_info.text(0.1, info_y, 
-                        f"Time: {st['gameTime']:.1f}s / {self.game.total_time:.0f}s",
-                        fontsize=7, va='top', color='gray')
-            info_y -= 0.03
-            ax_info.text(0.1, info_y,
-                        f"Pos: ({x:.0f}, {y:.0f}) | Held: {st.get('held_blocks', 0)}",
-                        fontsize=7, va='top', color='gray')
-            info_y -= 0.06
         
-        # Score section
-        info_y -= 0.02
-        ax_info.axhline(y=info_y, xmin=0.05, xmax=0.95, color='gray', linewidth=0.5)
-        info_y -= 0.05
-        
-        team_scores = self.game.compute_score(self.environment_state)
-        ax_info.text(0.05, info_y, "Scores:", fontsize=10, fontweight='bold', va='top')
-        info_y -= 0.04
-        ax_info.text(0.1, info_y, f"Red: {team_scores.get('red', 0)}",
-                    fontsize=9, va='top', color='red', fontweight='bold')
-        info_y -= 0.04
-        ax_info.text(0.1, info_y, f"Blue: {team_scores.get('blue', 0)}",
-                    fontsize=9, va='top', color='blue', fontweight='bold')
-        info_y -= 0.05
-        ax_info.text(0.05, info_y, f"Step: {self.num_moves}", fontsize=8, va='top')
+        # Delegate info panel rendering to game (allows game-specific customization)
+        self.game.render_info_panel(
+            ax_info=ax_info,
+            state=self.environment_state,
+            agents=self.agents,
+            actions=actions,
+            rewards=rewards,
+            num_moves=self.num_moves
+        )
     
     def close(self) -> None:
         """Clean up resources."""

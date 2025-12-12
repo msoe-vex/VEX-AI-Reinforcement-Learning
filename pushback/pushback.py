@@ -334,23 +334,75 @@ class GoalQueue:
         return self.goal_position.get_nearest_entry_side(robot_position)
     
     def add_block(self, block_id: int, from_side: str) -> Optional[int]:
-        """Add a block from the specified side. Returns ejected block ID if overflow."""
+        """
+        Add a block from the specified side. Returns ejected block ID if overflow.
+        
+        Cascading push mechanics:
+        - Insert new block at entry side
+        - If that slot was occupied, push that block to the next slot
+        - Continue pushing until an empty slot absorbs the chain
+        - If chain reaches the far end, that block is ejected
+        
+        Example: Goal is BB__________RRR (15 slots, B at 0,1; R at 12,13,14)
+        Adding blue block from right (slot 14):
+        - Slot 14 has R, so push it to slot 13
+        - Slot 13 has R, so push it to slot 12  
+        - Slot 12 has R, so push it to slot 11
+        - Slot 11 is empty, R settles there
+        - Place new B at slot 14
+        - Result: BB________RRRB (B at 0,1; R at 11,12,13; B at 14)
+        """
         ejected = None
         
         if from_side == "left":
-            for i in range(self.capacity):
-                if self.slots[i] is None:
-                    self.slots[i] = block_id
-                    return None
-            ejected = self.slots[-1]
-            self.slots = [block_id] + self.slots[:-1]
-        else:
-            for i in range(self.capacity - 1, -1, -1):
-                if self.slots[i] is None:
-                    self.slots[i] = block_id
-                    return None
-            ejected = self.slots[0]
-            self.slots = self.slots[1:] + [block_id]
+            # Adding from left (index 0), push toward right (higher indices)
+            entry_idx = 0
+            push_direction = 1  # toward higher indices
+            exit_idx = self.capacity - 1
+        else:  # from_side == "right"
+            # Adding from right (last index), push toward left (lower indices)
+            entry_idx = self.capacity - 1
+            push_direction = -1  # toward lower indices
+            exit_idx = 0
+        
+        # Check if entry slot is occupied
+        if self.slots[entry_idx] is not None:
+            # Need to push blocks - find the end of the continuous chain
+            # Start from entry, walk in push direction until we find empty or exit
+            chain_end = entry_idx
+            
+            while True:
+                next_idx = chain_end + push_direction
+                
+                # Check if we've reached the exit boundary
+                if (push_direction > 0 and next_idx > exit_idx) or \
+                   (push_direction < 0 and next_idx < exit_idx):
+                    # Chain reaches exit - eject the block at chain_end
+                    ejected = self.slots[chain_end]
+                    # Shift all blocks from chain_end back to entry
+                    current = chain_end
+                    while current != entry_idx:
+                        prev = current - push_direction
+                        self.slots[current] = self.slots[prev]
+                        current = prev
+                    break
+                
+                # Check if next slot is empty - chain can expand into it
+                if self.slots[next_idx] is None:
+                    # Shift all blocks one step in push_direction
+                    # Start from next_idx (the empty slot) and work back to entry
+                    current = next_idx
+                    while current != entry_idx:
+                        prev = current - push_direction
+                        self.slots[current] = self.slots[prev]
+                        current = prev
+                    break
+                
+                # Next slot is occupied, continue the chain
+                chain_end = next_idx
+        
+        # Place the new block at entry
+        self.slots[entry_idx] = block_id
         
         return ejected
     
@@ -800,7 +852,7 @@ class PushBackGame(VexGame):
     ) -> Tuple[float, float]:
         """Score held blocks in a goal."""
         if agent_state["held_blocks"] <= 0:
-            return 0.5, 0 # Do not penalize to encourage scoring
+            return 0.5, DEFAULT_PENALTY
         
         goal = self.goal_manager.get_goal(goal_type)
         scoring_side = goal.get_nearest_side(agent_state["position"])
@@ -1037,7 +1089,8 @@ class PushBackGame(VexGame):
     def is_valid_action(self, action: int, observation: np.ndarray) -> bool:
         """Check if action is valid."""
         if is_scoring_action(Actions(action)):
-            held_blocks = observation[3]
+            # Observation layout: 0-2: self, 3-5: teammate, 6: held_blocks
+            held_blocks = observation[6]
             if held_blocks <= 0:
                 return False
         
@@ -1100,6 +1153,96 @@ class PushBackGame(VexGame):
     def get_permanent_obstacles(self) -> List[Obstacle]:
         """Get permanent obstacles."""
         return PERMANENT_OBSTACLES
+    
+    def render_info_panel(
+        self, 
+        ax_info: Any, 
+        state: Dict, 
+        agents: List[str],
+        actions: Optional[Dict],
+        rewards: Optional[Dict],
+        num_moves: int
+    ) -> None:
+        """
+        Render Push Back specific info panel with held blocks by color.
+        """
+        info_y = 0.95
+        ax_info.text(0.5, info_y, "Agent Actions", fontsize=12, fontweight='bold',
+                    ha='center', va='top')
+        info_y -= 0.08
+        
+        for i, agent in enumerate(agents):
+            st = state["agents"][agent]
+            team = self.get_team_for_agent(agent)
+            robot_color = 'red' if team == 'red' else 'blue'
+            
+            x, y = st["position"][0], st["position"][1]
+            
+            # Count held blocks by color
+            held_red = 0
+            held_blue = 0
+            for block in state["blocks"]:
+                if block["status"] == BlockStatus.HELD and block.get("held_by") == agent:
+                    if block.get("team") == "red":
+                        held_red += 1
+                    else:
+                        held_blue += 1
+            
+            # Info panel text
+            action_text = "---"
+            if actions and agent in actions:
+                if st.get("action_skipped", False):
+                    action_text = "--"
+                else:
+                    try:
+                        action_text = self.action_to_name(actions[agent])
+                    except Exception:
+                        action_text = str(actions[agent])
+            
+            reward_text = ""
+            if rewards and agent in rewards:
+                reward_text = f" (R: {rewards[agent]:.2f})"
+            
+            ax_info.text(0.05, info_y, f"Robot {i} ({team}):",
+                        fontsize=9, color=robot_color, fontweight='bold', va='top')
+            info_y -= 0.05
+            ax_info.text(0.1, info_y, f"{action_text}{reward_text}", fontsize=8, va='top')
+            info_y -= 0.03
+            ax_info.text(0.1, info_y, 
+                        f"Time: {st['gameTime']:.1f}s / {self.total_time:.0f}s",
+                        fontsize=7, va='top', color='gray')
+            info_y -= 0.03
+            # Show held blocks by color
+            held_text = f"Pos: ({x:.0f}, {y:.0f}) | Held: "
+            if held_red > 0 or held_blue > 0:
+                parts = []
+                if held_red > 0:
+                    parts.append(f"{held_red}R")
+                if held_blue > 0:
+                    parts.append(f"{held_blue}B")
+                held_text += " ".join(parts)
+            else:
+                held_text += "0"
+            ax_info.text(0.1, info_y, held_text, fontsize=7, va='top', color='gray')
+            info_y -= 0.06
+        
+        # Score section
+        info_y -= 0.02
+        ax_info.axhline(y=info_y, xmin=0.05, xmax=0.95, color='gray', linewidth=0.5)
+        info_y -= 0.05
+        
+        team_scores = self.compute_score(state)
+        ax_info.text(0.05, info_y, "Scores:", fontsize=10, fontweight='bold', va='top')
+        info_y -= 0.04
+        ax_info.text(0.1, info_y, f"Red: {team_scores.get('red', 0)}",
+                    fontsize=9, va='top', color='red', fontweight='bold')
+        info_y -= 0.04
+        if 'blue' in team_scores:
+            ax_info.text(0.1, info_y, f"Blue: {team_scores.get('blue', 0)}",
+                        fontsize=9, va='top', color='blue', fontweight='bold')
+            info_y -= 0.04
+        info_y -= 0.01
+        ax_info.text(0.05, info_y, f"Step: {num_moves}", fontsize=8, va='top')
     
     # =========================================================================
     # Rendering
