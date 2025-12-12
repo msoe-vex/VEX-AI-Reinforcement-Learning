@@ -77,6 +77,9 @@ FOV = np.pi / 2
 # Default penalty for invalid actions
 DEFAULT_PENALTY = 0.1 # Will be subtracted from reward
 
+# Maximum blocks a robot can hold
+MAX_HELD_BLOCKS = 10
+
 
 # =============================================================================
 # Actions
@@ -805,6 +808,10 @@ class PushBackGame(VexGame):
             state: The game state
             target_team: If None, picks up robot's team color. Otherwise "red" or "blue".
         """
+        # Check if already at max capacity
+        if agent_state["held_blocks"] >= MAX_HELD_BLOCKS:
+            return 0.1, DEFAULT_PENALTY
+        
         target_idx = -1
         min_dist = float('inf')
         
@@ -977,6 +984,10 @@ class PushBackGame(VexGame):
         state: Dict
     ) -> Tuple[float, float]:
         """Take a block from a loader."""
+        # Check if already at max capacity
+        if agent_state["held_blocks"] >= MAX_HELD_BLOCKS:
+            return 0.1, DEFAULT_PENALTY
+        
         loader_pos = LOADERS[loader_idx].position
         robot_len, _ = self.get_robot_dimensions(agent_state["agent_name"], state)
         offset = robot_len / 2 + 8.0
@@ -1109,6 +1120,20 @@ class PushBackGame(VexGame):
             # Observation layout: 0-2: self, 3-5: teammate, 6: held_blocks
             held_blocks = observation[6]
             if held_blocks <= 0:
+                return False
+        
+        # Check max held blocks for pickup and loader actions
+        held_blocks = observation[6]
+        if held_blocks >= MAX_HELD_BLOCKS:
+            if action in [
+                Actions.PICK_UP_BLOCK.value,
+                Actions.PICK_UP_RED_BLOCK.value,
+                Actions.PICK_UP_BLUE_BLOCK.value,
+                Actions.TAKE_FROM_LOADER_TL.value,
+                Actions.TAKE_FROM_LOADER_TR.value,
+                Actions.TAKE_FROM_LOADER_BL.value,
+                Actions.TAKE_FROM_LOADER_BR.value,
+            ]:
                 return False
         
         # New Observation Layout:
