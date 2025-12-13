@@ -75,7 +75,7 @@ CENTER_GOAL_CONTROL_THRESHOLD = 7
 FOV = np.pi / 2
 
 # Default penalty for invalid actions
-DEFAULT_PENALTY = 0.1 # Will be subtracted from reward
+DEFAULT_PENALTY = 1.0
 
 # Maximum blocks a robot can hold
 MAX_HELD_BLOCKS = 10
