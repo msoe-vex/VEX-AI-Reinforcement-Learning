@@ -88,19 +88,17 @@ MAX_HELD_BLOCKS = 10
 class Actions(Enum):
     """Available actions for robots in the Push Back game."""
     PICK_UP_BLOCK = 0             # Pick up nearest block matching robot's team
-    PICK_UP_RED_BLOCK = 1         # Pick up nearest red block
-    PICK_UP_BLUE_BLOCK = 2        # Pick up nearest blue block
-    SCORE_IN_LONG_GOAL_1 = 3      # Long goal 1 (y=48)
-    SCORE_IN_LONG_GOAL_2 = 4      # Long goal 2 (y=-48)
-    SCORE_IN_CENTER_UPPER = 5     # Center goal upper
-    SCORE_IN_CENTER_LOWER = 6     # Center goal lower
-    TAKE_FROM_LOADER_TL = 7       # Top Left loader
-    TAKE_FROM_LOADER_TR = 8       # Top Right loader
-    TAKE_FROM_LOADER_BL = 9       # Bottom Left loader
-    TAKE_FROM_LOADER_BR = 10      # Bottom Right loader
-    PARK = 11                     # Park in team's zone
-    TURN_TOWARD_CENTER = 12       # Turn to face center of field
-    IDLE = 13
+    SCORE_IN_LONG_GOAL_1 = 1      # Long goal 1 (y=48)
+    SCORE_IN_LONG_GOAL_2 = 2      # Long goal 2 (y=-48)
+    SCORE_IN_CENTER_UPPER = 3     # Center goal upper
+    SCORE_IN_CENTER_LOWER = 4     # Center goal lower
+    TAKE_FROM_LOADER_TL = 5       # Top Left loader
+    TAKE_FROM_LOADER_TR = 6       # Top Right loader
+    TAKE_FROM_LOADER_BL = 7       # Bottom Left loader
+    TAKE_FROM_LOADER_BR = 8       # Bottom Right loader
+    PARK = 9                      # Park in team's zone
+    TURN_TOWARD_CENTER = 10       # Turn to face center of field
+    IDLE = 11
 
 
 def is_scoring_action(action: Actions) -> bool:
@@ -749,12 +747,6 @@ class PushBackGame(VexGame):
         if action == Actions.PICK_UP_BLOCK.value:
             duration, penalty = self._action_pickup_block(agent_state, state, target_team=None)
         
-        elif action == Actions.PICK_UP_RED_BLOCK.value:
-            duration, penalty = self._action_pickup_block(agent_state, state, target_team="red")
-        
-        elif action == Actions.PICK_UP_BLUE_BLOCK.value:
-            duration, penalty = self._action_pickup_block(agent_state, state, target_team="blue")
-        
         elif action == Actions.SCORE_IN_LONG_GOAL_1.value:
             duration, penalty = self._action_score_in_goal(
                 agent_state, GoalType.LONG_1, state
@@ -1127,8 +1119,6 @@ class PushBackGame(VexGame):
         if held_blocks >= MAX_HELD_BLOCKS:
             if action in [
                 Actions.PICK_UP_BLOCK.value,
-                Actions.PICK_UP_RED_BLOCK.value,
-                Actions.PICK_UP_BLUE_BLOCK.value,
                 Actions.TAKE_FROM_LOADER_TL.value,
                 Actions.TAKE_FROM_LOADER_TR.value,
                 Actions.TAKE_FROM_LOADER_BL.value,
@@ -1183,18 +1173,7 @@ class PushBackGame(VexGame):
         # Friendly = robot's team, Opponent = other team
         # This requires knowing the robot's team from observation context
         # For now, we check both sections for the specific color actions
-        if action == Actions.PICK_UP_RED_BLOCK.value:
-            # Red blocks could be in friendly or opponent section depending on robot team
-            # Check both to be safe
-            if not (has_valid_block_in_fov(FRIENDLY_BASE_IDX, friendly_count) or 
-                    has_valid_block_in_fov(OPPONENT_BASE_IDX, opponent_count)):
-                return False
-        
-        if action == Actions.PICK_UP_BLUE_BLOCK.value:
-            # Blue blocks could be in friendly or opponent section depending on robot team
-            if not (has_valid_block_in_fov(FRIENDLY_BASE_IDX, friendly_count) or 
-                    has_valid_block_in_fov(OPPONENT_BASE_IDX, opponent_count)):
-                return False
+        # No longer used
         
         return True
     
@@ -1485,7 +1464,7 @@ class PushBackGame(VexGame):
         
         actions = []
         
-        if action in [Actions.PICK_UP_BLOCK.value, Actions.PICK_UP_RED_BLOCK.value, Actions.PICK_UP_BLUE_BLOCK.value]:
+        if action in [Actions.PICK_UP_BLOCK.value]:
             positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[0.5,0.5], obstacles=[], robot=robot)
             points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
 
