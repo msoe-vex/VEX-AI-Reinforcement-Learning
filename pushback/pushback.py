@@ -922,23 +922,21 @@ class PushBackGame(VexGame):
         agent_name = agent_state["agent_name"]
         robot_team = agent_state["team"]
         
-        for block in state["blocks"]:
+        for block_idx, block in enumerate(state["blocks"]):
             if block["status"] == BlockStatus.HELD and block.get("held_by") == agent_name:
                 if block.get("team") == robot_team:
-                    ejected_id, _ = goal.add_block_from_nearest(id(block), agent_state["position"])
+                    ejected_idx, _ = goal.add_block_from_nearest(block_idx, agent_state["position"])
                     block["status"] = target_status
                     block["held_by"] = None
                     scored_count += 1
                     
-                    if ejected_id is not None:
-                        for b in state["blocks"]:
-                            if id(b) == ejected_id:
-                                b["status"] = BlockStatus.ON_FIELD
-                                if scoring_side == "left":
-                                    b["position"] = goal.right_entry.copy()
-                                else:
-                                    b["position"] = goal.left_entry.copy()
-                                break
+                    if ejected_idx is not None:
+                        ejected_block = state["blocks"][ejected_idx]
+                        ejected_block["status"] = BlockStatus.ON_FIELD
+                        if scoring_side == "left":
+                            ejected_block["position"] = goal.right_entry.copy()
+                        else:
+                            ejected_block["position"] = goal.left_entry.copy()
                 else:
                     block["status"] = BlockStatus.ON_FIELD
                     block["held_by"] = None
@@ -961,12 +959,11 @@ class PushBackGame(VexGame):
     ) -> None:
         """Update positions of blocks in a goal."""
         block_positions = goal.get_block_positions(goal.goal_position.center)
-        id_to_position = {block_id: pos for block_id, pos in block_positions}
+        idx_to_position = {block_idx: pos for block_idx, pos in block_positions}
         
-        for block in state["blocks"]:
-            block_id = id(block)
-            if block_id in id_to_position:
-                block["position"] = id_to_position[block_id].copy()
+        for block_idx, block in enumerate(state["blocks"]):
+            if block_idx in idx_to_position:
+                block["position"] = idx_to_position[block_idx].copy()
                 block["status"] = target_status
     
     def _action_take_from_loader(
