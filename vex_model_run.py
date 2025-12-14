@@ -3,6 +3,7 @@ import numpy as np
 
 # Import from new modular architecture
 from vex_core.base_game import VexGame, Robot
+from typing import Dict
 
 class VexModelRunner:
     def __init__(self, model_path: str, game: VexGame, robot: Robot):
@@ -10,6 +11,8 @@ class VexModelRunner:
         self.game: VexGame = game
         self.robot: Robot = robot
         self.model: torch.jit.ScriptModule = None
+        self.game_state: Dict = game.get_initial_state()
+        self.observation: np.ndarray = game.get_observation(robot.name, self.game_state)
         
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Using device: {self.device}")
@@ -33,10 +36,10 @@ class VexModelRunner:
         except Exception as e:
             print(f"Error loading model: {e}")
             return
-
-    def get_actions(self, observation: np.ndarray):
+        
+    def get_prediction(self, observation: np.ndarray) -> int:
         """
-        Runs inference on the model to get actions for the given observation.
+        Runs inference on the model to get the predicted action for the given observation.
 
         Args:
             observation: The current observation for the agent.
@@ -49,7 +52,6 @@ class VexModelRunner:
 
         with torch.no_grad():
             action_logits = self.model(obs_tensor)
-        # Sort actions by descending logit value (best first)
         sorted_actions = torch.argsort(action_logits, dim=1, descending=True).squeeze(0).tolist()
         # Find the first valid action
         action = None
@@ -57,8 +59,53 @@ class VexModelRunner:
             if self.game.is_valid_action(candidate_action, observation):
                 action = candidate_action
                 break
-        
         if action is None:
             action = self.game.fallback_action()
+        return action
 
-        return self.game.split_action(action, observation, self.robot)
+    def get_inference(self, data):
+        # Get data from robot brain and camera, TODO
+        # This will probably be constantly updated in a separate thread
+        # Will be passed in as 'data' argument for now
+
+        # Update robot positions
+
+        # Update block positions
+
+        # That's probably it for the game state update
+        # everything else can be implied through simulated action execution
+
+        # Get action
+        action = self.get_prediction(self.observation)
+
+        # Get split actions
+        split_actions = self.game.split_action(action, self.observation, self.robot)
+
+        return split_actions # this will be sent to the robot
+
+    def run_action(self, action):
+        """
+        Runs the inference loop until the game ends.
+        """
+
+        # This will run after a response from the robot is received
+        # Assuming action execution is a success
+        self.game.execute_action(agent=self.robot.name, action=action, state=self.game_state)
+        
+        # Update observation
+        self.observation = self.game.get_observation(self.robot.name, self.game_state)
+
+
+"""
+Flow in USB script will be something like this:
+while True:
+    wait for usb message
+    if message is action done:
+        runner.run_action(action) assuming action was successful
+    if message is ready for next action: (can happen immediately after action done)
+        runner.get_inference(data)
+        send action back over usb
+    else:
+        update data (position, blocks, etc)
+
+"""

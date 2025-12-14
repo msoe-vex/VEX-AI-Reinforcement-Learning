@@ -87,15 +87,15 @@ MAX_HELD_BLOCKS = 10
 
 class Actions(Enum):
     """Available actions for robots in the Push Back game."""
-    PICK_UP_BLOCK = 0             # Pick up nearest block matching robot's team
+    PICK_UP_BLOCK = 0             # Pick up nearest block (assumes success, doesn't know color)
     SCORE_IN_LONG_GOAL_1 = 1      # Long goal 1 (y=48)
     SCORE_IN_LONG_GOAL_2 = 2      # Long goal 2 (y=-48)
     SCORE_IN_CENTER_UPPER = 3     # Center goal upper
     SCORE_IN_CENTER_LOWER = 4     # Center goal lower
-    TAKE_FROM_LOADER_TL = 5       # Top Left loader
-    TAKE_FROM_LOADER_TR = 6       # Top Right loader
-    TAKE_FROM_LOADER_BL = 7       # Bottom Left loader
-    TAKE_FROM_LOADER_BR = 8       # Bottom Right loader
+    TAKE_FROM_LOADER_TL = 5       # Clear Top Left loader (once only, gets all 6 blocks)
+    TAKE_FROM_LOADER_TR = 6       # Clear Top Right loader (once only, gets all 6 blocks)
+    TAKE_FROM_LOADER_BL = 7       # Clear Bottom Left loader (once only, gets all 6 blocks)
+    TAKE_FROM_LOADER_BR = 8       # Clear Bottom Right loader (once only, gets all 6 blocks)
     PARK = 9                      # Park in team's zone
     TURN_TOWARD_CENTER = 10       # Turn to face center of field
     IDLE = 11
@@ -582,11 +582,12 @@ class PushBackGame(VexGame):
         }
     
     def get_observation(self, agent: str, state: Dict) -> np.ndarray:
-        """Build observation vector for an agent."""
-        agent_state = state["agents"][agent]
+        """Build observation vector for an agent.
         
-        # Constants for observation space
-        MAX_AVAILABLE_BLOCKS = 20  # Maximum blocks to track positions for
+        The agent knows the color of blocks it holds (from loaders and field).
+        It knows positions of all blocks on field, separated by friendly/opponent.
+        """
+        agent_state = state["agents"][agent]
         
         obs_parts = []
         
@@ -611,8 +612,18 @@ class PushBackGame(VexGame):
             teammate_data.extend([0.0, 0.0, 0.0])
         obs_parts.extend(teammate_data[:MAX_TEAMMATES * 3])
         
-        # 3. Self held blocks (1)
-        obs_parts.append(float(agent_state["held_blocks"]))
+        # 3. Held blocks by color - count from actual blocks
+        agent_name = agent_state["agent_name"]
+        held_friendly = 0
+        held_opponent = 0
+        for block in state["blocks"]:
+            if block["status"] == BlockStatus.HELD and block.get("held_by") == agent_name:
+                if block.get("team") == my_team:
+                    held_friendly += 1
+                else:
+                    held_opponent += 1
+        obs_parts.append(float(held_friendly))
+        obs_parts.append(float(held_opponent))
         
         # 4. Self parked status (1)
         obs_parts.append(1.0 if agent_state["parked"] else 0.0)
@@ -620,15 +631,13 @@ class PushBackGame(VexGame):
         # 5. Time remaining (1)
         obs_parts.append(float(self.total_time - agent_state["gameTime"]))
         
-        # 6. Count and Position of blocks (Split by Friendly/Opponent)
-        # MAX 15 per type
+        # 6. Count and Position of blocks on field by color (friendly/opponent)
         MAX_TRACKED = 15
         
         friendly_blocks = []
         opponent_blocks = []
         
         robot_pos = agent_state["position"]
-        my_team = agent_state["team"]
         for block in state["blocks"]:
             if block["status"] == BlockStatus.ON_FIELD:
                 dist = np.linalg.norm(block["position"] - robot_pos)
@@ -647,7 +656,7 @@ class PushBackGame(VexGame):
         obs_parts.append(float(len(friendly_blocks)))
         obs_parts.append(float(len(opponent_blocks)))
         
-        # Add friendly positions
+        # Add friendly block positions
         f_positions = []
         for i in range(min(len(friendly_blocks), MAX_TRACKED)):
             f_positions.extend([friendly_blocks[i][1], friendly_blocks[i][2]])
@@ -656,7 +665,7 @@ class PushBackGame(VexGame):
             f_positions.extend([0.0, 0.0])
         obs_parts.extend(f_positions)
         
-        # Add opponent positions
+        # Add opponent block positions
         o_positions = []
         for i in range(min(len(opponent_blocks), MAX_TRACKED)):
             o_positions.extend([opponent_blocks[i][1], opponent_blocks[i][2]])
@@ -665,11 +674,11 @@ class PushBackGame(VexGame):
             o_positions.extend([0.0, 0.0])
         obs_parts.extend(o_positions)
         
-        # 8. Blocks added to each goal BY THIS AGENT (4)
+        # 7. Blocks added to each goal BY THIS AGENT (4)
         obs_parts.extend([float(x) for x in agent_state["goals_added"]])
         
-        # 9. Blocks taken from each loader BY THIS AGENT (4)
-        obs_parts.extend([float(x) for x in agent_state["loaders_taken"]])
+        # 8. Loaders cleared by this agent (4) - 0 or 1 each
+        obs_parts.extend([float(min(x, 1)) for x in agent_state["loaders_taken"]])
         
         return np.array(obs_parts, dtype=np.float32)
     
@@ -688,26 +697,18 @@ class PushBackGame(VexGame):
         """Get the shape of the observation space."""
         # Self: pos(2) + orient(1) = 3
         # Teammate: 1 * 3 = 3
-        # Held blocks: 1
+        # Held blocks: friendly(1) + opponent(1) = 2
         # Parked: 1
         # Time remaining: 1
-        # Friendly blocks count: 1 (Index 9)
-        # Opponent blocks count: 1 (Index 10)
-        # Friendly Block positions: 15 * 2 = 30 (Indices 11-40)
-        # Opponent Block positions: 15 * 2 = 30 (Indices 41-70)
-        # Goals added by this agent: 4
-        # Loaders taken by this agent: 4
-        # Total: 3 (self) + 3 (team) + 1 (held) + 1 (park) + 1 (time) + 2 (counts) + 30 (friend) + 30 (opp) + 4 (goals) + 4 (loaders) = 79
-        # Wait, previous was 58.
-        # New calculation: 3+3+1+1+1 = 9.
-        # Counts: 2. Total 11.
-        # Blocks: 60. Total 71.
-        # Goals/Loaders: 8. Total 79.
-        # Let's verify counts.
-        # Old: 3+3+1+1+1+1(count)+40(blocks)+8 = 58.
-        # New: 3+3+1+1+1+2(counts)+30(friend)+30(opp)+8 = 79.
+        # Friendly blocks count on field: 1 (Index 10)
+        # Opponent blocks count on field: 1 (Index 11)
+        # Friendly block positions: 15 * 2 = 30 (Indices 12-41)
+        # Opponent block positions: 15 * 2 = 30 (Indices 42-71)
+        # Goals added by this agent: 4 (Indices 72-75)
+        # Loaders cleared by this agent: 4 (Indices 76-79)
+        # Total: 3 + 3 + 2 + 1 + 1 + 1 + 1 + 30 + 30 + 4 + 4 = 80
         
-        return (79,)
+        return (80,)
     
     def action_space(self, agent: str) -> spaces.Space:
         """Get action space for an agent."""
@@ -771,7 +772,7 @@ class PushBackGame(VexGame):
             Actions.TAKE_FROM_LOADER_BR.value,
         ]:
             idx = action - Actions.TAKE_FROM_LOADER_TL.value
-            duration, penalty = self._action_take_from_loader(
+            duration, penalty = self._action_clear_loader(
                 agent_state, idx, state
             )
         
@@ -795,6 +796,10 @@ class PushBackGame(VexGame):
     ) -> Tuple[float, float]:
         """Pick up nearest block in FOV.
         
+        The agent ALWAYS assumes it picked up a block (increments held_blocks).
+        In reality, it picks up the nearest block of its team color if one exists in FOV.
+        The agent does NOT know what color block it picked up.
+        
         Args:
             agent_state: The agent's state
             state: The game state
@@ -811,9 +816,10 @@ class PushBackGame(VexGame):
         robot_theta = agent_state["orientation"][0]
         robot_team = agent_state["team"]
         
-        # Determine which team's blocks to pick up
+        # Determine which team's blocks to pick up (actual game logic)
         pickup_team = target_team if target_team is not None else robot_team
         
+        # Find nearest block of the target team in FOV
         for i, block in enumerate(state["blocks"]):
             if block["status"] == BlockStatus.ON_FIELD:
                 if block.get("team") != pickup_team:
@@ -839,7 +845,11 @@ class PushBackGame(VexGame):
         duration = 0.1 # Base duration
         penalty = 0.0
         
+        # Agent ALWAYS assumes it picked up a block
+        agent_state["held_blocks"] += 1
+        
         if target_idx != -1:
+            # Actually picked up a block - move to it and update state
             target_pos = state["blocks"][target_idx]["position"]
             movement = target_pos - agent_state["position"]
             dist = np.linalg.norm(movement)
@@ -854,8 +864,9 @@ class PushBackGame(VexGame):
             
             state["blocks"][target_idx]["status"] = BlockStatus.HELD
             state["blocks"][target_idx]["held_by"] = agent_state["agent_name"]
-            agent_state["held_blocks"] += 1
         else:
+            # No block found, but agent still thinks it picked one up
+            # Small penalty for failed pickup attempt
             penalty = DEFAULT_PENALTY
         
         return duration, penalty
@@ -966,15 +977,21 @@ class PushBackGame(VexGame):
                 block["position"] = idx_to_position[block_idx].copy()
                 block["status"] = target_status
     
-    def _action_take_from_loader(
+    def _action_clear_loader(
         self, 
         agent_state: Dict, 
         loader_idx: int, 
         state: Dict
     ) -> Tuple[float, float]:
-        """Take a block from a loader."""
-        # Check if already at max capacity
-        if agent_state["held_blocks"] >= MAX_HELD_BLOCKS:
+        """Clear all blocks from a loader (can only be done once per loader per agent).
+        
+        The agent collects all 6 blocks from the loader at once.
+        The agent does NOT know what colors the blocks are.
+        """
+        BLOCKS_PER_LOADER = 6
+        
+        # Check if this loader has already been cleared by this agent
+        if agent_state["loaders_taken"][loader_idx] >= 1:
             return 0.1, DEFAULT_PENALTY
         
         loader_pos = LOADERS[loader_idx].position
@@ -1002,21 +1019,26 @@ class PushBackGame(VexGame):
         speed = self.get_robot_speed(agent_state["agent_name"], state)
         duration = 0.1 + (dist / speed)
         
-        if state["loaders"][loader_idx] > 0:
-            state["loaders"][loader_idx] -= 1
-            agent_state["held_blocks"] += 1
-            duration += 0.2
-            
-            # Take from Bottom (Last added block for this loader)
-            for block in reversed(state["blocks"]):
-                if block["status"] == BlockStatus.IN_LOADER_TL + loader_idx:
-                    block["status"] = BlockStatus.HELD
-                    block["held_by"] = agent_state["agent_name"]
-                    block["position"] = agent_state["position"].copy()
-                    break
-            
-            # Track per-agent loaders taken
-            agent_state["loaders_taken"][loader_idx] += 1
+        # Agent assumes it got all 6 blocks (doesn't know colors)
+        agent_state["held_blocks"] += BLOCKS_PER_LOADER
+        
+        # Actually collect all remaining blocks from this loader
+        blocks_collected = 0
+        for block in state["blocks"]:
+            if block["status"] == BlockStatus.IN_LOADER_TL + loader_idx:
+                block["status"] = BlockStatus.HELD
+                block["held_by"] = agent_state["agent_name"]
+                block["position"] = agent_state["position"].copy()
+                blocks_collected += 1
+        
+        # Update actual loader count
+        state["loaders"][loader_idx] = 0
+        
+        # Mark loader as cleared for this agent
+        agent_state["loaders_taken"][loader_idx] = 1
+        
+        # Time to collect all blocks
+        duration += 0.2 * blocks_collected
         
         return duration, 0.0
     
@@ -1104,73 +1126,50 @@ class PushBackGame(VexGame):
         return False
     
     def is_valid_action(self, action: int, observation: np.ndarray) -> bool:
-        """Check if action is valid."""
+        """Check if action is valid.
+        
+        Observation Layout:
+        # 0-2: Self pos(2) + orient(1)
+        # 3-5: Teammate pos(2) + orient(1)
+        # 6: Held friendly blocks
+        # 7: Held opponent blocks
+        # 8: Parked
+        # 9: Time remaining
+        # 10: Friendly blocks count on field
+        # 11: Opponent blocks count on field
+        # 12-41: Friendly block positions (15 * 2 = 30)
+        # 42-71: Opponent block positions (15 * 2 = 30)
+        # 72-75: Goals added (4)
+        # 76-79: Loaders cleared (4)
+        """
+        held_friendly = observation[6]
+        held_opponent = observation[7]
+        total_held = held_friendly + held_opponent
+        
+        # Scoring actions require held blocks (friendly ones to score)
         if is_scoring_action(Actions(action)):
-            # Observation layout: 0-2: self, 3-5: teammate, 6: held_blocks
-            held_blocks = observation[6]
-            if held_blocks <= 0:
+            if held_friendly <= 0:
                 return False
         
-        # Check max held blocks for pickup and loader actions
-        held_blocks = observation[6]
-        if held_blocks >= MAX_HELD_BLOCKS:
-            if action in [
-                Actions.PICK_UP_BLOCK.value,
-                Actions.TAKE_FROM_LOADER_TL.value,
-                Actions.TAKE_FROM_LOADER_TR.value,
-                Actions.TAKE_FROM_LOADER_BL.value,
-                Actions.TAKE_FROM_LOADER_BR.value,
-            ]:
-                return False
-        
-        # New Observation Layout:
-        # 0-2: Self (3)
-        # 3-5: Teammate (3)
-        # 6: Held (1)
-        # 7: Parked (1)
-        # 8: Time (1)
-        # 9: Friendly Count (1)
-        # 10: Opponent Count (1)
-        # 11..40: Friendly positions (15*2 = 30)
-        # 41..70: Opponent positions (15*2 = 30)
-        
-        robot_pos = observation[0:2]
-        robot_theta = observation[2]
-        friendly_count = int(observation[9])
-        opponent_count = int(observation[10])
-        
-        FRIENDLY_BASE_IDX = 11
-        OPPONENT_BASE_IDX = 41
-        MAX_TRACKED = 15
-        
-        def has_valid_block_in_fov(base_idx: int, count: int) -> bool:
-            """Check if there's a valid block in FOV at given observation indices."""
-            for i in range(min(count, MAX_TRACKED)):
-                bx = observation[base_idx + i*2]
-                by = observation[base_idx + i*2 + 1]
-                
-                dist = np.linalg.norm([bx - robot_pos[0], by - robot_pos[1]])
-                if dist > 0:
-                    angle_to_block = np.arctan2(by - robot_pos[1], bx - robot_pos[0])
-                    angle_diff = angle_to_block - robot_theta
-                    while angle_diff > np.pi: angle_diff -= 2 * np.pi
-                    while angle_diff < -np.pi: angle_diff += 2 * np.pi
-                    
-                    if abs(angle_diff) <= FOV / 2:
-                        return True
-            return False
-        
-        # Mask PICK_UP_BLOCK if no friendly blocks are actionable
+        # Pickup action - only invalid if at max capacity
         if action == Actions.PICK_UP_BLOCK.value:
-            if not has_valid_block_in_fov(FRIENDLY_BASE_IDX, friendly_count):
+            if total_held >= MAX_HELD_BLOCKS:
                 return False
         
-        # Mask PICK_UP_RED_BLOCK / PICK_UP_BLUE_BLOCK based on observation
-        # Note: We need to determine which observation section corresponds to red/blue
-        # Friendly = robot's team, Opponent = other team
-        # This requires knowing the robot's team from observation context
-        # For now, we check both sections for the specific color actions
-        # No longer used
+        # Clear loader actions - can only clear each loader once
+        LOADERS_CLEARED_BASE_IDX = 76
+        if action == Actions.TAKE_FROM_LOADER_TL.value:
+            if observation[LOADERS_CLEARED_BASE_IDX + 0] >= 1:
+                return False
+        elif action == Actions.TAKE_FROM_LOADER_TR.value:
+            if observation[LOADERS_CLEARED_BASE_IDX + 1] >= 1:
+                return False
+        elif action == Actions.TAKE_FROM_LOADER_BL.value:
+            if observation[LOADERS_CLEARED_BASE_IDX + 2] >= 1:
+                return False
+        elif action == Actions.TAKE_FROM_LOADER_BR.value:
+            if observation[LOADERS_CLEARED_BASE_IDX + 3] >= 1:
+                return False
         
         return True
     
