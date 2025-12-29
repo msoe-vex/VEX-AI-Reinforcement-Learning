@@ -179,6 +179,16 @@ class VexGame(ABC):
         pass
     
     @abstractmethod
+    def update_tracker(self, agent: str, action: int, state: Dict) -> None:
+        """
+        Update agent tracker fields based on action.
+        
+        Called by execute_action() in training and directly in inference.
+        Updates: held_blocks, loaders_taken, goals_added.
+        """
+        pass
+    
+    @abstractmethod
     def compute_score(self, state: Dict) -> Dict[str, int]:
         """Compute the score for the current state.
         Returns:

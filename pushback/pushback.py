@@ -295,6 +295,48 @@ class BlockStatus:
 
 
 # =============================================================================
+# Observation Index Constants
+# =============================================================================
+
+class ObsIndex:
+    """Observation vector indices for Push Back game.
+    
+    Layout (92 total):
+    - 0-2: Self position (x, y) and orientation
+    - 3-5: Teammate position and orientation
+    - 6-7: Held blocks (friendly, opponent)
+    - 8: Parked status
+    - 9: Time remaining
+    - 10-11: Block counts on field (friendly, opponent)
+    - 12-41: Friendly block positions (15 * 2)
+    - 42-71: Opponent block positions (15 * 2)
+    - 72-75: Goals added by this agent (4 goals)
+    - 76-79: Loaders cleared by this agent (4 loaders)
+    - 80-83: Goal friendly block counts (4 goals)
+    - 84-87: Goal opponent block counts (4 goals)
+    - 88-91: Loader remaining counts (4 loaders)
+    """
+    SELF_POS_X = 0
+    SELF_POS_Y = 1
+    SELF_ORIENT = 2
+    TEAMMATE_START = 3
+    HELD_FRIENDLY = 6
+    HELD_OPPONENT = 7
+    PARKED = 8
+    TIME_REMAINING = 9
+    FRIENDLY_BLOCK_COUNT = 10
+    OPPONENT_BLOCK_COUNT = 11
+    FRIENDLY_BLOCKS_START = 12
+    OPPONENT_BLOCKS_START = 42
+    GOALS_ADDED_START = 72
+    LOADERS_CLEARED_START = 76
+    GOAL_FRIENDLY_START = 80
+    GOAL_OPPONENT_START = 84
+    LOADER_COUNTS_START = 88
+    TOTAL = 92
+
+
+# =============================================================================
 # Goal Queue
 # =============================================================================
 
@@ -660,18 +702,18 @@ class PushBackGame(VexGame):
         f_positions = []
         for i in range(min(len(friendly_blocks), MAX_TRACKED)):
             f_positions.extend([friendly_blocks[i][1], friendly_blocks[i][2]])
-        # Pad
+        # Pad with -inf sentinel for empty slots
         while len(f_positions) < MAX_TRACKED * 2:
-            f_positions.extend([0.0, 0.0])
+            f_positions.extend([float('-inf'), float('-inf')])
         obs_parts.extend(f_positions)
         
         # Add opponent block positions
         o_positions = []
         for i in range(min(len(opponent_blocks), MAX_TRACKED)):
             o_positions.extend([opponent_blocks[i][1], opponent_blocks[i][2]])
-        # Pad
+        # Pad with -inf sentinel for empty slots
         while len(o_positions) < MAX_TRACKED * 2:
-            o_positions.extend([0.0, 0.0])
+            o_positions.extend([float('-inf'), float('-inf')])
         obs_parts.extend(o_positions)
         
         # 7. Blocks added to each goal BY THIS AGENT (4)
@@ -679,6 +721,24 @@ class PushBackGame(VexGame):
         
         # 8. Loaders cleared by this agent (4) - 0 or 1 each
         obs_parts.extend([float(min(x, 1)) for x in agent_state["loaders_taken"]])
+        
+        # 9. Goal block counts by color (friendly/opponent for each of 4 goals)
+        goal_friendly = [0, 0, 0, 0]  # LONG_1, LONG_2, CENTER_UPPER, CENTER_LOWER
+        goal_opponent = [0, 0, 0, 0]
+        goal_types = [GoalType.LONG_1, GoalType.LONG_2, GoalType.CENTER_UPPER, GoalType.CENTER_LOWER]
+        for block in state["blocks"]:
+            goal_type = BlockStatus.get_goal_type(block["status"])
+            if goal_type is not None:
+                goal_idx = goal_types.index(goal_type)
+                if block.get("team") == my_team:
+                    goal_friendly[goal_idx] += 1
+                else:
+                    goal_opponent[goal_idx] += 1
+        obs_parts.extend([float(x) for x in goal_friendly])
+        obs_parts.extend([float(x) for x in goal_opponent])
+        
+        # 10. Loader remaining counts (4)
+        obs_parts.extend([float(x) for x in state["loaders"]])
         
         return np.array(obs_parts, dtype=np.float32)
     
@@ -706,9 +766,12 @@ class PushBackGame(VexGame):
         # Opponent block positions: 15 * 2 = 30 (Indices 42-71)
         # Goals added by this agent: 4 (Indices 72-75)
         # Loaders cleared by this agent: 4 (Indices 76-79)
-        # Total: 3 + 3 + 2 + 1 + 1 + 1 + 1 + 30 + 30 + 4 + 4 = 80
+        # Goal friendly block counts: 4 (Indices 80-83)
+        # Goal opponent block counts: 4 (Indices 84-87)
+        # Loader remaining counts: 4 (Indices 88-91)
+        # Total: 3 + 3 + 2 + 1 + 1 + 1 + 1 + 30 + 30 + 4 + 4 + 4 + 4 + 4 = 92
         
-        return (80,)
+        return (ObsIndex.TOTAL,)
     
     def action_space(self, agent: str) -> spaces.Space:
         """Get action space for an agent."""
@@ -789,7 +852,52 @@ class PushBackGame(VexGame):
         # Update held block positions (game-specific)
         self._update_held_blocks(state)
         
+        # Update tracker (for training, this keeps tracker in sync with simulation)
+        self.update_tracker(agent, action, state)
+        
         return duration, penalty
+    
+    def update_tracker(self, agent: str, action: int, state: Dict) -> None:
+        """Update agent tracker fields based on action.
+        
+        Called by execute_action() in training and directly by run_action() in inference.
+        Updates: held_blocks, loaders_taken, goals_added
+        """
+        agent_state = state["agents"][agent]
+        
+        if action == Actions.PICK_UP_BLOCK.value:
+            # Increment held blocks (agent assumes pickup succeeded)
+            agent_state["held_blocks"] += 1
+            if agent_state["held_blocks"] > MAX_HELD_BLOCKS:
+                agent_state["held_blocks"] = MAX_HELD_BLOCKS
+        
+        elif action in [
+            Actions.SCORE_IN_LONG_GOAL_1.value,
+            Actions.SCORE_IN_LONG_GOAL_2.value,
+            Actions.SCORE_IN_CENTER_UPPER.value,
+            Actions.SCORE_IN_CENTER_LOWER.value,
+        ]:
+            # Track goals added (by goal index)
+            goal_idx = action - Actions.SCORE_IN_LONG_GOAL_1.value
+            blocks_scored = agent_state["held_blocks"]
+            agent_state["goals_added"][goal_idx] += blocks_scored
+            agent_state["held_blocks"] = 0
+        
+        elif action in [
+            Actions.TAKE_FROM_LOADER_TL.value,
+            Actions.TAKE_FROM_LOADER_TR.value,
+            Actions.TAKE_FROM_LOADER_BL.value,
+            Actions.TAKE_FROM_LOADER_BR.value,
+        ]:
+            # Mark loader as taken
+            loader_idx = action - Actions.TAKE_FROM_LOADER_TL.value
+            agent_state["loaders_taken"][loader_idx] = 1
+            agent_state["held_blocks"] += 6  # Assume all 6 blocks collected
+            if agent_state["held_blocks"] > MAX_HELD_BLOCKS:
+                agent_state["held_blocks"] = MAX_HELD_BLOCKS
+        
+        elif action == Actions.PARK.value:
+            agent_state["parked"] = True
     
     def _action_pickup_block(
         self, agent_state: Dict, state: Dict, target_team: Optional[str] = None
@@ -1126,24 +1234,12 @@ class PushBackGame(VexGame):
         return False
     
     def is_valid_action(self, action: int, observation: np.ndarray) -> bool:
-        """Check if action is valid.
+        """Check if action is valid based on observation.
         
-        Observation Layout:
-        # 0-2: Self pos(2) + orient(1)
-        # 3-5: Teammate pos(2) + orient(1)
-        # 6: Held friendly blocks
-        # 7: Held opponent blocks
-        # 8: Parked
-        # 9: Time remaining
-        # 10: Friendly blocks count on field
-        # 11: Opponent blocks count on field
-        # 12-41: Friendly block positions (15 * 2 = 30)
-        # 42-71: Opponent block positions (15 * 2 = 30)
-        # 72-75: Goals added (4)
-        # 76-79: Loaders cleared (4)
+        Uses ObsIndex constants for observation layout.
         """
-        held_friendly = observation[6]
-        held_opponent = observation[7]
+        held_friendly = observation[ObsIndex.HELD_FRIENDLY]
+        held_opponent = observation[ObsIndex.HELD_OPPONENT]
         total_held = held_friendly + held_opponent
         
         # Scoring actions require held blocks (friendly ones to score)
@@ -1157,18 +1253,17 @@ class PushBackGame(VexGame):
                 return False
         
         # Clear loader actions - can only clear each loader once
-        LOADERS_CLEARED_BASE_IDX = 76
         if action == Actions.TAKE_FROM_LOADER_TL.value:
-            if observation[LOADERS_CLEARED_BASE_IDX + 0] >= 1:
+            if observation[ObsIndex.LOADERS_CLEARED_START + 0] >= 1:
                 return False
         elif action == Actions.TAKE_FROM_LOADER_TR.value:
-            if observation[LOADERS_CLEARED_BASE_IDX + 1] >= 1:
+            if observation[ObsIndex.LOADERS_CLEARED_START + 1] >= 1:
                 return False
         elif action == Actions.TAKE_FROM_LOADER_BL.value:
-            if observation[LOADERS_CLEARED_BASE_IDX + 2] >= 1:
+            if observation[ObsIndex.LOADERS_CLEARED_START + 2] >= 1:
                 return False
         elif action == Actions.TAKE_FROM_LOADER_BR.value:
-            if observation[LOADERS_CLEARED_BASE_IDX + 3] >= 1:
+            if observation[ObsIndex.LOADERS_CLEARED_START + 3] >= 1:
                 return False
         
         return True

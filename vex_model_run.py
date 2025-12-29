@@ -2,17 +2,17 @@ import torch
 import numpy as np
 
 # Import from new modular architecture
-from vex_core.base_game import VexGame, Robot
+from vex_core.base_game import VexGame
 from typing import Dict
 
 class VexModelRunner:
-    def __init__(self, model_path: str, game: VexGame, robot: Robot):
+    def __init__(self, model_path: str, game: VexGame):
         self.model_path: str = model_path
         self.game: VexGame = game
-        self.robot: Robot = robot
+        self.robot = game.robots[0]  # Use first (only) robot
         self.model: torch.jit.ScriptModule = None
         self.game_state: Dict = game.get_initial_state()
-        self.observation: np.ndarray = game.get_observation(robot.name, self.game_state)
+        self.observation: np.ndarray = game.get_observation(self.robot.name, self.game_state)
         
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Using device: {self.device}")
@@ -64,35 +64,29 @@ class VexModelRunner:
         return action
 
     def get_inference(self, data):
-        # Get data from robot brain and camera, TODO
-        # This will probably be constantly updated in a separate thread
-        # Will be passed in as 'data' argument for now
-
-        # Update robot positions
-
-        # Update block positions
-
-        # That's probably it for the game state update
-        # everything else can be implied through simulated action execution
-
-        # Get action
+        """Get action for the robot based on current observation."""
+        # Get action using current observation
+        # Observation uses tracker fields (held_blocks, loaders_taken, goals_added)
         action = self.get_prediction(self.observation)
-
+        
         # Get split actions
         split_actions = self.game.split_action(action, self.observation, self.robot)
-
-        return split_actions # this will be sent to the robot
+        
+        return split_actions  # This will be sent to the robot
 
     def run_action(self, action):
-        """
-        Runs the inference loop until the game ends.
-        """
-
-        # This will run after a response from the robot is received
-        # Assuming action execution is a success
-        self.game.execute_action(agent=self.robot.name, action=action, state=self.game_state)
+        """Called after robot successfully completes an action.
         
-        # Update observation
+        Updates tracker only (no full simulation needed for inference).
+        """
+        # Update tracker fields based on completed action
+        self.game.update_tracker(
+            agent=self.robot.name, 
+            action=action, 
+            state=self.game_state
+        )
+        
+        # Update observation (uses tracker fields)
         self.observation = self.game.get_observation(self.robot.name, self.game_state)
 
 
