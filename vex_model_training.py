@@ -98,7 +98,7 @@ if __name__ == "__main__":
     parser.add_argument('--algorithm', type=str, default="PPO", help='Algorithm to use for training')
     parser.add_argument('--checkpoint-path', type=str, default="", help='Path to the checkpoint directory')
     parser.add_argument('--verbose', type=int, default=1, help='Verbosity mode: 0 = silent, 1 = default, 2 = verbose')
-    parser.add_argument('--game', type=str, required=True, help='Game variant to train')
+    parser.add_argument('--game', type=str, default="vexai_skills", help='Game variant to train')
 
     args = parser.parse_args()
 

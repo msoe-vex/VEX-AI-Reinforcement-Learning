@@ -702,18 +702,18 @@ class PushBackGame(VexGame):
         f_positions = []
         for i in range(min(len(friendly_blocks), MAX_TRACKED)):
             f_positions.extend([friendly_blocks[i][1], friendly_blocks[i][2]])
-        # Pad with -inf sentinel for empty slots
+        # Pad with -999 sentinel for empty slots (can't use -inf, breaks NN)
         while len(f_positions) < MAX_TRACKED * 2:
-            f_positions.extend([float('-inf'), float('-inf')])
+            f_positions.extend([-999.0, -999.0])
         obs_parts.extend(f_positions)
         
         # Add opponent block positions
         o_positions = []
         for i in range(min(len(opponent_blocks), MAX_TRACKED)):
             o_positions.extend([opponent_blocks[i][1], opponent_blocks[i][2]])
-        # Pad with -inf sentinel for empty slots
+        # Pad with -999 sentinel for empty slots (can't use -inf, breaks NN)
         while len(o_positions) < MAX_TRACKED * 2:
-            o_positions.extend([float('-inf'), float('-inf')])
+            o_positions.extend([-999.0, -999.0])
         obs_parts.extend(o_positions)
         
         # 7. Blocks added to each goal BY THIS AGENT (4)
