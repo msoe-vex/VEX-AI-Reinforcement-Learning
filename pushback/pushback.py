@@ -1160,9 +1160,10 @@ class PushBackGame(VexGame):
         duration = 0.1
         penalty = 0.0
 
-        # If parking before 10 seconds left, apply penalty
-        if agent_state["gameTime"] < self.total_time - 10.0:
-            penalty += 1000
+        # Uncomment to enforce parking time penalty
+        # # If parking before 10 seconds left, apply penalty
+        # if agent_state["gameTime"] < self.total_time - 10.0:
+        #     penalty += 1000
 
         # Only one robot can park per team
         for other_agent, other_state in state["agents"].items():
@@ -1227,9 +1228,10 @@ class PushBackGame(VexGame):
         if agent_state["gameTime"] >= self.total_time:
             return True
         
-        # Parked (Push Back specific)
-        if agent_state.get("parked", False):
-            return True
+        # Uncomment to enable parking termination
+        # # Parked (Push Back specific)
+        # if agent_state.get("parked", False):
+        #     return True
         
         return False
     
