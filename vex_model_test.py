@@ -84,7 +84,7 @@ def run_simulation(model_dir, game_name, output_dir):
         game=game,
         render_mode="all", 
         output_directory=output_dir, 
-        randomize=False
+        randomize=True
     )
     
     # Load models for each agent
@@ -145,15 +145,32 @@ def run_simulation(model_dir, game_name, output_dir):
             model = models[agent_id]
             with torch.no_grad():
                 action_logits = model(obs_tensor)
-            # Sort actions by descending logit value (best first)
-            sorted_actions = torch.argsort(action_logits, dim=1, descending=True).squeeze(0).tolist()
-            # Find the first valid action
-            for candidate_action in sorted_actions:
-                if env.is_valid_action(candidate_action, obs_np, last_actions[agent_id]):
-                    action = candidate_action
+            
+            # CRITICAL: Use stochastic sampling like RLlib does during training!
+            # The model outputs logits, and RLlib uses a Categorical distribution 
+            # to sample actions based on softmax probabilities.
+            # Using deterministic argmax (always picking highest logit) causes the
+            # agent to get stuck in repetitive behavior patterns.
+            probs = torch.softmax(action_logits, dim=-1)
+            dist = torch.distributions.Categorical(probs)
+            
+            # Sample action and retry if invalid (up to 20 attempts)
+            action = None
+            for _ in range(20):
+                sampled_action = dist.sample().item()
+                if env.is_valid_action(sampled_action, obs_np, last_actions[agent_id]):
+                    action = sampled_action
                     break
-            else:
-                action = env.game.fallback_action()
+            
+            # Fallback: if no valid action found via sampling, use highest valid logit
+            if action is None:
+                sorted_actions = torch.argsort(action_logits, dim=1, descending=True).squeeze(0).tolist()
+                for candidate_action in sorted_actions:
+                    if env.is_valid_action(candidate_action, obs_np, last_actions[agent_id]):
+                        action = candidate_action
+                        break
+                else:
+                    action = env.game.fallback_action()
 
             actions_to_take[agent_id] = action
             last_actions[agent_id] = action  # Update last action for the agent

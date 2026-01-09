@@ -40,6 +40,10 @@ class VexModelRunner:
     def get_prediction(self, observation: np.ndarray) -> int:
         """
         Runs inference on the model to get the predicted action for the given observation.
+        
+        Uses stochastic sampling (Categorical distribution) to match training behavior.
+        During training, RLlib samples from the action distribution rather than
+        taking the argmax, so we replicate that here.
 
         Args:
             observation: The current observation for the agent.
@@ -52,15 +56,30 @@ class VexModelRunner:
 
         with torch.no_grad():
             action_logits = self.model(obs_tensor)
-        sorted_actions = torch.argsort(action_logits, dim=1, descending=True).squeeze(0).tolist()
-        # Find the first valid action
+        
+        # Use stochastic sampling like RLlib does during training
+        # The model outputs logits; convert to probabilities and sample
+        probs = torch.softmax(action_logits, dim=-1)
+        dist = torch.distributions.Categorical(probs)
+        
+        # Sample action and retry if invalid (up to 20 attempts)
         action = None
-        for candidate_action in sorted_actions:
-            if self.game.is_valid_action(candidate_action, observation):
-                action = candidate_action
+        for _ in range(20):
+            sampled_action = dist.sample().item()
+            if self.game.is_valid_action(sampled_action, observation):
+                action = sampled_action
                 break
+        
+        # Fallback: if no valid action found via sampling, use highest valid logit
         if action is None:
-            action = self.game.fallback_action()
+            sorted_actions = torch.argsort(action_logits, dim=1, descending=True).squeeze(0).tolist()
+            for candidate_action in sorted_actions:
+                if self.game.is_valid_action(candidate_action, observation):
+                    action = candidate_action
+                    break
+            if action is None:
+                action = self.game.fallback_action()
+        
         return action
 
     def get_inference(self, data):
