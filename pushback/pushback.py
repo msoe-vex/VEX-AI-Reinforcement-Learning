@@ -77,6 +77,8 @@ FOV = np.pi / 2
 # Default penalty for invalid actions
 DEFAULT_PENALTY = 1.0
 
+DEFAULT_DURATION = 0.5
+
 # Maximum blocks a robot can hold
 MAX_HELD_BLOCKS = 10
 
@@ -800,12 +802,13 @@ class PushBackGame(VexGame):
         """Execute an action for an agent."""
         agent_state = state["agents"][agent]
         
+        # Uncomment to disable actions for parked robots
         # Parked robots cannot act
-        if agent_state.get("parked", False):
-            return 0.5, 0.0
+        # if agent_state.get("parked", False):
+        #     return DEFAULT_DURATION, 0.0
         
         # Default values (if action logic falls through or for simple actions)
-        duration = 0.5
+        duration = DEFAULT_DURATION
         penalty = 0.0
         
         if action == Actions.PICK_UP_BLOCK.value:
@@ -846,7 +849,7 @@ class PushBackGame(VexGame):
             duration, penalty = self._action_turn_toward_center(agent_state)
         
         elif action == Actions.IDLE.value:
-            duration = 0.1
+            duration = DEFAULT_DURATION
             penalty = DEFAULT_PENALTY # Small penalty for idle
         
         # Update held block positions (game-specific)
@@ -915,7 +918,7 @@ class PushBackGame(VexGame):
         """
         # Check if already at max capacity
         if agent_state["held_blocks"] >= MAX_HELD_BLOCKS:
-            return 0.1, DEFAULT_PENALTY
+            return DEFAULT_DURATION, DEFAULT_PENALTY
         
         target_idx = -1
         min_dist = float('inf')
@@ -950,7 +953,7 @@ class PushBackGame(VexGame):
                             min_dist = dist
                             target_idx = i
         
-        duration = 0.1 # Base duration
+        duration = DEFAULT_DURATION # Base duration
         penalty = 0.0
         
         # Agent ALWAYS assumes it picked up a block
@@ -987,7 +990,7 @@ class PushBackGame(VexGame):
     ) -> Tuple[float, float]:
         """Score held blocks in a goal."""
         if agent_state["held_blocks"] <= 0:
-            return 0.5, DEFAULT_PENALTY
+            return DEFAULT_DURATION, DEFAULT_PENALTY
         
         goal = self.goal_manager.get_goal(goal_type)
         scoring_side = goal.get_nearest_side(agent_state["position"])
@@ -1033,7 +1036,7 @@ class PushBackGame(VexGame):
         
         # Dynamic speed
         speed = self.get_robot_speed(agent_state["agent_name"], state)
-        duration = 0.1 + (dist / speed)
+        duration = DEFAULT_DURATION + (dist / speed)
         
         # Score blocks
         scored_count = 0
@@ -1069,7 +1072,7 @@ class PushBackGame(VexGame):
         agent_state["goals_added"][goal_idx] += scored_count
         
         agent_state["held_blocks"] = 0
-        duration += 0.1 * scored_count
+        duration += DEFAULT_DURATION * scored_count
         
         return duration, 0.0
     
@@ -1100,7 +1103,7 @@ class PushBackGame(VexGame):
         
         # Check if this loader has already been cleared by this agent
         if agent_state["loaders_taken"][loader_idx] >= 1:
-            return 0.1, DEFAULT_PENALTY
+            return DEFAULT_DURATION, DEFAULT_PENALTY
         
         loader_pos = LOADERS[loader_idx].position
         robot_len, _ = self.get_robot_dimensions(agent_state["agent_name"], state)
@@ -1125,7 +1128,7 @@ class PushBackGame(VexGame):
         agent_state["orientation"] = np.array([orientation], dtype=np.float32)
         # Dynamic speed
         speed = self.get_robot_speed(agent_state["agent_name"], state)
-        duration = 0.1 + (dist / speed)
+        duration = DEFAULT_DURATION + (dist / speed)
         
         # Agent assumes it got all 6 blocks (doesn't know colors)
         agent_state["held_blocks"] += BLOCKS_PER_LOADER
@@ -1146,7 +1149,7 @@ class PushBackGame(VexGame):
         agent_state["loaders_taken"][loader_idx] = 1
         
         # Time to collect all blocks
-        duration += 0.2 * blocks_collected
+        duration += DEFAULT_DURATION * blocks_collected
         
         return duration, 0.0
     
@@ -1157,7 +1160,7 @@ class PushBackGame(VexGame):
         team = agent_state["team"]
         park_zone = PARK_ZONES[team]
 
-        duration = 0.1
+        duration = DEFAULT_DURATION
         penalty = 0.0
 
         # Uncomment to enforce parking time penalty
@@ -1176,7 +1179,7 @@ class PushBackGame(VexGame):
         agent_state["position"] = park_zone.center.copy()
         # Dynamic speed     
         speed = self.get_robot_speed(agent_state["agent_name"], {})
-        duration += 2.0 + dist / speed
+        duration += DEFAULT_DURATION + dist / speed
         agent_state["parked"] = True
         agent_state["orientation"] = np.array([np.random.choice([np.pi/2, -np.pi/2])], dtype=np.float32)
         
@@ -1192,11 +1195,11 @@ class PushBackGame(VexGame):
 
         # If already facing center, give a small penalty
         if abs(target_angle - agent_state["orientation"][0]) < 1e-4:
-            return 0.1, DEFAULT_PENALTY
+            return DEFAULT_DURATION, DEFAULT_PENALTY
         
         agent_state["orientation"] = np.array([target_angle], dtype=np.float32)
         
-        return 0.25, 0.0
+        return DEFAULT_DURATION, 0.0
     
     @abstractmethod
     def compute_score(self, state: Dict) -> Dict[str, int]:
