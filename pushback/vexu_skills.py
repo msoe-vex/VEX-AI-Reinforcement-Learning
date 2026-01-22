@@ -12,7 +12,7 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 
 from .pushback import PushBackGame, BlockStatus, LOADERS, NUM_BLOCKS_FIELD, GoalType, GOALS, PARK_ZONES
-from vex_core.base_env import Robot, RobotSize, Team
+from vex_core.base_game import Robot, RobotSize, Team
 
 class VexUSkillsGame(PushBackGame):
     """VEX U Skills game variant."""
