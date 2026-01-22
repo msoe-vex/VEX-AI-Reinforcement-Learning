@@ -11,7 +11,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import matplotlib.transforms as mtransforms
-import imageio.v2 as imageio
 
 from gymnasium import spaces
 from pettingzoo import ParallelEnv
@@ -455,6 +454,9 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             os.listdir(steps_dir),
             key=lambda x: int(x.split('_')[1].split('.')[0])
         )
+
+        import imageio.v2 as imageio
+
         for filename in files:
             images.append(imageio.imread(os.path.join(steps_dir, filename)))
         
