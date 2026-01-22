@@ -8,9 +8,6 @@ Delegates game-specific logic to a VexGame implementation.
 import functools
 import os
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-import matplotlib.transforms as mtransforms
 
 from gymnasium import spaces
 from pettingzoo import ParallelEnv
@@ -291,6 +288,11 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         """Render the current environment state."""
         if self.render_mode is None:
             return
+        
+        # Import matplotlib only when rendering
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as patches
+        import matplotlib.transforms as mtransforms
         
         # Create figure with info panel
         fig = plt.figure(figsize=(12, 8))
