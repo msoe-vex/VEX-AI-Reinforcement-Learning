@@ -1,7 +1,5 @@
 from casadi import *
 import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.transforms import Affine2D
 import random
 from math import sqrt, exp  # Added missing imports if needed
 import time
@@ -360,6 +358,9 @@ class PathPlanner:
         # All inputs are in inches, convert to normalized for plotting
         # -------------------------------------------------------------------------
         
+        import matplotlib.pyplot as plt
+        from matplotlib.transforms import Affine2D
+
         # Calculate local norms
         robot_length_norm = robot.length / self.field_size_inches
         robot_width_norm = robot.width / self.field_size_inches
@@ -536,6 +537,9 @@ class PathPlanner:
         Generate a PNG of the grid based on obstacles, swap black/white, and add dots for start and end points.
         All inputs are in inches.
         """
+        import matplotlib.pyplot as plt
+        from matplotlib.transforms import Affine2D
+
         grid_size = GRID_SIZE
         
         robot_radius_norm = sqrt(robot.length**2 + robot.width**2) / 2 / self.field_size_inches
