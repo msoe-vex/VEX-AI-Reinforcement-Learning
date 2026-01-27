@@ -12,7 +12,7 @@ import time
 import os
 
 # Import from new modular architecture
-from vex_core import VexMultiAgentEnv
+from vex_core.base_env import VexMultiAgentEnv
 from pushback import PushBackGame
 from vex_custom_model import VexCustomPPO
 

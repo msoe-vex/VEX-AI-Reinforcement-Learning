@@ -385,6 +385,10 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         actions: Optional[Dict], 
         rewards: Optional[Dict]
     ) -> None:
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as patches
+        import matplotlib.transforms as mtransforms
+
         """Render robots and delegate info panel to game."""
         # Draw robots on field
         for i, agent in enumerate(self.agents):
