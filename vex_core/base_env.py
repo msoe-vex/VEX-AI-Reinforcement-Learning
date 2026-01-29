@@ -130,10 +130,10 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         )
         
         # Compute initial score
-        self.score = self.game.compute_score(self.environment_state)
+        self.score = self.game.compute_score()
         
         observations = {
-            agent: self.game.get_observation(agent, self.environment_state)
+            agent: self.game.get_observation(agent)
             for agent in self.agents
         }
         infos = {agent: {} for agent in self.agents}
@@ -157,7 +157,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         # Check which agents are terminated
         terminated_agents = {
             agent for agent in active_agents
-            if self.game.is_agent_terminated(agent, self.environment_state)
+            if self.game.is_agent_terminated(agent)
         }
         
         # If all agents are terminated, end the episode
@@ -167,7 +167,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             truncations = {agent: False for agent in active_agents}
             truncations["__all__"] = False
             observations = {
-                agent: self.game.get_observation(agent, self.environment_state)
+                agent: self.game.get_observation(agent)
                 for agent in active_agents
             }
             rewards = {agent: 0.0 for agent in active_agents}
@@ -210,18 +210,18 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             initial_pos = agent_state["position"].copy()
             
             # Get scores before action
-            initial_scores = self.game.compute_score(self.environment_state)
+            initial_scores = self.game.compute_score()
             
             # Execute action through game
             action_int = int(action.value if hasattr(action, 'value') else action)
             duration, penalty = self.game.execute_action(
-                agent, action_int, self.environment_state
+                agent, action_int
             )
             
             agent_state["gameTime"] += duration
             
             # Calculate reward via game (allows variant overrides)
-            new_scores = self.game.compute_score(self.environment_state)
+            new_scores = self.game.compute_score()
             reward = self.game.compute_reward(agent, initial_scores, new_scores, penalty)
             
             rewards[agent] = reward
@@ -234,11 +234,11 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 self.agent_movements[agent] = None
         
         # Update total score (stored as property)
-        self.score = self.game.compute_score(self.environment_state)
+        self.score = self.game.compute_score()
         
         # Check terminations AFTER actions to see which agents just terminated
         new_terminations = {
-            agent: self.game.is_agent_terminated(agent, self.environment_state)
+            agent: self.game.is_agent_terminated(agent)
             for agent in active_agents
         }
         
@@ -259,7 +259,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         
         # Return observations only for agents that should receive them
         observations = {
-            agent: self.game.get_observation(agent, self.environment_state)
+            agent: self.game.get_observation(agent)
             for agent in agents_to_return
         }
         
@@ -313,7 +313,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         ax.plot([-field_half, field_half], [0, 0], color='white', linewidth=2)
         
         # Render game-specific elements
-        self.game.render_game_elements(ax, self.environment_state)
+        self.game.render_game_elements(ax)
         
         # Draw robot paths
         self._render_paths(ax)
@@ -400,7 +400,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             theta = st["orientation"][0]
             
             robot_len, robot_wid = self.game.get_robot_dimensions(
-                agent, self.environment_state
+                agent
             )
             
             # Draw robot rectangle
@@ -431,7 +431,6 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         # Delegate info panel rendering to game (allows game-specific customization)
         self.game.render_info_panel(
             ax_info=ax_info,
-            state=self.environment_state,
             agents=self.agents,
             actions=actions,
             rewards=rewards,

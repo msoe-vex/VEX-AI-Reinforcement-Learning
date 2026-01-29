@@ -372,14 +372,14 @@ class VexGame(ABC):
         """Get Robot object for an agent by name."""
         return self._robot_map.get(agent)
 
-    def get_robot_dimensions(self, agent: str, state: dict) -> tuple:
+    def get_robot_dimensions(self, agent: str) -> tuple:
         """Get robot dimensions for an agent."""
         robot = self.get_robot_for_agent(agent)
         if robot:
             return (robot.length, robot.width)
         return (18.0, 18.0)
     
-    def get_robot_speed(self, agent: str, state: dict) -> float:
+    def get_robot_speed(self, agent: str) -> float:
         """Get robot speed for an agent."""
         robot = self.get_robot_for_agent(agent)
         if robot:
