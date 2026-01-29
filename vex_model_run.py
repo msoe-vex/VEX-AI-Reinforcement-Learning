@@ -11,10 +11,7 @@ class VexModelRunner:
         self.game: VexGame = game
         self.robot = game.robots[0]  # Use first (only) robot
         self.model: torch.jit.ScriptModule = None
-        
-        # Game state is already initialized in game.__init__
-        self.observation: np.ndarray = game.get_observation(self.robot.name)
-        
+                
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Using device: {self.device}")
 
@@ -83,18 +80,24 @@ class VexModelRunner:
         
         return action
 
-    def get_inference(self, data):
+    def get_inference(self, observation: np.ndarray):
         """Get action for the robot based on current observation.
         
         Returns:
             Tuple of (high_level_action: int, split_actions: List[str])
         """
+
+        observation = self.game.update_observation_from_tracker(
+            agent=self.robot.name,
+            observation=observation
+        )
+
         # Get action using current observation
         # Observation uses tracker fields (held_blocks, loaders_taken, goals_added)
-        action = self.get_prediction(self.observation)
+        action = self.get_prediction(observation)
         
         # Get split actions
-        split_actions = self.game.split_action(action, self.observation, self.robot)
+        split_actions = self.game.split_action(action, observation, self.robot)
         
         return action, split_actions  # Returns both action ID and low-level commands
 
@@ -105,9 +108,6 @@ class VexModelRunner:
         """
         # Update tracker fields based on completed action (uses game.state)
         self.game.update_tracker(agent=self.robot.name, action=action)
-        
-        # Update observation (uses game.state)
-        self.observation = self.game.get_observation(self.robot.name)
 
 
 """
