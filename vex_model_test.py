@@ -5,7 +5,7 @@ import numpy as np
 import glob
 
 # Import from new modular architecture
-from vex_core import VexMultiAgentEnv
+from vex_core.base_env import VexMultiAgentEnv
 from pushback import PushBackGame
 import json
 
