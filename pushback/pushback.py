@@ -642,7 +642,7 @@ class PushBackGame(VexGame):
         MAX_TEAMMATES = 1  # Support up to 2 robots per team
         my_team = agent_state["team"]
         teammate_data = []
-        for other_agent, other_state in state["agents"].items():
+        for other_agent, other_state in self.state["agents"].items():
             if other_agent != agent and other_state["team"] == my_team:
                 teammate_data.extend([
                     float(other_state["position"][0]),
@@ -658,7 +658,7 @@ class PushBackGame(VexGame):
         agent_name = agent_state["agent_name"]
         held_friendly = 0
         held_opponent = 0
-        for block in state["blocks"]:
+        for block in self.state["blocks"]:
             if block["status"] == BlockStatus.HELD and block.get("held_by") == agent_name:
                 if block.get("team") == my_team:
                     held_friendly += 1
@@ -680,7 +680,7 @@ class PushBackGame(VexGame):
         opponent_blocks = []
         
         robot_pos = agent_state["position"]
-        for block in state["blocks"]:
+        for block in self.state["blocks"]:
             if block["status"] == BlockStatus.ON_FIELD:
                 dist = np.linalg.norm(block["position"] - robot_pos)
                 block_info = (dist, block["position"][0], block["position"][1])
