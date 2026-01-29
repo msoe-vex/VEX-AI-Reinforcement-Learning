@@ -642,7 +642,7 @@ class PushBackGame(VexGame):
         MAX_TEAMMATES = 1  # Support up to 2 robots per team
         my_team = agent_state["team"]
         teammate_data = []
-        for other_agent, other_state in state["agents"].items():
+        for other_agent, other_state in self.state["agents"].items():
             if other_agent != agent and other_state["team"] == my_team:
                 teammate_data.extend([
                     float(other_state["position"][0]),
@@ -658,7 +658,7 @@ class PushBackGame(VexGame):
         agent_name = agent_state["agent_name"]
         held_friendly = 0
         held_opponent = 0
-        for block in state["blocks"]:
+        for block in self.state["blocks"]:
             if block["status"] == BlockStatus.HELD and block.get("held_by") == agent_name:
                 if block.get("team") == my_team:
                     held_friendly += 1
@@ -680,7 +680,7 @@ class PushBackGame(VexGame):
         opponent_blocks = []
         
         robot_pos = agent_state["position"]
-        for block in state["blocks"]:
+        for block in self.state["blocks"]:
             if block["status"] == BlockStatus.ON_FIELD:
                 dist = np.linalg.norm(block["position"] - robot_pos)
                 block_info = (dist, block["position"][0], block["position"][1])
@@ -1134,7 +1134,7 @@ class PushBackGame(VexGame):
         agent_state["position"] = robot_pos.astype(np.float32)
         agent_state["orientation"] = np.array([orientation], dtype=np.float32)
         # Dynamic speed
-        speed = self.get_robot_speed(agent_state["agent_name"], state)
+        speed = self.get_robot_speed(agent_state["agent_name"], self.state)
         duration = DEFAULT_DURATION + (dist / speed)
         
         # Agent assumes it got all 6 blocks (doesn't know colors)
@@ -1372,7 +1372,7 @@ class PushBackGame(VexGame):
         ax_info.axhline(y=info_y, xmin=0.05, xmax=0.95, color='gray', linewidth=0.5)
         info_y -= 0.05
         
-        team_scores = self.compute_score(state)
+        team_scores = self.compute_score(self.state)
         ax_info.text(0.05, info_y, "Scores:", fontsize=10, fontweight='bold', va='top')
         info_y -= 0.04
         ax_info.text(0.1, info_y, f"Red: {team_scores.get('red', 0)}",
@@ -1503,7 +1503,7 @@ class PushBackGame(VexGame):
             ax.add_patch(circle)
         
         # Blocks (not in loaders)
-        for block in state["blocks"]:
+        for block in self.state["blocks"]:
             if block["status"] < BlockStatus.IN_LOADER_TL:
                 try:
                     fill_color = block.get("team", "red").value
@@ -1528,7 +1528,7 @@ class PushBackGame(VexGame):
                 ax.add_patch(hexagon)
         
         # Robot FOV wedges
-        for agent_name, agent_state in state["agents"].items():
+        for agent_name, agent_state in self.state["agents"].items():
             x, y = agent_state["position"]
             theta = agent_state["orientation"][0]
             
