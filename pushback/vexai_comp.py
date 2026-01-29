@@ -35,7 +35,7 @@ class VexAICompGame(PushBackGame):
     def total_time(self) -> float:
         return 120.0
     
-    def compute_score(self, state: Dict) -> Dict[str, int]:
+    def compute_score(self) -> Dict[str, int]:
         """
         Compute score for VEX AI Competition (Red vs Blue).
         - Block: 3 pts
@@ -52,7 +52,7 @@ class VexAICompGame(PushBackGame):
         # 1. Block Points
         blocks_by_status = {} # Status -> List of blocks
         
-        for block in state["blocks"]:
+        for block in self.state["blocks"]:
             status = block["status"]
             if status not in blocks_by_status:
                 blocks_by_status[status] = []
@@ -134,7 +134,7 @@ class VexAICompGame(PushBackGame):
                     scores[team_l] += CONTROL_BONUS
 
         # 3. Parked Robots (24" only)
-        for agent_name, agent_state in state["agents"].items():
+        for agent_name, agent_state in self.state["agents"].items():
             if agent_state.get("parked", False):
                 if agent_state.get("robot_size") == 24:  # RobotSize.INCH_24.value
                     team = agent_state["team"]

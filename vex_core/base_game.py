@@ -53,6 +53,9 @@ class VexGame(ABC):
     
     Each year's game (e.g., Push Back 2024-2025) implements this interface
     to define game-specific mechanics, scoring, and rendering.
+    
+    State is stored internally in self.state. Each training environment
+    should create its own game instance.
     """
     
     def __init__(self, robots: list[Robot] = None):
@@ -61,6 +64,12 @@ class VexGame(ABC):
         self.robots = robots or []
         self._robot_map = {r.name: r for r in self.robots}
         self.path_planner = PathPlanner()
+        self.state: Dict = None  # Game state, initialized by get_initial_state()
+    
+    @property
+    def agents(self) -> Dict:
+        """Shortcut to access agents dict from state."""
+        return self.state["agents"] if self.state else {}
     
     @staticmethod
     @abstractmethod
@@ -115,7 +124,7 @@ class VexGame(ABC):
     @abstractmethod
     def get_initial_state(self, randomize: bool = False, seed: Optional[int] = None) -> Dict:
         """
-        Create the initial game state.
+        Create the initial game state and store it in self.state.
         
         Args:
             randomize: If True, randomize initial positions for training
@@ -127,17 +136,19 @@ class VexGame(ABC):
             - 'blocks': List of block dictionaries
             - 'loaders': List of loader block counts
             - Any other game-specific state
+            
+        Note:
+            Implementations should store the state in self.state before returning.
         """
         pass
     
     @abstractmethod
-    def get_observation(self, agent: str, state: Dict) -> np.ndarray:
+    def get_observation(self, agent: str) -> np.ndarray:
         """
         Build the observation vector for an agent.
         
         Args:
             agent: Agent name
-            state: Current game state
             
         Returns:
             Observation array for the agent
@@ -162,8 +173,7 @@ class VexGame(ABC):
     def execute_action(
         self, 
         agent: str, 
-        action: int, 
-        state: Dict
+        action: int
     ) -> Tuple[float, float]:
         """
         Execute an action for an agent.
@@ -171,7 +181,6 @@ class VexGame(ABC):
         Args:
             agent: Agent name
             action: Action index
-            state: Current game state (will be modified in-place)
             
         Returns:
             Tuple of (duration in seconds, penalty value)
@@ -179,17 +188,21 @@ class VexGame(ABC):
         pass
     
     @abstractmethod
-    def update_tracker(self, agent: str, action: int, state: Dict) -> None:
+    def update_tracker(self, agent: str, action: int) -> None:
         """
         Update agent tracker fields based on action.
         
         Called by execute_action() in training and directly in inference.
         Updates: held_blocks, loaders_taken, goals_added.
+        
+        Args:
+            agent: Agent name
+            action: Action index
         """
         pass
     
     @abstractmethod
-    def update_observation_from_tracker(self, agent: str, state: Dict, observation: np.ndarray) -> np.ndarray:
+    def update_observation_from_tracker(self, agent: str, observation: np.ndarray) -> np.ndarray:
         """
         Update observation array with tracker fields from game state.
         
@@ -198,7 +211,6 @@ class VexGame(ABC):
         
         Args:
             agent: Agent name
-            state: Current game state containing tracker fields
             observation: Observation array to update (modified in-place and returned)
             
         Returns:
@@ -207,8 +219,9 @@ class VexGame(ABC):
         pass
     
     @abstractmethod
-    def compute_score(self, state: Dict) -> Dict[str, int]:
+    def compute_score(self) -> Dict[str, int]:
         """Compute the score for the current state.
+        
         Returns:
             Dict[str, int]: Team scores (e.g., {"red": 10, "blue": 5})
         """
@@ -266,13 +279,12 @@ class VexGame(ABC):
         pass
 
     @abstractmethod
-    def is_agent_terminated(self, agent: str, state: Dict) -> bool:
+    def is_agent_terminated(self, agent: str) -> bool:
         """
         Check if an agent has terminated (game-specific logic).
         
         Args:
             agent: Agent name
-            state: Current game state
             
         Returns:
             True if the agent is terminated and should stop acting
@@ -284,13 +296,12 @@ class VexGame(ABC):
     # =========================================================================
     
     @abstractmethod
-    def render_game_elements(self, ax: Any, state: Dict) -> None:
+    def render_game_elements(self, ax: Any) -> None:
         """
         Render game-specific field elements (goals, blocks, etc.).
         
         Args:
             ax: Matplotlib axes object
-            state: Current game state
         """
         pass
     
@@ -321,18 +332,16 @@ class VexGame(ABC):
     def render_info_panel(
         self, 
         ax_info: Any, 
-        state: Dict, 
-        agents: List[str],
-        actions: Optional[Dict],
-        rewards: Optional[Dict],
-        num_moves: int
+        agents: List[str] = None,
+        actions: Optional[Dict] = None,
+        rewards: Optional[Dict] = None,
+        num_moves: int = 0
     ) -> None:
         """
         Render game-specific info panel.
         
         Args:
             ax_info: Matplotlib axes for info panel
-            state: Current game state
             agents: List of active agent names
             actions: Dict of actions taken (or None)
             rewards: Dict of rewards received (or None)

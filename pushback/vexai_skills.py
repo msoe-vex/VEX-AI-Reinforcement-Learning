@@ -32,7 +32,7 @@ class VexAISkillsGame(PushBackGame):
     def total_time(self) -> float:
         return 60.0
     
-    def compute_score(self, state: Dict) -> Dict[str, int]:
+    def compute_score(self) -> Dict[str, int]:
         """
         Compute score for VEX AI Skills.
         Returns:
@@ -59,7 +59,7 @@ class VexAISkillsGame(PushBackGame):
             for gt in [GoalType.LONG_1, GoalType.LONG_2, GoalType.CENTER_UPPER, GoalType.CENTER_LOWER]
         }
         
-        for block in state["blocks"]:
+        for block in self.state["blocks"]:
             goal_type = BlockStatus.get_goal_type(block["status"])
             if goal_type:
                 team = block.get("team", "red")
@@ -81,7 +81,7 @@ class VexAISkillsGame(PushBackGame):
                         2: {"red": 0, "blue": 0}, 
                         3: {"red": 0, "blue": 0}}
         
-        for block in state["blocks"]:
+        for block in self.state["blocks"]:
             if BlockStatus.IN_LOADER_TL <= block["status"] <= BlockStatus.IN_LOADER_BR:
                 loader_idx = block["status"] - BlockStatus.IN_LOADER_TL
                 team = block.get("team", "red")
@@ -102,7 +102,7 @@ class VexAISkillsGame(PushBackGame):
                 score += LOADER_FULL_BONUS
         
         # 3. Parked Robots
-        parked_count = sum(1 for a in state["agents"].values() if a.get("parked", False))
+        parked_count = sum(1 for a in self.state["agents"].values() if a.get("parked", False))
         score += parked_count * PARK_ROBOT
         
         return {"red": score}

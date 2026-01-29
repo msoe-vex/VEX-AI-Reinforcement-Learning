@@ -32,7 +32,7 @@ class VexUSkillsGame(PushBackGame):
     def total_time(self) -> float:
         return 60.0
     
-    def compute_score(self, state: Dict) -> Dict[str, int]:
+    def compute_score(self) -> Dict[str, int]:
         """
         Compute score for VEX U Skills.
         Returns:
@@ -71,7 +71,7 @@ class VexUSkillsGame(PushBackGame):
                 score += FILLED_CONTROL_CENTER
         
         # Cleared loaders
-        cleared_loaders = sum(1 for count in state["loaders"] if count == 0)
+        cleared_loaders = sum(1 for count in self.state["loaders"] if count == 0)
         score += cleared_loaders * CLEARED_LOADER
         
         # Cleared Park Zones
@@ -81,7 +81,7 @@ class VexUSkillsGame(PushBackGame):
         # We check all blocks with status ON_FIELD against all park zones.
         for zone in PARK_ZONES.values():
             is_cleared = True
-            for block in state["blocks"]:
+            for block in self.state["blocks"]:
                 if block["status"] == BlockStatus.ON_FIELD:
                     pos = block["position"]
                     # Bounds: (x_min, x_max, y_min, y_max)
@@ -96,7 +96,7 @@ class VexUSkillsGame(PushBackGame):
                 score += CLEARED_PARK_ZONE
         
         # Parked robots
-        parked_count = sum(1 for a in state["agents"].values() if a.get("parked", False))
+        parked_count = sum(1 for a in self.state["agents"].values() if a.get("parked", False))
         score += parked_count * PARK_ROBOT
         
         return {"red": score}

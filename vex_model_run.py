@@ -11,8 +11,9 @@ class VexModelRunner:
         self.game: VexGame = game
         self.robot = game.robots[0]  # Use first (only) robot
         self.model: torch.jit.ScriptModule = None
-        self.game_state: Dict = game.get_initial_state()
-        self.observation: np.ndarray = game.get_observation(self.robot.name, self.game_state)
+        
+        # Game state is already initialized in game.__init__
+        self.observation: np.ndarray = game.get_observation(self.robot.name)
         
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Using device: {self.device}")
@@ -102,15 +103,11 @@ class VexModelRunner:
         
         Updates tracker only (no full simulation needed for inference).
         """
-        # Update tracker fields based on completed action
-        self.game.update_tracker(
-            agent=self.robot.name, 
-            action=action, 
-            state=self.game_state
-        )
+        # Update tracker fields based on completed action (uses game.state)
+        self.game.update_tracker(agent=self.robot.name, action=action)
         
-        # Update observation (uses tracker fields)
-        self.observation = self.game.get_observation(self.robot.name, self.game_state)
+        # Update observation (uses game.state)
+        self.observation = self.game.get_observation(self.robot.name)
 
 
 """

@@ -517,6 +517,9 @@ class PushBackGame(VexGame):
         super().__init__(robots)
         self.goal_manager = GoalManager()
         self._agents: Optional[List[str]] = None
+        
+        # Initialize state automatically
+        self.get_initial_state()
     
     # =========================================================================
     # Abstract methods for variants
@@ -584,7 +587,7 @@ class PushBackGame(VexGame):
         randomize: bool = False, 
         seed: Optional[int] = None
     ) -> Dict:
-        """Create initial game state."""
+        """Create initial game state and store in self.state."""
         # Initialize agents from Robot objects
         agents_dict = {}
         for robot in self.robots:
@@ -613,19 +616,20 @@ class PushBackGame(VexGame):
                 if agent_name in agents_dict:
                     agents_dict[agent_name]["held_blocks"] += 1
         
-        return {
+        self.state = {
             "agents": agents_dict,
             "blocks": blocks,
             "loaders": self._get_loader_counts(),
         }
+        return self.state
     
-    def get_observation(self, agent: str, state: Dict) -> np.ndarray:
+    def get_observation(self, agent: str) -> np.ndarray:
         """Build observation vector for an agent.
         
         The agent knows the color of blocks it holds (from loaders and field).
         It knows positions of all blocks on field, separated by friendly/opponent.
         """
-        agent_state = state["agents"][agent]
+        agent_state = self.state["agents"][agent]
         
         obs_parts = []
         
@@ -770,11 +774,10 @@ class PushBackGame(VexGame):
     def execute_action(
         self, 
         agent: str, 
-        action: int, 
-        state: Dict
+        action: int
     ) -> Tuple[float, float]:
         """Execute an action for an agent."""
-        agent_state = state["agents"][agent]
+        agent_state = self.state["agents"][agent]
         
         # Uncomment to disable actions for parked robots
         # Parked robots cannot act
@@ -786,23 +789,23 @@ class PushBackGame(VexGame):
         penalty = 0.0
         
         if action == Actions.PICK_UP_BLOCK.value:
-            duration, penalty = self._action_pickup_block(agent_state, state, target_team=None)
+            duration, penalty = self._action_pickup_block(agent_state, target_team=None)
         
         elif action == Actions.SCORE_IN_LONG_GOAL_1.value:
             duration, penalty = self._action_score_in_goal(
-                agent_state, GoalType.LONG_1, state
+                agent_state, GoalType.LONG_1
             )
         elif action == Actions.SCORE_IN_LONG_GOAL_2.value:
             duration, penalty = self._action_score_in_goal(
-                agent_state, GoalType.LONG_2, state
+                agent_state, GoalType.LONG_2
             )
         elif action == Actions.SCORE_IN_CENTER_UPPER.value:
             duration, penalty = self._action_score_in_goal(
-                agent_state, GoalType.CENTER_UPPER, state
+                agent_state, GoalType.CENTER_UPPER
             )
         elif action == Actions.SCORE_IN_CENTER_LOWER.value:
             duration, penalty = self._action_score_in_goal(
-                agent_state, GoalType.CENTER_LOWER, state
+                agent_state, GoalType.CENTER_LOWER
             )
         
         elif action in [
@@ -813,11 +816,11 @@ class PushBackGame(VexGame):
         ]:
             idx = action - Actions.TAKE_FROM_LOADER_TL.value
             duration, penalty = self._action_clear_loader(
-                agent_state, idx, state
+                agent_state, idx
             )
         
         elif action == Actions.PARK.value:
-            duration, penalty = self._action_park(agent_state, state)
+            duration, penalty = self._action_park(agent_state)
         
         elif action == Actions.TURN_TOWARD_CENTER.value:
             duration, penalty = self._action_turn_toward_center(agent_state)
@@ -827,20 +830,20 @@ class PushBackGame(VexGame):
             penalty = DEFAULT_PENALTY # Small penalty for idle
         
         # Update held block positions (game-specific)
-        self._update_held_blocks(state)
+        self._update_held_blocks()
         
         # Update tracker (for training, this keeps tracker in sync with simulation)
-        self.update_tracker(agent, action, state)
+        self.update_tracker(agent, action)
         
         return duration, penalty
     
-    def update_tracker(self, agent: str, action: int, state: Dict) -> None:
+    def update_tracker(self, agent: str, action: int) -> None:
         """Update agent tracker fields based on action.
         
         Called by execute_action() in training and directly by run_action() in inference.
         Updates: held_blocks, loaders_taken, goals_added
         """
-        agent_state = state["agents"][agent]
+        agent_state = self.state["agents"][agent]
         
         if action == Actions.PICK_UP_BLOCK.value:
             # Increment held blocks (agent assumes pickup succeeded)
@@ -876,20 +879,19 @@ class PushBackGame(VexGame):
         elif action == Actions.PARK.value:
             agent_state["parked"] = True
     
-    def update_observation_from_tracker(self, agent: str, state: Dict, observation: np.ndarray) -> np.ndarray:
+    def update_observation_from_tracker(self, agent: str, observation: np.ndarray) -> np.ndarray:
         """Update observation array with tracker fields from game state.
         
         Merges internal tracker fields into the observation for inference.
         
         Args:
             agent: Agent name
-            state: Current game state containing tracker fields
             observation: Observation array to update (modified in-place and returned)
             
         Returns:
             Updated observation array
         """
-        agent_state = state["agents"][agent]
+        agent_state = self.state["agents"][agent]
         
         # Held blocks (assumes all held blocks are friendly)
         observation[ObsIndex.HELD_FRIENDLY] = float(agent_state.get("held_blocks", 0))
@@ -911,7 +913,7 @@ class PushBackGame(VexGame):
         return observation
     
     def _action_pickup_block(
-        self, agent_state: Dict, state: Dict, target_team: Optional[str] = None
+        self, agent_state: Dict, target_team: Optional[str] = None
     ) -> Tuple[float, float]:
         """Pick up nearest block in FOV.
         
@@ -921,7 +923,6 @@ class PushBackGame(VexGame):
         
         Args:
             agent_state: The agent's state
-            state: The game state
             target_team: If None, picks up robot's team color. Otherwise "red" or "blue".
         """
         # Check if already at max capacity
@@ -939,7 +940,7 @@ class PushBackGame(VexGame):
         pickup_team = target_team if target_team is not None else robot_team
         
         # Find nearest block of the target team in FOV
-        for i, block in enumerate(state["blocks"]):
+        for i, block in enumerate(self.state["blocks"]):
             if block["status"] == BlockStatus.ON_FIELD:
                 if block.get("team") != pickup_team:
                     continue
@@ -969,7 +970,7 @@ class PushBackGame(VexGame):
         
         if target_idx != -1:
             # Actually picked up a block - move to it and update state
-            target_pos = state["blocks"][target_idx]["position"]
+            target_pos = self.state["blocks"][target_idx]["position"]
             movement = target_pos - agent_state["position"]
             dist = np.linalg.norm(movement)
             agent_state["position"] = target_pos.copy()
@@ -978,11 +979,11 @@ class PushBackGame(VexGame):
                 agent_state["orientation"][0] = np.arctan2(movement[1], movement[0])
             
             # Use dynamic robot speed
-            speed = self.get_robot_speed(agent_state["agent_name"], state)
+            speed = self.get_robot_speed(agent_state["agent_name"], self.state)
             duration += dist / speed
             
-            state["blocks"][target_idx]["status"] = BlockStatus.HELD
-            state["blocks"][target_idx]["held_by"] = agent_state["agent_name"]
+            self.state["blocks"][target_idx]["status"] = BlockStatus.HELD
+            self.state["blocks"][target_idx]["held_by"] = agent_state["agent_name"]
         else:
             # No block found, but agent still thinks it picked one up
             # Small penalty for failed pickup attempt
@@ -993,8 +994,7 @@ class PushBackGame(VexGame):
     def _action_score_in_goal(
         self, 
         agent_state: Dict, 
-        goal_type: GoalType, 
-        state: Dict
+        goal_type: GoalType
     ) -> Tuple[float, float]:
         """Score held blocks in a goal."""
         if agent_state["held_blocks"] <= 0:
@@ -1004,7 +1004,7 @@ class PushBackGame(VexGame):
         scoring_side = goal.get_nearest_side(agent_state["position"])
         
         # Calculate robot position based on goal type
-        robot_len, _ = self.get_robot_dimensions(agent_state["agent_name"], state)
+        robot_len, _ = self.get_robot_dimensions(agent_state["agent_name"], self.state)
         
         if goal_type == GoalType.LONG_1:
             if scoring_side == "left":
@@ -1043,7 +1043,7 @@ class PushBackGame(VexGame):
         agent_state["orientation"] = np.array([orientation], dtype=np.float32)
         
         # Dynamic speed
-        speed = self.get_robot_speed(agent_state["agent_name"], state)
+        speed = self.get_robot_speed(agent_state["agent_name"], self.state)
         duration = DEFAULT_DURATION + (dist / speed)
         
         # Score blocks
@@ -1052,7 +1052,7 @@ class PushBackGame(VexGame):
         agent_name = agent_state["agent_name"]
         robot_team = agent_state["team"]
         
-        for block_idx, block in enumerate(state["blocks"]):
+        for block_idx, block in enumerate(self.state["blocks"]):
             if block["status"] == BlockStatus.HELD and block.get("held_by") == agent_name:
                 if block.get("team") == robot_team:
                     ejected_idx, _ = goal.add_block_from_nearest(block_idx, agent_state["position"])
@@ -1061,7 +1061,7 @@ class PushBackGame(VexGame):
                     scored_count += 1
                     
                     if ejected_idx is not None:
-                        ejected_block = state["blocks"][ejected_idx]
+                        ejected_block = self.state["blocks"][ejected_idx]
                         ejected_block["status"] = BlockStatus.ON_FIELD
                         if scoring_side == "left":
                             ejected_block["position"] = goal.right_entry.copy()
@@ -1073,7 +1073,7 @@ class PushBackGame(VexGame):
                     block["position"] = agent_state["position"].copy()
         
         # Update block positions in goal
-        self._update_goal_block_positions(goal, target_status, state)
+        self._update_goal_block_positions(goal, target_status)
         
         # Track per-agent goals added
         goal_idx = [GoalType.LONG_1, GoalType.LONG_2, GoalType.CENTER_UPPER, GoalType.CENTER_LOWER].index(goal_type)
@@ -1085,13 +1085,13 @@ class PushBackGame(VexGame):
         return duration, 0.0
     
     def _update_goal_block_positions(
-        self, goal: GoalQueue, target_status: int, state: Dict
+        self, goal: GoalQueue, target_status: int
     ) -> None:
         """Update positions of blocks in a goal."""
         block_positions = goal.get_block_positions(goal.goal_position.center)
         idx_to_position = {block_idx: pos for block_idx, pos in block_positions}
         
-        for block_idx, block in enumerate(state["blocks"]):
+        for block_idx, block in enumerate(self.state["blocks"]):
             if block_idx in idx_to_position:
                 block["position"] = idx_to_position[block_idx].copy()
                 block["status"] = target_status
@@ -1099,8 +1099,7 @@ class PushBackGame(VexGame):
     def _action_clear_loader(
         self, 
         agent_state: Dict, 
-        loader_idx: int, 
-        state: Dict
+        loader_idx: int
     ) -> Tuple[float, float]:
         """Clear all blocks from a loader (can only be done once per loader per agent).
         
@@ -1114,7 +1113,7 @@ class PushBackGame(VexGame):
             return DEFAULT_DURATION, DEFAULT_PENALTY
         
         loader_pos = LOADERS[loader_idx].position
-        robot_len, _ = self.get_robot_dimensions(agent_state["agent_name"], state)
+        robot_len, _ = self.get_robot_dimensions(agent_state["agent_name"], self.state)
         offset = robot_len / 2 + 8.0
         
         if loader_idx == 0:  # Top Left
@@ -1143,7 +1142,7 @@ class PushBackGame(VexGame):
         
         # Actually collect all remaining blocks from this loader
         blocks_collected = 0
-        for block in state["blocks"]:
+        for block in self.state["blocks"]:
             if block["status"] == BlockStatus.IN_LOADER_TL + loader_idx:
                 block["status"] = BlockStatus.HELD
                 block["held_by"] = agent_state["agent_name"]
@@ -1151,7 +1150,7 @@ class PushBackGame(VexGame):
                 blocks_collected += 1
         
         # Update actual loader count
-        state["loaders"][loader_idx] = 0
+        self.state["loaders"][loader_idx] = 0
         
         # Mark loader as cleared for this agent
         agent_state["loaders_taken"][loader_idx] = 1
@@ -1162,7 +1161,7 @@ class PushBackGame(VexGame):
         return duration, 0.0
     
     def _action_park(
-        self, agent_state: Dict, state: Dict
+        self, agent_state: Dict
     ) -> Tuple[float, float]:
         """Park in team's zone."""
         team = agent_state["team"]
@@ -1177,7 +1176,7 @@ class PushBackGame(VexGame):
         #     penalty += 1000
 
         # Only one robot can park per team
-        for other_agent, other_state in state["agents"].items():
+        for other_agent, other_state in self.state["agents"].items():
             if other_agent != agent_state["agent_name"]:
                 if other_state["team"] == team and other_state.get("parked", False):
                     return duration, penalty + DEFAULT_PENALTY
@@ -1210,7 +1209,7 @@ class PushBackGame(VexGame):
         return DEFAULT_DURATION, 0.0
     
     @abstractmethod
-    def compute_score(self, state: Dict) -> Dict[str, int]:
+    def compute_score(self) -> Dict[str, int]:
         """Compute the score for the current state.
         Returns:
             Dict[str, int]: Team scores
@@ -1225,7 +1224,7 @@ class PushBackGame(VexGame):
             return "blue"
         return "red"
     
-    def is_agent_terminated(self, agent: str, state: Dict) -> bool:
+    def is_agent_terminated(self, agent: str) -> bool:
         """
         Check if an agent has terminated.
         
@@ -1233,7 +1232,7 @@ class PushBackGame(VexGame):
         - Their game time exceeds the total time limit, OR
         - They have parked
         """
-        agent_state = state["agents"][agent]
+        agent_state = self.state["agents"][agent]
         
         # Time limit exceeded
         if agent_state["gameTime"] >= self.total_time:
@@ -1281,11 +1280,11 @@ class PushBackGame(VexGame):
         
         return True
     
-    def _update_held_blocks(self, state: Dict) -> None:
+    def _update_held_blocks(self) -> None:
         """Update held block positions internally."""
-        for agent_name, agent_state in state["agents"].items():
+        for agent_name, agent_state in self.state["agents"].items():
             if agent_state["held_blocks"] > 0:
-                for block in state["blocks"]:
+                for block in self.state["blocks"]:
                     if block["status"] == BlockStatus.HELD and block.get("held_by") == agent_name:
                         block["position"] = agent_state["position"].copy()
     
@@ -1298,22 +1297,23 @@ class PushBackGame(VexGame):
     def render_info_panel(
         self, 
         ax_info: Any, 
-        state: Dict, 
-        agents: List[str],
-        actions: Optional[Dict],
-        rewards: Optional[Dict],
-        num_moves: int
+        agents: List[str] = None,
+        actions: Optional[Dict] = None,
+        rewards: Optional[Dict] = None,
+        num_moves: int = 0
     ) -> None:
         """
         Render Push Back specific info panel with held blocks by color.
         """
+        if agents is None:
+            agents = list(self.state["agents"].keys())
         info_y = 0.95
         ax_info.text(0.5, info_y, "Agent Actions", fontsize=12, fontweight='bold',
                     ha='center', va='top')
         info_y -= 0.08
         
         for i, agent in enumerate(agents):
-            st = state["agents"][agent]
+            st = self.state["agents"][agent]
             team = self.get_team_for_agent(agent)
             robot_color = 'red' if team == 'red' else 'blue'
             
@@ -1322,7 +1322,7 @@ class PushBackGame(VexGame):
             # Count held blocks by color
             held_red = 0
             held_blue = 0
-            for block in state["blocks"]:
+            for block in self.state["blocks"]:
                 if block["status"] == BlockStatus.HELD and block.get("held_by") == agent:
                     if block.get("team") == "red":
                         held_red += 1
@@ -1389,7 +1389,7 @@ class PushBackGame(VexGame):
     # Rendering
     # =========================================================================
     
-    def render_game_elements(self, ax: Any, state: Dict) -> None:
+    def render_game_elements(self, ax: Any) -> None:
         """Render Push Back game elements."""
         import matplotlib.patches as patches
         import matplotlib.transforms as mtransforms
@@ -1455,7 +1455,7 @@ class PushBackGame(VexGame):
             
             # Find actual blocks in this loader
             loader_status = BlockStatus.IN_LOADER_TL + idx
-            loader_blocks = [b for b in state["blocks"] if b["status"] == loader_status]
+            loader_blocks = [b for b in self.state["blocks"] if b["status"] == loader_status]
             
             # Blocks are stored Top-to-Bottom in list (index 0 is Top)
             # We want to render them in a stack.

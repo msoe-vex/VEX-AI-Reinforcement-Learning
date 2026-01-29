@@ -35,7 +35,7 @@ class VexUCompGame(PushBackGame):
     def total_time(self) -> float:
         return 120.0
     
-    def compute_score(self, state: Dict) -> Dict[str, int]:
+    def compute_score(self) -> Dict[str, int]:
         """
         Compute score for VEX U Competition (Red vs Blue).
         Returns:
@@ -58,7 +58,7 @@ class VexUCompGame(PushBackGame):
             for gt in [GoalType.LONG_1, GoalType.LONG_2, GoalType.CENTER_UPPER, GoalType.CENTER_LOWER]
         }
         
-        for block in state["blocks"]:
+        for block in self.state["blocks"]:
             goal_type = BlockStatus.get_goal_type(block["status"])
             if goal_type:
                 team = block.get("team", "red")
@@ -94,7 +94,7 @@ class VexUCompGame(PushBackGame):
         
         # 3. Parked Robots
         parked_counts = {"red": 0, "blue": 0}
-        for agent_name, agent_state in state["agents"].items():
+        for agent_name, agent_state in self.state["agents"].items():
             if agent_state.get("parked", False):
                 team = agent_state["team"]
                 if team in parked_counts:
