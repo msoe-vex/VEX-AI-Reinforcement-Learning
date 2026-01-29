@@ -189,6 +189,24 @@ class VexGame(ABC):
         pass
     
     @abstractmethod
+    def update_observation_from_tracker(self, agent: str, state: Dict, observation: np.ndarray) -> np.ndarray:
+        """
+        Update observation array with tracker fields from game state.
+        
+        Used during inference to merge external observation data (position, blocks from camera)
+        with internal tracker fields (held_blocks, goals_added, loaders_cleared, parked).
+        
+        Args:
+            agent: Agent name
+            state: Current game state containing tracker fields
+            observation: Observation array to update (modified in-place and returned)
+            
+        Returns:
+            Updated observation array
+        """
+        pass
+    
+    @abstractmethod
     def compute_score(self, state: Dict) -> Dict[str, int]:
         """Compute the score for the current state.
         Returns:

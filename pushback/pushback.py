@@ -93,7 +93,7 @@ class Actions(Enum):
     SCORE_IN_LONG_GOAL_1 = 1      # Long goal 1 (y=48)
     SCORE_IN_LONG_GOAL_2 = 2      # Long goal 2 (y=-48)
     SCORE_IN_CENTER_UPPER = 3     # Center goal upper
-    SCORE_IN_CENTER_LOWER = 4     # Center goal lower // TODO: Remove action
+    SCORE_IN_CENTER_LOWER = 4     # Center goal lower
     TAKE_FROM_LOADER_TL = 5       # Clear Top Left loader (once only, gets all 6 blocks)
     TAKE_FROM_LOADER_TR = 6       # Clear Top Right loader (once only, gets all 6 blocks)
     TAKE_FROM_LOADER_BL = 7       # Clear Bottom Left loader (once only, gets all 6 blocks)
@@ -303,7 +303,7 @@ class BlockStatus:
 class ObsIndex:
     """Observation vector indices for Push Back game.
     
-    Layout (92 total):
+    Layout (80 total):
     - 0-2: Self position (x, y) and orientation
     - 3-5: Teammate position and orientation
     - 6-7: Held blocks (friendly, opponent)
@@ -314,9 +314,6 @@ class ObsIndex:
     - 42-71: Opponent block positions (15 * 2)
     - 72-75: Goals added by this agent (4 goals)
     - 76-79: Loaders cleared by this agent (4 loaders)
-    - 80-83: Goal friendly block counts (4 goals)
-    - 84-87: Goal opponent block counts (4 goals)
-    - 88-91: Loader remaining counts (4 loaders)
     """
     SELF_POS_X = 0
     SELF_POS_Y = 1
@@ -332,10 +329,7 @@ class ObsIndex:
     OPPONENT_BLOCKS_START = 42
     GOALS_ADDED_START = 72
     LOADERS_CLEARED_START = 76
-    GOAL_FRIENDLY_START = 80 # TODO: Remove
-    GOAL_OPPONENT_START = 84 # TODO: Remove
-    LOADER_COUNTS_START = 88 # TODO: Remove
-    TOTAL = 92
+    TOTAL = 80
 
 
 # =============================================================================
@@ -724,23 +718,6 @@ class PushBackGame(VexGame):
         # 8. Loaders cleared by this agent (4) - 0 or 1 each
         obs_parts.extend([float(min(x, 1)) for x in agent_state["loaders_taken"]])
         
-        # 9. Goal block counts by color (friendly/opponent for each of 4 goals)
-        goal_friendly = [0, 0, 0, 0]  # LONG_1, LONG_2, CENTER_UPPER, CENTER_LOWER
-        goal_opponent = [0, 0, 0, 0]
-        goal_types = [GoalType.LONG_1, GoalType.LONG_2, GoalType.CENTER_UPPER, GoalType.CENTER_LOWER]
-        for block in state["blocks"]:
-            goal_type = BlockStatus.get_goal_type(block["status"])
-            if goal_type is not None:
-                goal_idx = goal_types.index(goal_type)
-                if block.get("team") == my_team:
-                    goal_friendly[goal_idx] += 1
-                else:
-                    goal_opponent[goal_idx] += 1
-        obs_parts.extend([float(x) for x in goal_friendly])
-        obs_parts.extend([float(x) for x in goal_opponent])
-        
-        # 10. Loader remaining counts (4)
-        obs_parts.extend([float(x) for x in state["loaders"]])
         
         return np.array(obs_parts, dtype=np.float32)
     
@@ -768,10 +745,7 @@ class PushBackGame(VexGame):
         # Opponent block positions: 15 * 2 = 30 (Indices 42-71)
         # Goals added by this agent: 4 (Indices 72-75)
         # Loaders cleared by this agent: 4 (Indices 76-79)
-        # Goal friendly block counts: 4 (Indices 80-83)
-        # Goal opponent block counts: 4 (Indices 84-87)
-        # Loader remaining counts: 4 (Indices 88-91)
-        # Total: 3 + 3 + 2 + 1 + 1 + 1 + 1 + 30 + 30 + 4 + 4 + 4 + 4 + 4 = 92
+        # Total: 3 + 3 + 2 + 1 + 1 + 1 + 1 + 30 + 30 + 4 + 4 = 80
         
         return (ObsIndex.TOTAL,)
     
@@ -901,6 +875,40 @@ class PushBackGame(VexGame):
         
         elif action == Actions.PARK.value:
             agent_state["parked"] = True
+    
+    def update_observation_from_tracker(self, agent: str, state: Dict, observation: np.ndarray) -> np.ndarray:
+        """Update observation array with tracker fields from game state.
+        
+        Merges internal tracker fields into the observation for inference.
+        
+        Args:
+            agent: Agent name
+            state: Current game state containing tracker fields
+            observation: Observation array to update (modified in-place and returned)
+            
+        Returns:
+            Updated observation array
+        """
+        agent_state = state["agents"][agent]
+        
+        # Held blocks (assumes all held blocks are friendly)
+        observation[ObsIndex.HELD_FRIENDLY] = float(agent_state.get("held_blocks", 0))
+        observation[ObsIndex.HELD_OPPONENT] = 0.0
+        
+        # Parked status
+        observation[ObsIndex.PARKED] = 1.0 if agent_state.get("parked", False) else 0.0
+        
+        # Goals added by this agent (4 goals)
+        goals_added = agent_state.get("goals_added", [0, 0, 0, 0])
+        for i, count in enumerate(goals_added):
+            observation[ObsIndex.GOALS_ADDED_START + i] = float(count)
+        
+        # Loaders cleared by this agent (4 loaders)
+        loaders_taken = agent_state.get("loaders_taken", [0, 0, 0, 0])
+        for i, taken in enumerate(loaders_taken):
+            observation[ObsIndex.LOADERS_CLEARED_START + i] = float(taken)
+        
+        return observation
     
     def _action_pickup_block(
         self, agent_state: Dict, state: Dict, target_team: Optional[str] = None
@@ -1555,98 +1563,93 @@ class PushBackGame(VexGame):
         WAIT;time
         DRIVE;inches;speed
         TURN;degrees;speed
-        TURN_TO;(x,y);speed
+        TURN_TO;heading;speed
+        TURN_TO_POINT;(x,y);speed
+        SCORE_HIGH
+        SCORE_LOW
+        SCORE_MIDDLE
+        STOP_TRANSFER
+        CLEAR_LOADER
         """
         
         actions = []
         
-        if action in [Actions.PICK_UP_BLOCK.value]:
-            positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[0.5,0.5], obstacles=[], robot=robot)
-            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
+        # Get robot position from observation (in inches)
+        robot_pos = np.array([observation[ObsIndex.SELF_POS_X], observation[ObsIndex.SELF_POS_Y]])
+        start_pos = [robot_pos[0], robot_pos[1]]
 
+        def get_path(start_pos, end_pos):
+            positions, velocities, dt = self.path_planner.Solve(start_point=start_pos, end_point=end_pos, obstacles=[], robot=robot)
+            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
+            return points_str
+        
+        # Scoring action mappings: action -> (goal_type, score_cmd)
+        SCORING_ACTIONS = {
+            Actions.SCORE_IN_LONG_GOAL_1.value: (GoalType.LONG_1, "SCORE_HIGH"),
+            Actions.SCORE_IN_LONG_GOAL_2.value: (GoalType.LONG_2, "SCORE_HIGH"),
+            Actions.SCORE_IN_CENTER_UPPER.value: (GoalType.CENTER_UPPER, "SCORE_MIDDLE"),
+            Actions.SCORE_IN_CENTER_LOWER.value: (GoalType.CENTER_LOWER, "SCORE_LOW"),
+        }
+        
+        # Loader action mappings: action -> loader_index
+        LOADER_ACTIONS = {
+            Actions.TAKE_FROM_LOADER_TL.value: 0,  # Top Left
+            Actions.TAKE_FROM_LOADER_TR.value: 1,  # Top Right
+            Actions.TAKE_FROM_LOADER_BL.value: 2,  # Bottom Left
+            Actions.TAKE_FROM_LOADER_BR.value: 3,  # Bottom Right
+        }
+        
+        if action == Actions.PICK_UP_BLOCK.value:
+            nearest_block_x = observation[ObsIndex.FRIENDLY_BLOCKS_START]
+            nearest_block_y = observation[ObsIndex.FRIENDLY_BLOCKS_START + 1]
+            target_pos = [nearest_block_x, nearest_block_y]
+            
             actions.append("INTAKE;100")
-            actions.append(f"FOLLOW;{points_str};50")
+            actions.append(f"FOLLOW;{get_path(start_pos, target_pos)};50")
             actions.append("WAIT;0.5")
-            actions.append("INTAKE;0")
+            actions.append("STOP_TRANSFER")
 
-        elif action == Actions.SCORE_IN_LONG_GOAL_1.value:
-            positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[3.0, 1.0], obstacles=[], robot=robot)
-            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
+        elif action in SCORING_ACTIONS:
+            goal_type, score_cmd = SCORING_ACTIONS[action]
+            goal = GOALS[goal_type]
+            nearest_entry = goal.get_nearest_entry(robot_pos)
+            target_pos = [nearest_entry[0], nearest_entry[1]]
+            
+            actions.append(f"FOLLOW;{get_path(start_pos, target_pos)};50")
+            actions.append(f"TURN_TO_POINT;({goal.center[0]:.1f},{goal.center[1]:.1f});30")
+            actions.append("DRIVE;6;30")
+            actions.append(score_cmd)
 
-            actions.append(f"FOLLOW;{points_str};60")
-            actions.append("TURN;30;40")
-            actions.append("DRIVE;6;40")
-            actions.append("INTAKE;0")
+        elif action in LOADER_ACTIONS:
+            loader_idx = LOADER_ACTIONS[action]
+            loader = LOADERS[loader_idx]
+            # Approach from inside the field (12 inches from wall)
+            offset = 12.0 if loader.position[0] < 0 else -12.0
+            approach_pos = [loader.position[0] + offset, loader.position[1]]
+            
+            actions.append(f"FOLLOW;{get_path(start_pos, approach_pos)};50")
+            actions.append(f"TURN_TO_POINT;({loader.position[0]:.1f},{loader.position[1]:.1f});40")
+            actions.append("DRIVE;6;30")
+            actions.append("CLEAR_LOADER")
 
-        elif action == Actions.SCORE_IN_LONG_GOAL_2.value:
-            positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[-3.0, 1.0], obstacles=[], robot=robot)
-            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
+        elif action == Actions.PARK.value:
+            if robot.team.value == "red":
+                park_zone = PARK_ZONES["red"]
+                target_pos = [park_zone.center[0], park_zone.center[1]]
+                approach_pos = [park_zone.center[0] + 24, park_zone.center[1]]
+            else:
+                park_zone = PARK_ZONES["blue"]
+                target_pos = [park_zone.center[0], park_zone.center[1]]
+                approach_pos = [park_zone.center[0] - 24, park_zone.center[1]]
+            
+            actions.append(f"FOLLOW;{get_path(start_pos, approach_pos)};60")
+            actions.append(f"TURN_TO_POINT;({target_pos[0]:.1f},{target_pos[1]:.1f});40")
+            actions.append("DRIVE;24;30")
 
-            actions.append(f"FOLLOW;{points_str};60")
-            actions.append("TURN;-30;40")
-            actions.append("DRIVE;6;40")
-            actions.append("INTAKE;0")
+        elif action == Actions.TURN_TOWARD_CENTER.value:
+            actions.append("TURN_TO_POINT;(0.0,0.0);40")
 
-        elif action == Actions.SCORE_IN_CENTER_UPPER.value:
-            positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[1.5, 1.5], obstacles=[], robot=robot)
-            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
-
-            actions.append(f"FOLLOW;{points_str};55")
-            actions.append("TURN;45;40")
-            actions.append("DRIVE;4;40")
-            actions.append("INTAKE;0")
-
-        elif action == Actions.SCORE_IN_CENTER_LOWER.value:
-            positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[-1.5, 1.5], obstacles=[], robot=robot)
-            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
-
-            actions.append(f"FOLLOW;{points_str};55")
-            actions.append("TURN;-45;40")
-            actions.append("DRIVE;4;40")
-            actions.append("INTAKE;0")
-
-        elif action == Actions.TAKE_FROM_LOADER_TL.value:
-            positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[-3.0, 4.0], obstacles=[], robot=robot)
-            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
-
-            actions.append(f"FOLLOW;{points_str};50")
-            actions.append("TURN;90;40")
-            actions.append("DRIVE;1;30")
-            actions.append("INTAKE;100")
+        elif action == Actions.IDLE.value:
             actions.append("WAIT;0.5")
-            actions.append("INTAKE;0")
-
-        elif action == Actions.TAKE_FROM_LOADER_TR.value:
-            positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[3.0, 4.0], obstacles=[], robot=robot)
-            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
-
-            actions.append(f"FOLLOW;{points_str};50")
-            actions.append("TURN;-90;40")
-            actions.append("DRIVE;1;30")
-            actions.append("INTAKE;100")
-            actions.append("WAIT;0.5")
-            actions.append("INTAKE;0")
-
-        elif action == Actions.TAKE_FROM_LOADER_BL.value:
-            positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[-3.0, -4.0], obstacles=[], robot=robot)
-            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
-
-            actions.append(f"FOLLOW;{points_str};50")
-            actions.append("TURN;90;40")
-            actions.append("DRIVE;1;30")
-            actions.append("INTAKE;100")
-            actions.append("WAIT;0.5")
-            actions.append("INTAKE;0")
-
-        elif action == Actions.TAKE_FROM_LOADER_BR.value:
-            positions, velocities, dt = self.path_planner.Solve(start_point=[0,0], end_point=[3.0, -4.0], obstacles=[], robot=robot)
-            points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
-
-            actions.append(f"FOLLOW;{points_str};50")
-            actions.append("TURN;-90;40")
-            actions.append("DRIVE;1;30")
-            actions.append("INTAKE;100")
-            actions.append("WAIT;0.5")
-            actions.append("INTAKE;0")
 
         return actions

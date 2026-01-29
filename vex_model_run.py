@@ -36,7 +36,7 @@ class VexModelRunner:
         except Exception as e:
             print(f"Error loading model: {e}")
             return
-        
+
     def get_prediction(self, observation: np.ndarray) -> int:
         """
         Runs inference on the model to get the predicted action for the given observation.
@@ -83,7 +83,11 @@ class VexModelRunner:
         return action
 
     def get_inference(self, data):
-        """Get action for the robot based on current observation."""
+        """Get action for the robot based on current observation.
+        
+        Returns:
+            Tuple of (high_level_action: int, split_actions: List[str])
+        """
         # Get action using current observation
         # Observation uses tracker fields (held_blocks, loaders_taken, goals_added)
         action = self.get_prediction(self.observation)
@@ -91,7 +95,7 @@ class VexModelRunner:
         # Get split actions
         split_actions = self.game.split_action(action, self.observation, self.robot)
         
-        return split_actions  # This will be sent to the robot
+        return action, split_actions  # Returns both action ID and low-level commands
 
     def run_action(self, action):
         """Called after robot successfully completes an action.
