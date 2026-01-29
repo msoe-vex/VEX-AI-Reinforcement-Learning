@@ -93,7 +93,7 @@ class Actions(Enum):
     SCORE_IN_LONG_GOAL_1 = 1      # Long goal 1 (y=48)
     SCORE_IN_LONG_GOAL_2 = 2      # Long goal 2 (y=-48)
     SCORE_IN_CENTER_UPPER = 3     # Center goal upper
-    SCORE_IN_CENTER_LOWER = 4     # Center goal lower
+    SCORE_IN_CENTER_LOWER = 4     # Center goal lower // TODO: Remove action
     TAKE_FROM_LOADER_TL = 5       # Clear Top Left loader (once only, gets all 6 blocks)
     TAKE_FROM_LOADER_TR = 6       # Clear Top Right loader (once only, gets all 6 blocks)
     TAKE_FROM_LOADER_BL = 7       # Clear Bottom Left loader (once only, gets all 6 blocks)
@@ -332,9 +332,9 @@ class ObsIndex:
     OPPONENT_BLOCKS_START = 42
     GOALS_ADDED_START = 72
     LOADERS_CLEARED_START = 76
-    GOAL_FRIENDLY_START = 80
-    GOAL_OPPONENT_START = 84
-    LOADER_COUNTS_START = 88
+    GOAL_FRIENDLY_START = 80 # TODO: Remove
+    GOAL_OPPONENT_START = 84 # TODO: Remove
+    LOADER_COUNTS_START = 88 # TODO: Remove
     TOTAL = 92
 
 
