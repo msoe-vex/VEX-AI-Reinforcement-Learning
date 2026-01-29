@@ -190,6 +190,7 @@ def run_simulation(model_dir, game_name, output_dir):
 
 
         # Step the environment
+        print(f"\nStep {step_count}: Scores: {env.score}")
         next_observations, step_rewards, terminations, truncations, infos = env.step(actions_to_take)
         
         env.render(actions=actions_to_take, rewards=step_rewards) # Render after the step
