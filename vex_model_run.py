@@ -46,6 +46,7 @@ class VexModelRunner:
         Args:
             observation: The current observation for the agent.
         """
+        observation = np.nan_to_num(observation, nan=0.0, posinf=0.0, neginf=0.0)
         # Zero-Copy Tensor Creation: Use from_numpy() instead of tensor()
         # Avoids memory copy if numpy array is already contiguous and correct dtype
         # This is faster and reduces memory usage
