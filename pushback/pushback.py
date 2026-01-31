@@ -1261,7 +1261,7 @@ class PushBackGame(VexGame):
         
         # Pickup action - only invalid if at max capacity and if friendly blocks are present
         if action == Actions.PICK_UP_BLOCK.value:
-            if total_held >= MAX_HELD_BLOCKS and observation[ObsIndex.FRIENDLY_BLOCK_COUNT] > 0:
+            if total_held >= MAX_HELD_BLOCKS and observation[ObsIndex.FRIENDLY_BLOCK_COUNT] <= 0:
                 return False
         
         # Clear loader actions - can only clear each loader once
