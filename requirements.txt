@@ -1,5 +1,6 @@
 ray[tune]
 ray[default]
+ray[serve]
 gymnasium
 pettingzoo
 dm-tree

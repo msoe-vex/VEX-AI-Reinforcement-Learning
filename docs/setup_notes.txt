@@ -1,0 +1,376 @@
+VEX U Comp
+
+Robot starting zone:
+Contacting the barrier that defines their Alliance’s Park Zone.
+
+1 preload per robot
+
+Blue blocks:
+-50, 70
+-46, 70
+-50, -70
+-46, -70
+60, 6
+60, 2
+60, -2
+60, -6
+2, 48
+6, 48
+2, -48
+6, -48
+0, -24
+0, -32
+0, -40
+0, 28
+0, 36
+0, 44
+
+Red blocks:
+50, 70
+46, 70
+50, -70
+46, -70
+-60, 6
+-60, 2
+-60, -2
+-60, -6
+-2, 48
+-6, 48
+-2, -48
+-6, -48
+0, 24
+0, 32
+0, 40
+0, -28
+0, -36
+0, -44
+
+Top left loader:
+Blue
+Blue
+Blue
+Red
+Red
+Red
+
+Top right loader:
+Red
+Red
+Red
+Blue
+Blue
+Blue
+
+Bottom left loader:
+Blue
+Blue
+Blue
+Red
+Red
+Red
+
+Bottom right loader:
+Red
+Red
+Red
+Blue
+Blue
+Blue
+
+
+
+------------------------------------
+
+
+VEX U Skills
+
+Robot starting zone:
+Contacting the barrier that defines the Red Alliance's Park Zone.
+
+1 preload per robot
+
+Blue blocks:
+-70, 4
+-70, 0
+-70, -4
+-66, 4
+-66, 0
+-66, -4
+22, 26
+26, 22
+22, -22
+26, -26
+-22, 22
+-26, 26
+-22, -26
+-26, -22
+50, -2
+46, 2
+-50, 2
+-46, -2
+
+
+Red blocks:
+70, 4
+70, 0
+70, -4
+66, 4
+66, 0
+66, -4
+22, 22
+26, 26
+22, -26
+26, -22
+-22, 26
+-26, 22
+-22, -22
+-26, -26
+50, 2
+46, -2
+-50, -2
+-46, 2
+
+
+Top left loader:
+Red
+Red
+Red
+Blue
+Blue
+Blue
+
+Top right loader:
+Blue
+Blue
+Blue
+Red
+Red
+Red
+
+Bottom left loader:
+Blue
+Blue
+Blue
+Red
+Red
+Red
+
+Bottom right loader:
+Red
+Red
+Red
+Blue
+Blue
+Blue
+
+
+
+------------------------------------
+
+VEX AI Comp
+
+Robot starting zone:
+Contacting the barrier that defines their Alliance’s Park Zone.
+
+1 Preload per robot
+
+Blue blocks:
+46, 48
+50, 48
+46, -48
+50, -48
+-46, 48
+-50, 48
+-46, 48
+-50, 48
+-46, -48
+-50, -48
+-46, -48
+-50, -48
+
+24, 24
+24, 24
+24, 24
+24, 28
+28, 24
+24, -24
+24, -24
+24, -24
+24, -28
+28, -24
+
+-24, 28
+-24, 28
+-28, 24
+-28, 24
+-24, -28
+-24, -28
+-28, -24
+-28, -24
+
+Red blocks:
+46, 48
+50, 48
+46, 48
+50, 48
+46, -48
+50, -48
+46, -48
+50, -48
+-46, 48
+-50, 48
+-46, -48
+-50, -48
+
+-24, 24
+-24, 24
+-24, 24
+-24, 28
+-28, 24
+-24, -24
+-24, -24
+-24, -24
+-24, -28
+-28, -24
+
+24, 28
+24, 28
+28, 24
+28, 24
+24, -28
+24, -28
+28, -24
+28, -24
+
+
+Top left loader:
+Red
+Blue
+Red
+Blue
+Red
+Blue
+
+Top right loader:
+Blue
+Red
+Blue
+Red
+Blue
+Red
+
+Bottom left loader:
+Red
+Blue
+Red
+Blue
+Red
+Blue
+
+Bottom right loader:
+Blue
+Red
+Blue
+Red
+Blue
+Red
+
+
+------------------------------------
+
+VEX AI Skills
+
+Robot starting zone:
+A 24” Robot in a VAIRC Robot Skills Match begins the Match in a Parked position in the blue 
+Park Zone. A 15” Robot in a VAIRC Robot Skills Match begins the Match in a Parked position in the red 
+Park Zone. Robots do not begin the Match with Preloads
+
+No preloads
+
+Blue blocks:
+48, 48
+48, 48
+48, -48
+48, -48
+-48, 48
+-48, -48
+
+24, 24
+24, 24
+24, 24
+24, 28
+28, 24
+24, -24
+24, -24
+24, -24
+24, -28
+28, -24
+
+-24, 28
+-24, 28
+-28, 24
+-28, 24
+-24, -28
+-24, -28
+-28, -24
+-28, -24
+
+Red blocks:
+48, 48
+48, -48
+-48, 48
+-48, 48
+-48, -48
+-48, -48
+
+-24, 24
+-24, 24
+-24, 24
+-24, 28
+-28, 24
+-24, -24
+-24, -24
+-24, -24
+-24, -28
+-28, -24
+
+24, 28
+24, 28
+28, 24
+28, 24
+24, -28
+24, -28
+28, -24
+28, -24
+
+Top left loader:
+Red
+Blue
+Blue
+Blue
+Blue
+Blue
+
+Top right loader:
+Blue
+Red
+Red
+Red
+Red
+Red
+
+Bottom left loader:
+Red
+Blue
+Blue
+Blue
+Blue
+Blue
+
+Bottom right loader:
+Blue
+Red
+Red
+Red
+Red
+Red

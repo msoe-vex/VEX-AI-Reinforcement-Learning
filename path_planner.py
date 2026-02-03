@@ -1,10 +1,10 @@
 from casadi import *
 import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.transforms import Affine2D
 import random
 from math import sqrt, exp  # Added missing imports if needed
 import time
+import os
+from vex_core.base_game import Robot, Team, RobotSize
 
 # =============================================================================
 # Obstacle Definitions
@@ -25,15 +25,16 @@ class FirstStateIndex:
         self.dt = self.vy + n - 1
 
 INCHES_PER_FIELD = 144
+GRID_SIZE = 128
 
 # =============================================================================
 # PathPlanner Class Definitions
 # =============================================================================
 class PathPlanner:
     # All values are based on a scale from 0 to 1, where 1 is the length of the field
-    def __init__(self, robot_length, robot_width, buffer_radius, max_velocity, max_accel):
+    def __init__(self, field_size_inches=144, field_center=(0, 0), output_dir="path_planner"):
         # -------------------------------------------------------------------------
-        # Initialization: Robot and field parameters
+        # Initialization: Field parameters
         # -------------------------------------------------------------------------
 
         self.NUM_OF_ACTS = 2   # Number of MPC actions (vx, vy)
@@ -43,15 +44,25 @@ class PathPlanner:
 
         self.initialize(default_steps)
 
-        self.robot_length = robot_length
-        self.robot_width = robot_width
-        self.buffer_radius = buffer_radius
-        self.robot_radius = sqrt(self.robot_length**2 + self.robot_width**2) / 2
-
-        self.max_velocity = max_velocity
-        self.max_accel = max_accel
-
-        self.center_circle_radius = 1/6+3.5/INCHES_PER_FIELD # Circle surrounding the center obstacles of the field
+        # Field coordinate system parameters
+        self.field_size_inches = field_size_inches
+        self.field_center = np.array(field_center, dtype=np.float64)
+        self.output_dir = output_dir
+        os.makedirs(self.output_dir, exist_ok=True)
+    
+    def inches_to_normalized(self, pos_inches):
+        """Convert position from inches (field coordinates) to normalized scale (0-1)."""
+        if isinstance(pos_inches, np.ndarray):
+            return (pos_inches - self.field_center + self.field_size_inches / 2) / self.field_size_inches
+        pos_array = np.array(pos_inches, dtype=np.float64)
+        return (pos_array - self.field_center + self.field_size_inches / 2) / self.field_size_inches
+    
+    def normalized_to_inches(self, pos_normalized):
+        """Convert position from normalized scale (0-1) to inches (field coordinates)."""
+        if isinstance(pos_normalized, np.ndarray):
+            return pos_normalized * self.field_size_inches - self.field_size_inches / 2 + self.field_center
+        pos_array = np.array(pos_normalized, dtype=np.float64)
+        return pos_array * self.field_size_inches - self.field_size_inches / 2 + self.field_center
     
     def initialize(self, num_steps):
         self.num_steps = max(num_steps, 3)
@@ -63,53 +74,13 @@ class PathPlanner:
         self.time_step_max = self.max_time/self.num_steps  # Maximum time step
 
 
-    def intersects(self, x1, y1, x2, y2, r):
-        if(x1**2 + y1**2 < r**2 or x2**2 + y2**2 < r**2):
-            return False  # Prevent error when start or end is inside the circle
-        if x1 == x2:
-            return abs(x1) < r  # Check if the vertical line intersects the circle
-        m = (y2 - y1) / (x2 - x1)
-        return 4*((m**2+1)*r**2 - (y1-m*x1)**2) > 0
-
-    def get_initial_path(self, x1, y1, x2, y2, r):
+    def get_initial_path(self, x1, y1, x2, y2):
         # -------------------------------------------------------------------------
         # Path Initialization: Compute initial guess for the path
         # -------------------------------------------------------------------------
         x1 = x1 - 0.5; y1 = y1 - 0.5; x2 = x2 - 0.5; y2 = y2 - 0.5
-        if self.intersects(x1, y1, x2, y2, r):
-            start1 = 2*np.arctan((y1-sqrt(-r**2+x1**2+y1**2))/(x1+r))
-            start2 = 2*np.arctan((y1+sqrt(-r**2+x1**2+y1**2))/(x1+r))
-            end1 = 2*np.arctan((y2-sqrt(-r**2+x2**2+y2**2))/(x2+r))
-            end2 = 2*np.arctan((y2+sqrt(-r**2+x2**2+y2**2))/(x2+r))
-            x3 = r*np.cos(start1); y3 = r*np.sin(start1)
-            x4 = r*np.cos(start2); y4 = r*np.sin(start2)
-            x5 = r*np.cos(end1);   y5 = r*np.sin(end1)
-            x6 = r*np.cos(end2);   y6 = r*np.sin(end2)
-            m3 = (y3-y1)/(x3-x1)
-            m4 = (y4-y1)/(x4-x1)
-            m5 = (y5-y2)/(x5-x2)
-            m6 = (y6-y2)/(x6-x2)
-            x7 = (m3*x1 - m6*x2 - y1 + y2)/(m3-m6)
-            y7 = (m3*(m6*(x1-x2)+y2)-m6*y1)/(m3-m6)
-            x8 = (m4*x1 - m5*x2 - y1 + y2)/(m4-m5)
-            y8 = (m4*(m5*(x1-x2)+y2)-m5*y1)/(m4-m5)
-            d1 = sqrt((x7-x1)**2 + (y7-y1)**2) + sqrt((x7-x2)**2 + (y7-y2)**2)
-            d2 = sqrt((x8-x1)**2 + (y8-y1)**2) + sqrt((x8-x2)**2 + (y8-y2)**2)
-            if d1 < d2:
-                init_x = np.linspace(x1+0.5, x7+0.5, self.num_steps//2)
-                init_y = np.linspace(y1+0.5, y7+0.5, self.num_steps//2)
-                init_x2 = np.linspace(x7+0.5, x2+0.5, self.num_steps - self.num_steps//2)
-                init_y2 = np.linspace(y7+0.5, y2+0.5, self.num_steps - self.num_steps//2)
-            else:
-                init_x = np.linspace(x1+0.5, x8+0.5, self.num_steps//2)
-                init_y = np.linspace(y1+0.5, y8+0.5, self.num_steps//2)
-                init_x2 = np.linspace(x8+0.5, x2+0.5, self.num_steps - self.num_steps//2)
-                init_y2 = np.linspace(y8+0.5, y2+0.5, self.num_steps - self.num_steps//2)
-            init_x = np.concatenate((init_x, init_x2))
-            init_y = np.concatenate((init_y, init_y2))
-        else:
-            init_x = np.linspace(x1+0.5, x2+0.5, self.num_steps)
-            init_y = np.linspace(y1+0.5, y2+0.5, self.num_steps)
+        init_x = np.linspace(x1+0.5, x2+0.5, self.num_steps)
+        init_y = np.linspace(y1+0.5, y2+0.5, self.num_steps)
 
         # # Add random perturbations to the initial path to encourage exploration
         # perturbation_scale = 0.1  # Adjust the scale of perturbations as needed
@@ -118,17 +89,54 @@ class PathPlanner:
     
         return (init_x, init_y)
 
-    def Solve(self, start_point, end_point, obstacles):
+    def Solve(self, start_point, end_point, obstacles, robot: Robot):
+        """Solve for optimal path. Accepts all inputs in field inches and returns positions in field inches.
+        
+        Args:
+            start_point: Starting position in field inches
+            end_point: Ending position in field inches
+            obstacles: List of obstacles
+            robot: Robot object with dimensions and constraints
+        """
+        # Calculate robot parameters locally
+        robot_length_norm = robot.length / self.field_size_inches
+        robot_width_norm = robot.width / self.field_size_inches
+        buffer_radius_norm = robot.buffer / self.field_size_inches
+        robot_radius = sqrt(robot.length**2 + robot.width**2) / 2
+        robot_radius_norm = robot_radius / self.field_size_inches
+        
+        max_velocity_norm = robot.max_speed / self.field_size_inches
+        max_accel_norm = robot.max_acceleration / self.field_size_inches
+
         start_time = time.time()
 
+        # Convert input positions from inches to normalized coordinates
+        start_point_inches = np.array(start_point, dtype=np.float64)
+        start_point_norm = self.inches_to_normalized(start_point_inches)
+        end_point_inches = np.array(end_point, dtype=np.float64)
+        end_point_norm = self.inches_to_normalized(end_point_inches)
+
+        # Convert obstacles to normalized coordinates if they appear to be in inches
+        normalized_obstacles = []
+        for obs in obstacles:
+            obs_pos_norm = self.inches_to_normalized(np.array([obs.x, obs.y]))
+            normalized_obstacles.append(Obstacle(
+                obs_pos_norm[0],
+                obs_pos_norm[1],
+                obs.radius / self.field_size_inches,  # Convert radius too
+                obs.ignore_collision
+            ))
+            
+        # Helper call needs updated parameters
+        # self.a_star_search needs robot info for grid generation if it uses it.
+        # Let's fix a_star_search later, focus on SOLVE logic first.
+
+
+        # Calculate steps based on distance in inches
         inches_per_step = 6
-        inches = int(np.linalg.norm(np.array(start_point) - np.array(end_point)) * INCHES_PER_FIELD)
+        inches = int(np.linalg.norm(end_point_inches - start_point_inches))
         steps = int(inches / inches_per_step)
         self.initialize(steps)
-
-        # Ensure start_point and end_point are numpy arrays of type float64
-        start_point = np.array(start_point, dtype=np.float64)
-        end_point = np.array(end_point, dtype=np.float64)
         # -------------------------------------------------------------------------
         # Initialization: Define indexes and problem dimensions
         # -------------------------------------------------------------------------
@@ -146,8 +154,8 @@ class PathPlanner:
         w_obstacle_penalty = 1000.0  # Weight for obstacle penalty
         cost = 0.0
 
-        # Perform A* search to get an initial path
-        a_star_path = self.a_star_search(start_point, end_point, obstacles)
+        # Perform A* search to get an initial path (using normalized coordinates)
+        a_star_path = self.a_star_search(start_point_norm, end_point_norm, normalized_obstacles, robot_radius_norm, buffer_radius_norm)
         if a_star_path:
             # Interpolate the A* path to match the number of steps
             a_star_path = np.array(a_star_path)
@@ -155,13 +163,13 @@ class PathPlanner:
             init_y = np.interp(np.linspace(0, 1, self.num_steps), np.linspace(0, 1, len(a_star_path)), a_star_path[:, 1])
         else:
             # Fall back to the default initial path if A* fails
-            init_x, init_y = self.get_initial_path(start_point[0], start_point[1], end_point[0], end_point[1], self.center_circle_radius)
+            init_x, init_y = self.get_initial_path(start_point_norm[0], start_point_norm[1], end_point_norm[0], end_point_norm[1])
 
         self.init_x = init_x  # For plotting
         self.init_y = init_y
 
         # Build initial guess using the A* path and zero velocity
-        init_v = [self.max_velocity / 2] * ((self.num_steps - 1) * self.NUM_OF_ACTS)
+        init_v = [max_velocity_norm / 2] * ((self.num_steps - 1) * self.NUM_OF_ACTS)
         init_time_step = self.initial_time_step
         x_ = np.concatenate((init_x, init_y, init_v, [init_time_step]))
 
@@ -174,7 +182,7 @@ class PathPlanner:
             curr_py_index = i + self.indexes.py
             curr_px = x[curr_px_index]
             curr_py = x[curr_py_index]
-            for obstacle in obstacles:
+            for obstacle in normalized_obstacles:
                 distance_squared = (curr_px - obstacle.x)**2 + (curr_py - obstacle.y)**2
                 penalty = w_obstacle_penalty / (distance_squared + 1e-6)  # Add a small value to avoid division by zero
                 cost += penalty/(1e4) #if not obstacle.ignore_collision else 0
@@ -187,18 +195,18 @@ class PathPlanner:
             x_lowerbound_[i] = 0 #+ self.robot_radius
             x_upperbound_[i] = 1 #- self.robot_radius
         for i in range(self.indexes.vx, self.indexes.vy + self.num_steps - 1):
-            x_lowerbound_[i] = -self.max_velocity
-            x_upperbound_[i] = self.max_velocity
+            x_lowerbound_[i] = -max_velocity_norm
+            x_upperbound_[i] = max_velocity_norm
 
-        # Constrain start and final positions
-        x_lowerbound_[self.indexes.px] = start_point[0]
-        x_lowerbound_[self.indexes.py] = start_point[1]
-        x_lowerbound_[self.indexes.px + self.num_steps - 1] = end_point[0]
-        x_lowerbound_[self.indexes.py + self.num_steps - 1] = end_point[1]
-        x_upperbound_[self.indexes.px] = start_point[0]
-        x_upperbound_[self.indexes.py] = start_point[1]
-        x_upperbound_[self.indexes.px + self.num_steps - 1] = end_point[0]
-        x_upperbound_[self.indexes.py + self.num_steps - 1] = end_point[1]
+        # Constrain start and final positions (using normalized coordinates)
+        x_lowerbound_[self.indexes.px] = start_point_norm[0]
+        x_lowerbound_[self.indexes.py] = start_point_norm[1]
+        x_lowerbound_[self.indexes.px + self.num_steps - 1] = end_point_norm[0]
+        x_lowerbound_[self.indexes.py + self.num_steps - 1] = end_point_norm[1]
+        x_upperbound_[self.indexes.px] = start_point_norm[0]
+        x_upperbound_[self.indexes.py] = start_point_norm[1]
+        x_upperbound_[self.indexes.px + self.num_steps - 1] = end_point_norm[0]
+        x_upperbound_[self.indexes.py + self.num_steps - 1] = end_point_norm[1]
 
         # Constrain start and final velocities
         # x_lowerbound_[self.indexes.vx] = 0
@@ -230,7 +238,7 @@ class PathPlanner:
             vy = x[curr_vy_index]
             g[g_index] = vx**2 + vy**2
             g_lowerbound_[g_index] = 0
-            g_upperbound_[g_index] = self.max_velocity**2
+            g_upperbound_[g_index] = max_velocity_norm**2
             g_index += 1
         
         # Acceleration constraints
@@ -243,7 +251,7 @@ class PathPlanner:
             ay = (x[next_vy_index] - x[curr_vy_index]) / time_step
             g[g_index] = ax**2 + ay**2
             g_lowerbound_[g_index] = 0
-            g_upperbound_[g_index] = self.max_accel**2
+            g_upperbound_[g_index] = max_accel_norm**2
             g_index += 1
 
         # Dynamics (position update) constraints
@@ -273,12 +281,12 @@ class PathPlanner:
             curr_py_index = i + self.indexes.py
             curr_px = x[curr_px_index]
             curr_py = x[curr_py_index]
-            for obstacle in obstacles:
+            for obstacle in normalized_obstacles:
                 g[g_index] = (curr_px - obstacle.x)**2 + (curr_py - obstacle.y)**2
                 if obstacle.ignore_collision:
                     g_lowerbound_[g_index] = exp(-10)
                 else:
-                    g_lowerbound_[g_index] = (obstacle.radius + self.robot_radius + self.buffer_radius)**2
+                    g_lowerbound_[g_index] = (obstacle.radius + robot_radius_norm + buffer_radius_norm)**2
                 g_upperbound_[g_index] = exp(10)
                 g_index += 1
 
@@ -291,38 +299,52 @@ class PathPlanner:
         
         self.solve_time = time.time() - start_time
 
-        return res
+        # Extract solution components
+        x_opt = res['x'].full().flatten()
+        pos_x = x_opt[self.indexes.px:self.indexes.py]
+        pos_y = x_opt[self.indexes.py:self.indexes.vx]
+        vel_x = x_opt[self.indexes.vx:self.indexes.vy]
+        vel_y = x_opt[self.indexes.vy:self.indexes.dt]
+        dt = x_opt[self.indexes.dt]
+        
+        # Convert positions from normalized coordinates back to inches
+        positions_normalized = np.column_stack((pos_x, pos_y))
+        positions_inches = np.array([self.normalized_to_inches(pos) for pos in positions_normalized])
+        
+        # Convert velocities from normalized units back to inches per second
+        velocities_normalized = np.column_stack((vel_x, vel_y))
+        velocities_inches = velocities_normalized * self.field_size_inches
+        
+        return positions_inches, velocities_inches, dt
 
-    def print_trajectory_details(self, res, save_path):
+    def print_trajectory_details(self, positions, velocities, dt, save_path=None):
         # -------------------------------------------------------------------------
         # Trajectory Output: Print details and save to a file
+        # Positions are already in inches
         # -------------------------------------------------------------------------
-        x_opt = res['x'].full().flatten()
-        final_cost = res['f'].full().item()
         print(f"{'Step':<5} {'Position (x, y)':<20}\t{'Velocity (vx, vy)':<20}\t{'Acceleration (ax, ay)':<25}")
         print("-" * 70)
         lemlib_output_string = ""
-        optimized_time_step  = x_opt[self.num_of_x_-1]
-        for i in range(self.num_steps):
-            px = x_opt[self.indexes.px + i]
-            py = x_opt[self.indexes.py + i]
-            if i < self.num_steps - 1:
-                vx = x_opt[self.indexes.vx + i]
-                vy = x_opt[self.indexes.vy + i]
+        
+        for i in range(len(positions)):
+            px, py = positions[i]  # Already in inches
+            if i < len(velocities):
+                vx, vy = velocities[i]
             else:
                 vx = vy = 0
-            if i < self.num_steps - 2:
-                next_vx = x_opt[self.indexes.vx + i + 1]
-                next_vy = x_opt[self.indexes.vy + i + 1]
-                ax = (next_vx - vx) / optimized_time_step 
-                ay = (next_vy - vy) / optimized_time_step 
+            
+            if i < len(velocities) - 1:
+                next_vx, next_vy = velocities[i + 1]
+                ax = (next_vx - vx) / dt
+                ay = (next_vy - vy) / dt
             else:
                 ax = ay = 0
-            print(f"{i:<5} ({px*INCHES_PER_FIELD-72:.2f}, {py*INCHES_PER_FIELD-72:.2f})\t\t({vx*INCHES_PER_FIELD:.2f}, {vy*INCHES_PER_FIELD:.2f})\t\t({ax*INCHES_PER_FIELD:.2f}, {ay*INCHES_PER_FIELD:.2f})")
-            lemlib_output_string += f"{px*INCHES_PER_FIELD-72:.3f}, {py*INCHES_PER_FIELD-72:.3f}\n"
-        print(f"\nFinal cost: {final_cost:.2f}")
-        print(f"\nTime step: {optimized_time_step:.2f}")
-        print(f"Path time: {optimized_time_step * self.num_steps:.2f}")
+            
+            print(f"{i:<5} ({px:.2f}, {py:.2f})\t\t({vx:.2f}, {vy:.2f})\t\t({ax:.2f}, {ay:.2f})")
+            lemlib_output_string += f"{px:.3f}, {py:.3f}\n"
+        
+        print(f"\nTime step: {dt:.2f}")
+        print(f"Path time: {dt * len(positions):.2f}")
         print(f"\nStatus: {self.status}")
         print(f"Solve time: {self.solve_time:.3f} seconds")
         lemlib_output_string += "endData"
@@ -330,17 +352,36 @@ class PathPlanner:
             with open(save_path, 'w') as file:
                 file.write(lemlib_output_string)
 
-    def plotResults(self, sol):
+    def plotResults(self, positions, velocities, start_point, end_point, obstacles, robot: Robot):
         # -------------------------------------------------------------------------
         # Plot Results: Display trajectory, obstacles, and robot boundaries
+        # All inputs are in inches, convert to normalized for plotting
         # -------------------------------------------------------------------------
+        
+        import matplotlib.pyplot as plt
+        from matplotlib.transforms import Affine2D
+
+        # Calculate local norms
+        robot_length_norm = robot.length / self.field_size_inches
+        robot_width_norm = robot.width / self.field_size_inches
+        robot_radius_norm = sqrt(robot.length**2 + robot.width**2) / 2 / self.field_size_inches
+        buffer_radius_norm = robot.buffer / self.field_size_inches
+
         fig, ax = plt.subplots(figsize=(8, 8))
-        planned_px = np.array(sol['x'][self.indexes.px:self.indexes.py]).flatten()
-        planned_py = np.array(sol['x'][self.indexes.py:self.indexes.vx]).flatten()
-        planned_vx = np.array(sol['x'][self.indexes.vx:self.indexes.vy]).flatten()
-        planned_vy = np.array(sol['x'][self.indexes.vy:self.indexes.dt]).flatten()
+        
+        # Convert positions from inches to normalized for plotting
+        positions_norm = np.array([self.inches_to_normalized(pos) for pos in positions])
+        planned_px = positions_norm[:, 0]
+        planned_py = positions_norm[:, 1]
+        planned_vx = velocities[:, 0]
+        planned_vy = velocities[:, 1]
         planned_theta = np.arctan2(planned_vy, planned_vx)
-        planned_theta = np.concatenate(([planned_theta[1]], planned_theta[1:-1], [planned_theta[-2], planned_theta[-2]]))
+        planned_theta = np.concatenate(([planned_theta[0]], planned_theta, [planned_theta[-1]]))
+        
+        # Convert start/end points to normalized
+        start_norm = self.inches_to_normalized(np.array(start_point))
+        end_norm = self.inches_to_normalized(np.array(end_point))
+        
         ax.plot(self.init_x, self.init_y, linestyle=':', color='gray', alpha=0.7, label='initial path')
         ax.plot(planned_px, planned_py, '-o', label='path', color="blue", alpha=0.5)
         theta_list = np.linspace(0, 2 * np.pi, 100)
@@ -349,23 +390,26 @@ class PathPlanner:
         index = 0
         for px, py, theta in zip(planned_px, planned_py, planned_theta):
             rotation = Affine2D().rotate_around(px, py, theta)
-            rectangle = plt.Rectangle((px - self.robot_length / 2, py - self.robot_width / 2), self.robot_length, self.robot_width,
+            rectangle = plt.Rectangle((px - robot_length_norm / 2, py - robot_width_norm / 2), robot_length_norm, robot_width_norm,
                                       edgecolor='blue', facecolor='none', alpha=1)
             rectangle.set_transform(rotation + ax.transData)
             if index % mod == 0 or index == self.num_steps - 1:
-                robot_circle_x = px + self.robot_radius * np.cos(theta_list)
-                robot_circle_y = py + self.robot_radius * np.sin(theta_list)
+                robot_circle_x = px + robot_radius_norm * np.cos(theta_list)
+                robot_circle_y = py + robot_radius_norm * np.sin(theta_list)
                 ax.plot(robot_circle_x, robot_circle_y, '--', color='blue', alpha=0.5, label='robot radius' if index == 0 else None)
                 ax.add_patch(rectangle)
             index += 1
-        ax.plot(start_point[0], start_point[1], 'o', color='orange', label='start')
-        ax.plot(end_point[0], end_point[1], 'o', color='green', label='target')
+        ax.plot(start_norm[0], start_norm[1], 'o', color='orange', label='start')
+        ax.plot(end_norm[0], end_norm[1], 'o', color='green', label='target')
         first_obstacle = True
         for obstacle in obstacles:
-            danger_x = obstacle.x + (obstacle.radius - 0.005) * np.cos(theta_list)
-            danger_y = obstacle.y + (obstacle.radius - 0.005) * np.sin(theta_list)
-            buffer_x = obstacle.x + (obstacle.radius + self.buffer_radius) * np.cos(theta_list)
-            buffer_y = obstacle.y + (obstacle.radius + self.buffer_radius) * np.sin(theta_list)
+            # Convert obstacle from inches to normalized
+            obs_norm = self.inches_to_normalized(np.array([obstacle.x, obstacle.y]))
+            radius_norm = obstacle.radius / self.field_size_inches
+            danger_x = obs_norm[0] + (radius_norm - 0.005/self.field_size_inches) * np.cos(theta_list)
+            danger_y = obs_norm[1] + (radius_norm - 0.005/self.field_size_inches) * np.sin(theta_list)
+            buffer_x = obs_norm[0] + (radius_norm + buffer_radius_norm) * np.cos(theta_list)
+            buffer_y = obs_norm[1] + (radius_norm + buffer_radius_norm) * np.sin(theta_list)
             if first_obstacle:
                 ax.plot(danger_x, danger_y, 'r-', label='obstacle')
                 ax.plot(buffer_x, buffer_y, 'r--', label='buffer zone', alpha=0.5)
@@ -373,45 +417,67 @@ class PathPlanner:
             else:
                 ax.plot(danger_x, danger_y, 'r-')
                 ax.plot(buffer_x, buffer_y, 'r--', alpha=0.5)
-        radius = self.center_circle_radius; center_x, center_y = 0.5, 0.5
-        circle_x = center_x + radius * np.cos(theta_list)
-        circle_y = center_y + radius * np.sin(theta_list)
-        ax.plot(circle_x, circle_y, 'r--', alpha=0.25)
         ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), borderaxespad=0., frameon=False)
         ax.set_aspect('equal', adjustable='box')
         ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.grid()
-        plt.savefig('path.png')
+        plt.savefig(f'{self.output_dir}/path.png')
         plt.close(fig)  # Close the figure to free memory
 
-        print("Path saved to path.png")
-
+        print(f"Path saved to {self.output_dir}/path.png")
         
     
-    def getPath(self, sol):
-        planned_px = np.array(sol['x'][self.indexes.px:self.indexes.py]).flatten()
-        planned_py = np.array(sol['x'][self.indexes.py:self.indexes.vx]).flatten()
-        total_path_time = sol['x'][self.indexes.dt] * self.num_steps
+    def getPath(self, positions, dt):
+        """Legacy method for compatibility - returns separate x, y arrays and total time."""
+        planned_px = positions[:, 0]
+        planned_py = positions[:, 1]
+        total_path_time = dt * len(positions)
         return planned_px, planned_py, total_path_time
 
-    def a_star_search(self, start_point, end_point, obstacles):
+    def _generate_obstacle_grid(self, obstacles, start_point, end_point, robot_radius_norm, buffer_radius_norm, grid_size=GRID_SIZE):
         """
-        Perform A* search on a 48x48 grid.
+        Helper method to generate an obstacle grid for A* search and visualization.
+        
+        Args:
+            obstacles: List of obstacles in normalized coordinates
+            start_point: Start point in normalized coordinates
+            end_point: End point in normalized coordinates
+            grid_size: Size of the grid (default 48x48)
+            
+        Returns:
+            grid: 2D numpy array where 0=free, 1=blocked
+            start: Grid coordinates (x, y) for start point
+            end: Grid coordinates (x, y) for end point
         """
-        grid_size = 48
         grid = np.zeros((grid_size, grid_size), dtype=int)
 
         # Block grid cells based on obstacles
         for obstacle in obstacles:
             cx, cy = int(obstacle.x * grid_size), int(obstacle.y * grid_size)
-            radius = int((obstacle.radius + self.robot_radius + self.buffer_radius) * grid_size)
+            radius = int((obstacle.radius + robot_radius_norm + buffer_radius_norm) * grid_size)
             for x in range(max(0, cx - radius), min(grid_size, cx + radius + 1)):
                 for y in range(max(0, cy - radius), min(grid_size, cy + radius + 1)):
                     if (x - cx)**2 + (y - cy)**2 <= radius**2:
-                        grid[x, y] = 1  # Mark as blocked
+                        grid[y, x] = 1  # Mark as blocked (grid is [row=y, col=x])
+        
+        # Block any cell within robot radius of the field boundary
+        robot_radius_cells = int(robot_radius_norm * grid_size)
+        for i in range(grid_size):
+            for j in range(grid_size):
+                if i < robot_radius_cells or i >= grid_size - robot_radius_cells or j < robot_radius_cells or j >= grid_size - robot_radius_cells:
+                    grid[i, j] = 1  # Mark as blocked
 
         # Convert start and end points to grid coordinates
         start = (int(start_point[0] * grid_size), int(start_point[1] * grid_size))
         end = (int(end_point[0] * grid_size), int(end_point[1] * grid_size))
+        
+        return grid, start, end
+
+    def a_star_search(self, start_point, end_point, obstacles, robot_radius_norm, buffer_radius_norm):
+        """
+        Perform A* search on a 48x48 grid.
+        """
+        grid_size = GRID_SIZE
+        grid, start, end = self._generate_obstacle_grid(obstacles, start_point, end_point, robot_radius_norm, buffer_radius_norm, grid_size)
 
         # A* search
         from heapq import heappop, heappush
@@ -428,7 +494,7 @@ class PathPlanner:
                 return self.reconstruct_path(came_from, current, grid_size)
 
             for neighbor in self.get_neighbors(current, grid_size):
-                if grid[neighbor[0], neighbor[1]] == 1:  # Skip blocked cells
+                if grid[neighbor[1], neighbor[0]] == 1:  # Skip blocked cells (grid is [row=y, col=x])
                     continue
 
                 tentative_g_score = g_score[current] + 1
@@ -466,56 +532,78 @@ class PathPlanner:
         path.append((current[0] / grid_size, current[1] / grid_size))
         return path[::-1]
 
-    def generate_grid_png(self, obstacles, start_point, end_point, filename="grid.png"):
+    def generate_grid_png(self, obstacles, start_point, end_point, robot: Robot):
         """
         Generate a PNG of the grid based on obstacles, swap black/white, and add dots for start and end points.
+        All inputs are in inches.
         """
-        grid_size = 48
-        grid = np.ones((grid_size, grid_size), dtype=int)  # Initialize grid with 1s (white)
+        import matplotlib.pyplot as plt
+        from matplotlib.transforms import Affine2D
 
-        # Block grid cells based on obstacles
-        for obstacle in obstacles:
-            cx, cy = int(obstacle.x * grid_size), int(obstacle.y * grid_size)
-            radius = int((obstacle.radius + self.robot_radius + self.buffer_radius) * grid_size)
-            for x in range(max(0, cx - radius), min(grid_size, cx + radius + 1)):
-                for y in range(max(0, cy - radius), min(grid_size, cy + radius + 1)):
-                    if (x - cx)**2 + (y - cy)**2 <= radius**2:
-                        grid[y, x] = 0  # Mark as blocked (black)
-
-        # Convert start and end points to grid coordinates
-        start = (int(start_point[1] * grid_size), int(start_point[0] * grid_size))
-        end = (int(end_point[1] * grid_size), int(end_point[0] * grid_size))
+        grid_size = GRID_SIZE
+        
+        robot_radius_norm = sqrt(robot.length**2 + robot.width**2) / 2 / self.field_size_inches
+        buffer_radius_norm = robot.buffer / self.field_size_inches
+        
+        # Convert obstacles from inches to normalized
+        normalized_obstacles = []
+        for obs in obstacles:
+            obs_pos_norm = self.inches_to_normalized(np.array([obs.x, obs.y]))
+            normalized_obstacles.append(Obstacle(
+                obs_pos_norm[0],
+                obs_pos_norm[1],
+                obs.radius / self.field_size_inches,
+                obs.ignore_collision
+            ))
+        
+        # Convert start/end from inches to normalized
+        start_norm = self.inches_to_normalized(np.array(start_point))
+        end_norm = self.inches_to_normalized(np.array(end_point))
+        
+        # Generate the grid using the helper method
+        grid, start_grid, end_grid = self._generate_obstacle_grid(normalized_obstacles, start_norm, end_norm, robot_radius_norm, buffer_radius_norm, grid_size)
+        
+        # Invert the grid (0=white, 1=black for display)
+        grid = 1 - grid
 
         # Plot the grid
         fig, ax = plt.subplots(figsize=(6, 6))
-        ax.imshow(grid, cmap="gray", origin="lower")  # Use 'upper' to fix flipping
+        ax.imshow(grid, cmap="gray", origin="lower")
         ax.set_title("Grid Visualization")
         ax.set_xticks([]); ax.set_yticks([])
 
         # Add dots for start and end points
-        ax.plot(start[1], start[0], 'go', label="Start")  # Green dot for start
-        ax.plot(end[1], end[0], 'ro', label="End")  # Red dot for end
+        ax.plot(start_grid[0], start_grid[1], 'go', markersize=10, label="Start")  # Green dot for start
+        ax.plot(end_grid[0], end_grid[1], 'ro', markersize=10, label="End")  # Red dot for end
         ax.legend(loc="upper right")
 
         plt.tight_layout()
 
         # Save the grid as a PNG
-        plt.savefig(filename)
+        plt.savefig(f"{self.output_dir}/grid.png")
         plt.close(fig)
-        print(f"Grid PNG saved as {filename}")
+        print(f"Grid PNG saved as {self.output_dir}/grid.png")
 
 # =============================================================================
 # Main Execution
 # =============================================================================
 
 if __name__ == "__main__":
-    robot_length = 15/INCHES_PER_FIELD
-    robot_width = 15/INCHES_PER_FIELD
-    buffer_radius = 2/INCHES_PER_FIELD
-    max_velocity = 70/INCHES_PER_FIELD
-    max_accel = 70/INCHES_PER_FIELD
+    robot = Robot(
+        name="TestRobot",
+        team=Team.RED,
+        size=RobotSize.INCH_24,
+        max_speed=60,
+        max_acceleration=60,
+        buffer=1.0,
+        length=18.0,
+        width=18.0,
+    )
 
-    planner = PathPlanner(robot_length, robot_width, buffer_radius, max_velocity, max_accel)
+    planner = PathPlanner(
+        field_size_inches=INCHES_PER_FIELD,
+        field_center=(0, 0)
+    )
 
     total_solve_time = 0
     successful_solve_time = 0
@@ -525,39 +613,29 @@ if __name__ == "__main__":
     total_trials = 1000
 
     for i in range(total_trials):
-        # start_point = [np.random.uniform(0.1, 0.9), np.random.uniform(0.1, 0.9)]
-        # end_point = [np.random.uniform(0.1, 0.9), np.random.uniform(0.1, 0.9)]
+        # All values should be in INCHES for the Solve() method
+        start_point = [np.random.uniform(-60, 60), np.random.uniform(-60, 60)]
+        end_point = [np.random.uniform(-60, 60), np.random.uniform(-60, 60)]
 
-        start_point = [0.45, 0.15]
-        end_point = [0.50, 0.85]
+        # start_point = [-7.2, -50.4]  # Converted from normalized (0.45, 0.15) to inches
+        # end_point = [0.0, 50.4]      # Converted from normalized (0.50, 0.85) to inches
 
 
-        obstacles = [Obstacle(3/6, 2/6, 3.5/INCHES_PER_FIELD, False),
-                     Obstacle(3/6, 4/6, 3.5/INCHES_PER_FIELD, False),
-                     Obstacle(2/6, 3/6, 3.5/INCHES_PER_FIELD, False),
-                     Obstacle(4/6, 3/6, 3.5/INCHES_PER_FIELD, False)]
-        radius = 5.75 / INCHES_PER_FIELD
-        # obstacles.append(Obstacle(.1, .4, radius, True))
-        # obstacles.append(Obstacle(.2, .9, radius, True))
-        # obstacles.append(Obstacle(.4, .7, radius, True))
-        # obstacles.append(Obstacle(.7, .8, radius, True))
-        # obstacles.append(Obstacle(.8, .4, radius, True))   
+        obstacles = [
+            Obstacle(0.0, 0.0, 11.3, False),       # Center Goal Structure
+            Obstacle(-21.0, 48.0, 3.0, False),     # Long Goal Top - Left End
+            Obstacle(0.0, 48.0, 3.0, False),       # Long Goal Top - Center
+            Obstacle(21.0, 48.0, 3.0, False),      # Long Goal Top - Right End
+            Obstacle(-21.0, -48.0, 3.0, False),    # Long Goal Bottom - Left End
+            Obstacle(0.0, -48.0, 3.0, False),      # Long Goal Bottom - Center
+            Obstacle(21.0, -48.0, 3.0, False),     # Long Goal Bottom - Right End
+            Obstacle(58.0, -10.0, 0.0, False),     # Blue Park Zone Bottom Corner
+            Obstacle(58.0, 10.0, 0.0, False),      # Blue Park Zone Top Corner
+            Obstacle(-58.0, -10.0, 0.0, False),    # Red Park Zone Bottom Corner
+            Obstacle(-58.0, 10.0, 0.0, False),     # Red Park Zone Top Corner
+                    ]
 
-        for i in range(5):
-            while True:
-                x = random.uniform(0.1, 0.9)
-                y = random.uniform(0.1, 0.9)
-                center_x, center_y = 0.5, 0.5
-                center_radius = 1/6 + 3.5 / INCHES_PER_FIELD
-
-                # Ensure the obstacle is outside the center circle
-                if (x - center_x)**2 + (y - center_y)**2 > center_radius**2:
-                    # Ensure the obstacle does not touch any other obstacle
-                    if all((x - obs.x)**2 + (y - obs.y)**2 > (radius + obs.radius)**2 for obs in obstacles):
-                        obstacles.append(Obstacle(x, y, radius, True))
-                        break
-
-        sol = planner.Solve(start_point=start_point, end_point=end_point, obstacles=obstacles)
+        positions, velocities, dt = planner.Solve(start_point=start_point, end_point=end_point, obstacles=obstacles, robot=robot)
 
         if planner.status == 'Solve_Succeeded':
             successful_trials += 1
@@ -568,9 +646,9 @@ if __name__ == "__main__":
 
         total_solve_time += planner.solve_time
 
-        planner.print_trajectory_details(sol, None)
-        planner.plotResults(sol)
-        planner.generate_grid_png(obstacles, start_point, end_point)
+        planner.print_trajectory_details(positions, velocities, dt, None)
+        planner.plotResults(positions, velocities, start_point, end_point, obstacles, robot=robot)
+        planner.generate_grid_png(obstacles, start_point, end_point, robot=robot)
 
         input()
 

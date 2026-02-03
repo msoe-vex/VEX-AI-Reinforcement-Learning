@@ -1,0 +1,82 @@
+<VAISC2> A VAIRC Robot is considered Parked at the end of the Match if it meets all of the following 
+criteria:
+a. The Robot is designated as the Team’s 24” Robot for the current Match.
+b. The Robot meets all criteria of rule <SC4>.
+
+<VAISC1> A Team receives a Control Bonus if the outermost Block Scored in one end of a Long Goal
+and the nearest corresponding end of a Center Goal are the same color as the Team.
+a. A Block must be considered Scored in a Goal (see <SC2>) to count toward a Control Bonus.
+b. A Block that is entirely within the space defined by the outer edges of the two white tape lines of a 
+Long Goal does not count toward the Control Bonus (see figure VAISC1-1).
+c. In a Center Goal, the Scored Block that is closest to that end of the Goal will count toward the 
+Control Bonus (see figure VAISC1-2). If only one Block is Scored in a Center Goal, it will count toward 
+both of the Control Bonuses which include that Goal
+
+<VAIRS4> A 24” Robot in a VAIRC Robot Skills Match begins the Match in a Parked position in the blue 
+Park Zone. A 15” Robot in a VAIRC Robot Skills Match begins the Match in a Parked position in the red 
+Park Zone. Robots do not begin the Match with Preloads
+
+<VAIRS7> Scoring VAIRC Robot Skills Matches. For each VAIRC Robot Skills Match, Teams are awarded 
+a score based on the following rules and scoring table:
+a. The Team will receive points for one color of Block per Goal, determined by which color represents 
+the majority of Blocks Scored in that Goal at the end of the Match (e.g., if there are 7 red Blocks and 
+5 blue Blocks in a Long Goal, the Team will only receive points for the red Blocks). If an equal number 
+of red and blue Blocks is Scored in a Goal, none of those Blocks will receive points.
+b. Blocks that are deemed “too close 
+to call” by the referee should be counted as being within the vertical projection.
+c. The Team will receive points for each blue Block that ends the Match in one of the Loaders adjacent 
+to the blue Park Zone, and for each red Block that ends the Match in one of the Loaders adjacent to 
+the red Park Zone (up to six per Loader).
+i. A Loader that ends the Match containing six Blocks that match the color of the adjacent Park 
+Zone will receive additional points.
+d. The Team will earn points for a Parked Robot as follows:
+i. A 24” Robot can only use the red Park Zone, and must meet all criteria of rule <SC4> at the end of 
+the Match.
+ii. A 15” Robot can only use the blue Park Zone, and must meet all criteria of rule <SC4> at the end 
+of the Match.
+e. Control Zones and Control Bonuses are not considered in VAIRC Skills Matches.
+
+
+VEX AI Competition Scoring:
+Each Block Scored 3 Points
+Each Control Bonus 10 Points
+Parked 24” Robot 10 Point
+
+VEX AI Skills Scoring:
+Each Block of the majority color Scored in a Goal 3 Points
+Each Block in a Loader that matches the adjacent Park Zone 3 Points
+Each Loader that is filled with the color of the adjacent Park Zone 5 Points
+Parked Robot 5 Point
+
+
+
+
+<VUG1> Different Robot placement than rule <GG10>. The red Team has the right to place one Robot on 
+the Field first, followed by both blue Robots, and ending with the 2nd red Robot. This applies in Qualification 
+Matches and Elimination Matches. If this right is used, once a Team has placed a Robot on the Field, its 
+position cannot be readjusted prior to the Match
+
+<VURS2> Both Robots must start the Robot Skills Match in legal starting positions for the red Alliance. All 
+other portions of rule <SG1> apply
+
+VEX U Competition Scoring:
+Each Block Scored 3 Points
+Each Controlled Zone in a Long Goal 10 Points
+Controlled Center Goal - Upper 8 Points
+Controlled Center Goal - Lower 6 Points
+1 Parked Alliance Robot 8 Points
+2 Parked Alliance Robots 30 Point
+
+VEX U Skills scoring:
+Each Block Scored in a Goal 1 Point
+Each filled Control Zone in a Long Goal 5 Points
+Each filled Control Zone in a Center Goal 10 Points
+Each Cleared Park Zone 5 Points
+Each Cleared Loader 5 Points
+Parked Robot 15 Point
+
+<SC3> A Control Zone is considered Controlled by an Alliance if a majority of the Blocks Scored in that 
+Control Zone are the same color as the Alliance.
+a. For Long Goals, a Scored Block is considered Scored in the Control Zone if it is entirely contained within 
+that Control Zone.
+b. A Block must be considered Scored in a Goal (see <SC2>) to also be considered Scored in a Control Zone
