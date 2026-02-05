@@ -313,7 +313,9 @@ class ObsIndex:
     - 12-41: Friendly block positions (15 * 2)
     - 42-71: Opponent block positions (15 * 2)
     - 72-75: Goals added by this agent (4 goals)
+    - 72-75: Goals added by this agent (4 goals)
     - 76-79: Loaders cleared by this agent (4 loaders)
+    - 80-87: Received messages (8 dims)
     """
     SELF_POS_X = 0
     SELF_POS_Y = 1
@@ -329,7 +331,8 @@ class ObsIndex:
     OPPONENT_BLOCKS_START = 42
     GOALS_ADDED_START = 72
     LOADERS_CLEARED_START = 76
-    TOTAL = 80
+    RECEIVED_MSG_START = 80
+    TOTAL = 88
 
 
 # =============================================================================
@@ -722,6 +725,12 @@ class PushBackGame(VexGame):
         # 8. Loaders cleared by this agent (4) - 0 or 1 each
         obs_parts.extend([float(min(x, 1)) for x in agent_state["loaders_taken"]])
         
+        # 9. Received messages (8 dims)
+        # Read from agent_state["received_messages"] if present, else zeros
+        msgs = agent_state.get("received_messages", np.zeros(8, dtype=np.float32))
+        if len(msgs) != 8:
+            msgs = np.zeros(8, dtype=np.float32)
+        obs_parts.extend([float(x) for x in msgs])
         
         return np.array(obs_parts, dtype=np.float32)
     
@@ -749,17 +758,21 @@ class PushBackGame(VexGame):
         # Opponent block positions: 15 * 2 = 30 (Indices 42-71)
         # Goals added by this agent: 4 (Indices 72-75)
         # Loaders cleared by this agent: 4 (Indices 76-79)
-        # Total: 3 + 3 + 2 + 1 + 1 + 1 + 1 + 30 + 30 + 4 + 4 = 80
+        # Received messages: 8 (Indices 80-87)
+        # Total: 3 + 3 + 2 + 1 + 1 + 1 + 1 + 30 + 30 + 4 + 4 + 8 = 88
         
         return (ObsIndex.TOTAL,)
     
     def action_space(self, agent: str) -> spaces.Space:
-        """Get action space for an agent."""
-        return spaces.Discrete(self.num_actions)
+        """Get action space for an agent (Tuple: Discrete Action + Message)."""
+        return spaces.Tuple((
+            spaces.Discrete(self.num_actions),
+            spaces.Box(low=-1.0, high=1.0, shape=(8,), dtype=np.float32)
+        ))
 
     @staticmethod
     def get_action_space_shape() -> Tuple[int]:
-        """Get the shape of the action space (discrete)."""
+        """Get the shape of the action space (Not used directly for Tuple, but helpful)."""
         return ()
     
     @staticmethod

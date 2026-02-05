@@ -144,7 +144,30 @@ def run_simulation(model_dir, game_name, output_dir):
             # Use the agent-specific model
             model = models[agent_id]
             with torch.no_grad():
-                action_logits = model(obs_tensor)
+                model_output = model(obs_tensor)
+                
+            # Handle Tuple Action Space (Discrete + Box)
+            # Output is concatenated: [DiscreteLogits(N), MessageMean(8), MessageLogStd(8)]
+            # We assume N=5 (WAIT, need to check env.num_actions)
+            # Better to infer from shape or env?
+            # env.action_space(agent) is Tuple(Discrete(N), Box(8))
+            action_space = env.action_space(agent_id)
+            if isinstance(action_space, spaces.Tuple):
+                num_actions = action_space[0].n
+                # Slice:
+                action_logits = model_output[:, :num_actions]
+                message_params = model_output[:, num_actions:]
+                # Message is Mean part (first 8 of remainder)
+                # Box params = Mean(8) + LogStd(8) = 16
+                message_mean = message_params[:, :8]
+                
+                # We use message_mean directly (deterministic message for inference?)
+                # Or sample? For simplicity, use mean.
+                message_vector = message_mean.cpu().numpy()[0]
+            else:
+                # Normal Discrete
+                action_logits = model_output
+                message_vector = None
             
             # CRITICAL: Use stochastic sampling like RLlib does during training!
             # The model outputs logits, and RLlib uses a Categorical distribution 
@@ -172,8 +195,9 @@ def run_simulation(model_dir, game_name, output_dir):
                 else:
                     action = env.game.fallback_action()
 
-            actions_to_take[agent_id] = action
-            last_actions[agent_id] = action  # Update last action for the agent
+            actions_to_take[agent_id] = (action, message_vector) if message_vector is not None else action
+            last_actions[agent_id] = action  # Update last action for the agent (Control only?)
+            # is_valid_action expects int, so we track int part.
 
         if not actions_to_take and env.agents:
             print(f"Step {step_count}: env.agents is not empty, but no actions were generated. This might indicate all remaining agents are terminating. Ending simulation.")

@@ -18,6 +18,8 @@ from .base_game import VexGame, Robot, RobotSize, Team
 
 from typing import Optional
 
+DELTA_T = 0.1  # Discrete time step in seconds
+
 
 class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
     """
@@ -83,6 +85,14 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self.score = 0
         self.agent_movements: Dict[str, Optional[Tuple[np.ndarray, np.ndarray]]] = {}
         
+        # Busy state for discrete time steps
+        # Maps agent -> {
+        #   "start_pos": np.array, "target_pos": np.array,
+        #   "target_orient": np.array,
+        #   "total_ticks": int, "remaining_ticks": int
+        # }
+        self.busy_state: Dict[str, Dict] = {}
+        
         # Path planner (optional, set up by subclass or game)
         self.path_planner = None
         self._setup_path_planner()
@@ -142,14 +152,22 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
     
     def step(
         self, 
-        actions: Dict[str, int]
+        actions: Dict[str, Any]
     ) -> Tuple[Dict, Dict, Dict, Dict, Dict]:
-        """Execute one environment step."""
-        if not actions:
+        """
+        Execute one environment step (discrete tick).
+        Advances time by DELTA_T. Handles busy states and interpolation.
+        Handles Tuple Actions (Control, Message).
+        """
+        if not actions and not self.agents:
             self.agents = []
             return {}, {}, {"__all__": True}, {"__all__": True}, {}
         
         self.num_moves += 1
+        
+        # DEBUG
+        if self.environment_state is None:
+            print("CRITICAL: self.environment_state is None in step()!")
         
         # Keep all agents in self.agents until all are terminated
         active_agents = list(self.agents)
@@ -175,102 +193,241 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             return observations, rewards, terminations, truncations, infos
         
         rewards = {agent: 0.0 for agent in active_agents}
+        infos = {agent: {} for agent in active_agents}
         
-        # Get current minimum game time for action synchronization (only from non-terminated agents)
-        non_terminated_agents = [a for a in active_agents if a not in terminated_agents]
-        if non_terminated_agents:
-            min_game_time = min(
-                self.environment_state["agents"][agent]["gameTime"]
-                for agent in non_terminated_agents
-            )
-        else:
-            min_game_time = 0
-        
-        total_time = self.game.total_time
-        
+        # 1. Handle Busy Agents (Interpolation)
+        for agent in active_agents:
+            if agent in self.busy_state:
+                busy_info = self.busy_state[agent]
+                busy_info["remaining_ticks"] -= 1
+                
+                agent_state = self.environment_state["agents"][agent]
+                
+                if busy_info["remaining_ticks"] <= 0:
+                    # Action complete - snap to target
+                    agent_state["position"] = busy_info["target_pos"].copy()
+                    agent_state["orientation"] = busy_info["target_orient"].copy()
+                    del self.busy_state[agent]
+                    infos[agent]["action_completed"] = True
+                else:
+                    # Interpolate
+                    total = busy_info["total_ticks"]
+                    rem = busy_info["remaining_ticks"]
+                    # Calculate progress (0.0 to 1.0)
+                    alpha = (total - rem) / total
+                    
+                    start_pos = busy_info["start_pos"]
+                    target_pos = busy_info["target_pos"]
+                    
+                    # Linear Int: P = P0 + (P1 - P0) * alpha
+                    current_pos = start_pos + (target_pos - start_pos) * alpha
+                    agent_state["position"] = current_pos
+                    
+                    # Orientation: Point in direction of movement
+                    diff = target_pos - start_pos
+                    dist = np.linalg.norm(diff)
+                    if dist > 0.1: # Only if moving significantly
+                        heading = np.arctan2(diff[1], diff[0])
+                        agent_state["orientation"] = np.array([heading])
+            
+                if agent in self.busy_state:
+                     infos[agent]["action_skipped"] = True
+
+        # 2. Process Actions for Non-Busy Agents
         for agent, action in actions.items():
             if agent not in active_agents:
                 continue
+            
+            # Skip if terminated or busy
+            if agent in terminated_agents:
+                infos[agent]["action_skipped"] = True
+                continue
+            
+            if agent in self.busy_state:
+                continue # Already handled above
                 
             agent_state = self.environment_state["agents"][agent]
+            infos[agent]["action_skipped"] = False
             
-            # Skip terminated agents
-            if agent in terminated_agents:
-                agent_state["action_skipped"] = True
-                continue
-            
-            # Skip agent if their time is ahead
-            if agent_state["gameTime"] > min_game_time:
-                agent_state["action_skipped"] = True
-                continue
-            
-            agent_state["action_skipped"] = False
-            
-            # Store initial position for path tracking
-            initial_pos = agent_state["position"].copy()
+            # Capture state BEFORE action execution
+            start_pos = agent_state["position"].copy()
+            start_orient = agent_state["orientation"].copy()
             
             # Get scores before action
             initial_scores = self.game.compute_score()
             
-            # Execute action through game
-            action_int = int(action.value if hasattr(action, 'value') else action)
+            # Parsing Action Tuple (Control, Message)
+            action_val = action
+            emitted_msg = None
+            
+            # Check if action is sequence (list/tuple/ndarray with len > 1)
+            # RLlib Tuple action typically comes as tuple or list
+            if isinstance(action, (tuple, list)) and len(action) >= 2:
+                # [Control (int), Message (array)]
+                action_val = action[0]
+                emitted_msg = action[1]
+            elif isinstance(action, np.ndarray) and action.ndim > 0 and action.size > 1:
+                # Potentially flat array? But standard PPO Output for Tuple is complex.
+                # Assuming simple environment interaction script passes tuple.
+                pass
+                
+            # Execute physical action
+            action_int = int(action_val.value if hasattr(action_val, 'value') else action_val)
             duration, penalty = self.game.execute_action(
                 agent, action_int
             )
             
-            agent_state["gameTime"] += duration
+            # Store Emitted Message (if any)
+            if emitted_msg is not None:
+                agent_state["emitted_message"] = np.array(emitted_msg, dtype=np.float32)
+            else:
+                agent_state["emitted_message"] = np.zeros(8, dtype=np.float32)
             
-            # Calculate reward via game (allows variant overrides)
-            new_scores = self.game.compute_score()
-            reward = self.game.compute_reward(agent, initial_scores, new_scores, penalty)
+            # Capture state AFTER action execution (Target)
+            target_pos = agent_state["position"].copy()
+            target_orient = agent_state["orientation"].copy()
             
-            rewards[agent] = reward
+            # Prepare Busy State
+            ticks = int(max(1, duration / DELTA_T)) 
             
-            # Track movement for rendering
-            final_pos = agent_state["position"]
-            if not np.array_equal(initial_pos, final_pos):
-                self.agent_movements[agent] = (initial_pos.copy(), final_pos.copy())
+            if ticks > 0:
+                # Revert visible state to start
+                agent_state["position"] = start_pos
+                agent_state["orientation"] = start_orient
+                
+                self.busy_state[agent] = {
+                    "start_pos": start_pos,
+                    "target_pos": target_pos,
+                    "target_orient": target_orient,
+                    "total_ticks": ticks,
+                    "remaining_ticks": ticks
+                }
+                
+                # Update movement trail
+                if not np.array_equal(start_pos, target_pos):
+                    self.agent_movements[agent] = (start_pos.copy(), target_pos.copy())
             else:
                 self.agent_movements[agent] = None
-        
-        # Update total score (stored as property)
+            
+            # Rewards
+            new_scores = self.game.compute_score()
+            reward = self.game.compute_reward(agent, initial_scores, new_scores, penalty)
+            rewards[agent] = reward
+            
+            # Update accumulated duration
+            agent_state["gameTime"] += duration
+
+        # 3. Message Aggregation (Update Received Messages for NEXT step)
+        self._update_messages(active_agents)
+
+        # Update total score
         self.score = self.game.compute_score()
         
-        # Check terminations AFTER actions to see which agents just terminated
+        # Check terminations
         new_terminations = {
             agent: self.game.is_agent_terminated(agent)
             for agent in active_agents
         }
         
-        # Determine which agents were newly terminated this step
-        newly_terminated = set()
-        for agent in active_agents:
-            if agent not in terminated_agents and new_terminations[agent]:
-                newly_terminated.add(agent)
-        
-        # Only return observations/rewards/infos for non-terminated or newly terminated
-        agents_to_return = [a for a in active_agents if a not in terminated_agents or a in newly_terminated]
-        
-        terminations = {agent: new_terminations[agent] for agent in agents_to_return}
+        # Return for all active agents
+        terminations = {agent: new_terminations[agent] for agent in active_agents}
         terminations["__all__"] = all(new_terminations.values())
-        
-        truncations = {agent: False for agent in agents_to_return}
+        truncations = {agent: False for agent in active_agents}
         truncations["__all__"] = False
         
-        # Return observations only for agents that should receive them
+        # Observations
         observations = {
             agent: self.game.get_observation(agent)
-            for agent in agents_to_return
+            for agent in active_agents
         }
         
-        # Only return rewards/infos for agents receiving observations
-        filtered_rewards = {agent: rewards.get(agent, 0.0) for agent in agents_to_return}
-        infos = {agent: {
-            "action_skipped": self.environment_state["agents"][agent].get("action_skipped", False)
-        } for agent in agents_to_return}
+        # Only return rewards/infos for agents receiving observations?
+        # PettingZoo standard is return all.
         
-        return observations, filtered_rewards, terminations, truncations, infos
+        return observations, rewards, terminations, truncations, infos
+
+    def _update_messages(self, active_agents: List[str]) -> None:
+        """
+        Aggregate messages from neighbors for each agent.
+        Updates agent_state["received_messages"].
+        """
+        COMM_RADIUS = 72.0  # Approx half-field
+        
+        # Pre-fetch positions and messages
+        positions = {}
+        messages = {}
+        
+        # Safety check for None state (fixing test issues just in case)
+        if self.environment_state is None:
+             return
+             
+        for agent in active_agents:
+            st = self.environment_state["agents"][agent]
+            positions[agent] = st["position"]
+            messages[agent] = st.get("emitted_message", np.zeros(8, dtype=np.float32))
+            
+        for agent in active_agents:
+            my_pos = positions[agent]
+            received_sum = np.zeros(8, dtype=np.float32)
+            count = 0
+            
+            for other in active_agents:
+                if agent == other:
+                    continue
+                
+                other_pos = positions[other]
+                dist = np.linalg.norm(my_pos - other_pos)
+                
+                if dist <= COMM_RADIUS:
+                    received_sum += messages[other]
+                    count += 1
+            
+            # Average
+            if count > 0:
+                received_sum /= count
+                
+            self.environment_state["agents"][agent]["received_messages"] = received_sum
+
     
+    def _update_messages(self, active_agents: List[str]) -> None:
+        """
+        Aggregate messages from neighbors for each agent.
+        Updates agent_state["received_messages"].
+        """
+        # Simple Euclidean Proximity Aggregation
+        COMM_RADIUS = 72.0  # Approx half-field
+        
+        # Pre-fetch positions and messages
+        positions = {}
+        messages = {}
+        for agent in active_agents:
+            st = self.environment_state["agents"][agent]
+            positions[agent] = st["position"]
+            messages[agent] = st.get("emitted_message", np.zeros(8, dtype=np.float32))
+            
+        for agent in active_agents:
+            my_pos = positions[agent]
+            received_sum = np.zeros(8, dtype=np.float32)
+            count = 0
+            
+            for other in active_agents:
+                if agent == other:
+                    continue
+                
+                other_pos = positions[other]
+                dist = np.linalg.norm(my_pos - other_pos)
+                
+                if dist <= COMM_RADIUS:
+                    received_sum += messages[other]
+                    count += 1
+            
+            # Average or Sum? "Coordinated thoughts"
+            # Average is safer for magnitude stability
+            if count > 0:
+                received_sum /= count
+                
+            self.environment_state["agents"][agent]["received_messages"] = received_sum
+
     def is_valid_action(
         self, 
         action: int, 

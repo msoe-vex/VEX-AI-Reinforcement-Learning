@@ -8,7 +8,7 @@ from ray.rllib.algorithms.ppo.torch.default_ppo_torch_rl_module import DefaultPP
 from ray.rllib.core.columns import Columns
 from ray.rllib.core.rl_module.rl_module import RLModule
 from ray.rllib.utils.annotations import override
-from gymnasium.spaces import Discrete, Box
+from gymnasium.spaces import Discrete, Box, Tuple
 
 # Import internal constants required for the output dictionary
 from ray.rllib.core.models.base import ENCODER_OUT, CRITIC, ACTOR
@@ -52,10 +52,27 @@ def build_vex_model(obs_dim, action_dim):
         prev_dim = hidden_size
     
     encoder = nn.Sequential(*encoder_layers)
-    policy_head = nn.Linear(prev_dim, action_dim)
+    
+    # ATOC Heads
+    # 1. Intention Head (The Policy)
+    intention_head = nn.Linear(prev_dim, action_dim)
+    
+    # 2. Value Head
     value_head = nn.Linear(prev_dim, 1)
     
-    return encoder, policy_head, value_head
+    # 3. Attention Unit (Should I communicate? / Communication Weight)
+    # Output: 1 scalar (logit)
+    attention_unit = nn.Linear(prev_dim, 1)
+    
+    # 4. Message Encoder (What to say)
+    # Output: 8 dimensions (Mean of the logical message)
+    message_encoder = nn.Linear(prev_dim, 8)
+    
+    # Message LogStd (Learnable parameter)
+    message_log_std = nn.Parameter(torch.zeros(1, 8))
+    
+    return encoder, intention_head, value_head, attention_unit, message_encoder, message_log_std
+
 
 
 # ============================================================================
@@ -78,6 +95,16 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
         elif isinstance(self.action_space, Box):
             action_dim = self.action_space.shape[0]
             is_continuous = True
+        elif isinstance(self.action_space, Tuple):
+            # Assumes structure: (Discrete(Action), Box(Message))
+            # We focus on the first part for the Intention Head (Action Logic)
+            # The message part is handled by the explicit Message Head
+            first_space = self.action_space[0]
+            if isinstance(first_space, Discrete):
+                action_dim = first_space.n
+                is_continuous = False
+            else:
+                 raise ValueError(f"Unsupported first element in Tuple action space: {type(first_space)}")
         else:
             raise ValueError(f"Unsupported action space: {type(self.action_space)}")
         
@@ -85,10 +112,12 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
         policy_output_dim = action_dim * 2 if is_continuous else action_dim
         
         # Build the actual model using our simple function
-        self._encoder_net, self.pi, self.value_head = build_vex_model(
+        self._encoder_net, self.pi, self.value_head, self.attention_unit, self.message_head, self.msg_log_std = build_vex_model(
             obs_dim=obs_dim,
-            action_dim=policy_output_dim
+            action_dim=action_dim if not isinstance(self.action_space, Tuple) else 
+                       (self.action_space[0].n if isinstance(self.action_space[0], Discrete) else 0)
         )
+
         
         # Create RLlib bridge for encoder
         class EncoderBridge(nn.Module):
@@ -109,18 +138,49 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
         output = {}
         encoder_outs = self.encoder(batch)
         features = encoder_outs[ENCODER_OUT] 
-        output[Columns.ACTION_DIST_INPUTS] = self.pi(features)
+        
+        # Heads
+        intention_logits = self.pi(features)
+        
+        # ATOC Outputs
+        attention_logits = self.attention_unit(features)
+        msg_mean = self.message_head(features)
+        
+        # Concat outputs for Tuple Distribution: [DiscreteLogits, BoxMean, BoxLogStd]
+        # DiscreteLogits: (Batch, N)
+        # BoxMean: (Batch, 8)
+        # BoxLogStd: (Batch, 8) - Expand parameter
+        batch_size = features.shape[0]
+        msg_log_std_exp = self.msg_log_std.expand(batch_size, -1)
+        
+        dist_inputs = torch.cat([intention_logits, msg_mean, msg_log_std_exp], dim=1)
+        
+        output[Columns.ACTION_DIST_INPUTS] = dist_inputs
         output[Columns.VF_PREDS] = self.value_head(features).squeeze(-1)
         output[Columns.EMBEDDINGS] = features
+        
+        # Pass extra outputs
+        output["attention_logits"] = attention_logits
+        output["message"] = msg_mean
+        
         return output
+
 
     @override(RLModule)
     def _forward_inference(self, batch, **kwargs):
         output = {}
         encoder_outs = self.encoder(batch)
         features = encoder_outs[ENCODER_OUT]
-        output[Columns.ACTION_DIST_INPUTS] = self.pi(features)
+        
+        intention_logits = self.pi(features)
+        output[Columns.ACTION_DIST_INPUTS] = intention_logits
+        
+        # Also compute messages for the environment to use next step
+        output["attention_logits"] = self.attention_unit(features)
+        output["message"] = self.message_head(features)
+        
         return output
+
 
     @override(RLModule)
     def _forward_exploration(self, batch, **kwargs):
