@@ -77,6 +77,10 @@ if __name__ == "__main__":
     # Suppress excessive experiment checkpoint warnings completely
     os.environ["TUNE_WARN_EXCESSIVE_EXPERIMENT_CHECKPOINT_SYNC_THRESHOLD_S"] = "0"
     
+    # Disable strict metric checking - prevents errors when episodes don't complete in first iteration
+    # This is common in batch jobs (sbatch) where startup is slower than interactive (srun)
+    os.environ["TUNE_DISABLE_STRICT_METRIC_CHECKING"] = "1"
+    
     # Suppress deprecation warnings from RLlib internal code
     os.environ["PYTHONWARNINGS"] = "ignore::DeprecationWarning"
     
