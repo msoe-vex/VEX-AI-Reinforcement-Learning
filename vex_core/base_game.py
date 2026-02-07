@@ -35,7 +35,9 @@ class Robot:
     max_speed: Optional[float] = 85.0
     max_acceleration: Optional[float] = 85.0
     buffer: Optional[float] = 1.0
-    camera_rotation: Optional[float] = np.pi / 2  # Radians, None = auto based on team
+    # Camera rotation is interpreted as an offset (radians) relative to the robot body orientation.
+    # Positive values rotate the camera counter-clockwise relative to the robot heading.
+    camera_rotation: Optional[float] = np.pi / 2  
     
     def __post_init__(self):
         # Default dimensions based on size
@@ -46,14 +48,9 @@ class Robot:
         # Default orientation: face toward center (red=0, blue=π)
         if self.start_orientation is None:
             self.start_orientation = np.float32(0.0) if self.team == Team.RED else np.float32(np.pi)
-        # Default camera rotation: same as start_orientation unless explicitly set
-        if self.camera_rotation is None:
-            # store as a scalar float (radians)
-            self.camera_rotation = float(self.start_orientation)
-        # Camera offset relative to robot body orientation (radians).
-        # This is kept so the camera can remain at a fixed angle relative to the robot.
+        # Camera rotation is stored as an offset from the robot body orientation.
         try:
-            self.camera_rotation_offset = float(self.camera_rotation) - float(self.start_orientation)
+            self.camera_rotation_offset = float(self.camera_rotation)
         except Exception:
             self.camera_rotation_offset = 0.0
 
