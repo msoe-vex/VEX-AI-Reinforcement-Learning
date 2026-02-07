@@ -181,31 +181,10 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         # Keep all agents in self.agents until all are terminated
         active_agents = list(self.agents)
         
-        # Check which agents are terminated
-        terminated_agents = set()
-        for agent in active_agents:
-             current_time = self.env_agent_states[agent]["time"] if agent in self.env_agent_states else 0.0
-             if self.game.is_agent_terminated(agent, game_time=current_time):
-                 terminated_agents.add(agent)
-        
-        # If all agents are terminated, end the episode
-        if len(terminated_agents) == len(active_agents):
-            terminations = {agent: True for agent in active_agents}
-            terminations["__all__"] = True
-            truncations = {agent: False for agent in active_agents}
-            truncations["__all__"] = False
-            observations = {
-                agent: self.game.get_observation(
-                    agent, 
-                    game_time=self.env_agent_states[agent]["time"] if agent in self.env_agent_states else 0.0
-                )
-                for agent in active_agents
-            }
-            rewards = {agent: 0.0 for agent in active_agents}
-            infos = {agent: {} for agent in active_agents}
-            return observations, rewards, terminations, truncations, infos
         
         rewards = {agent: 0.0 for agent in active_agents}
+        terminations = {agent: False for agent in active_agents}
+        truncations = {agent: False for agent in active_agents}
         infos = {agent: {} for agent in active_agents}
         
         # 1. Handle Busy Agents (Interpolation)
@@ -252,7 +231,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 continue
             
             # Skip if terminated or busy
-            if agent in terminated_agents:
+            if terminations[agent]:
                 infos[agent]["action_skipped"] = True
                 continue
             
@@ -338,14 +317,22 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self.score = self.game.compute_score()
         
         # Check terminations
-        new_terminations = {}
+        # Check terminations
+        terminations = {}
+        agents_to_remove = set()
         for agent in active_agents:
              current_time = self.env_agent_states[agent]["time"] if agent in self.env_agent_states else 0.0
-             new_terminations[agent] = self.game.is_agent_terminated(agent, game_time=current_time)
+             term = self.game.is_agent_terminated(agent, game_time=current_time)
+             terminations[agent] = term
+             if term:
+                 agents_to_remove.add(agent)
+                 
+        # Remove from self.agents
+        for agent in agents_to_remove:
+            if agent in self.agents:
+                self.agents.remove(agent)
         
-        # Return for all active agents
-        terminations = {agent: new_terminations[agent] for agent in active_agents}
-        terminations["__all__"] = all(new_terminations.values())
+        terminations["__all__"] = len(self.agents) == 0
         truncations = {agent: False for agent in active_agents}
         truncations["__all__"] = False
         

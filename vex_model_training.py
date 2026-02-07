@@ -88,7 +88,7 @@ if __name__ == "__main__":
     parser.add_argument('--learning-rate', type=float, default=0.0005, help='Learning rate')  # Default: 0.0005
     parser.add_argument('--discount-factor', type=float, default=0.99, help='Discount factor')  # Default: 0.99
     parser.add_argument('--entropy', type=float, default=0.05, help='Entropy coefficient')  # Default: 0.05
-    parser.add_argument('--num-iters', type=int, default=1, help='Number of training iterations')  # Default: 10
+    parser.add_argument('--num-iters', type=int, default=1, help='Number of training iterations')  # Default: 1
     parser.add_argument('--cpus-per-task', type=int, default=1, help='Number of CPUs per task')  # Default: 1
     parser.add_argument('--job-id', type=str, default="", help='SLURM job ID')  # Job ID for logging
     parser.add_argument('--model-path', type=str, default="", help='Path to save/load the model')

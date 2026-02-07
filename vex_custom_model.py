@@ -173,11 +173,22 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
         features = encoder_outs[ENCODER_OUT]
         
         intention_logits = self.pi(features)
-        output[Columns.ACTION_DIST_INPUTS] = intention_logits
+        
+        # ATOC Outputs
+        attention_logits = self.attention_unit(features)
+        msg_mean = self.message_head(features)
+        
+        # Concat outputs for Tuple Distribution: [DiscreteLogits, BoxMean, BoxLogStd]
+        batch_size = features.shape[0]
+        msg_log_std_exp = self.msg_log_std.expand(batch_size, -1)
+        
+        dist_inputs = torch.cat([intention_logits, msg_mean, msg_log_std_exp], dim=1)
+        
+        output[Columns.ACTION_DIST_INPUTS] = dist_inputs
         
         # Also compute messages for the environment to use next step
-        output["attention_logits"] = self.attention_unit(features)
-        output["message"] = self.message_head(features)
+        output["attention_logits"] = attention_logits
+        output["message"] = msg_mean
         
         return output
 
