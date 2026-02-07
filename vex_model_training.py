@@ -77,10 +77,6 @@ if __name__ == "__main__":
     # Suppress excessive experiment checkpoint warnings completely
     os.environ["TUNE_WARN_EXCESSIVE_EXPERIMENT_CHECKPOINT_SYNC_THRESHOLD_S"] = "0"
     
-    # Disable strict metric checking - prevents errors when episodes don't complete in first iteration
-    # This is common in batch jobs (sbatch) where startup is slower than interactive (srun)
-    os.environ["TUNE_DISABLE_STRICT_METRIC_CHECKING"] = "1"
-    
     # Suppress deprecation warnings from RLlib internal code
     os.environ["PYTHONWARNINGS"] = "ignore::DeprecationWarning"
     
@@ -163,6 +159,8 @@ if __name__ == "__main__":
         )
         .env_runners(
             num_env_runners=args.cpus_per_task-1,  # Use 1 runner for each CPU core plus 1 for the main process
+            batch_mode="complete_episodes",  # Collect complete episodes, not fragments
+            rollout_fragment_length="auto",  # Let RLlib calculate the optimal fragment length
         )
         .multi_agent(
             policies=set(all_policies),  # Define policy IDs
@@ -184,6 +182,7 @@ if __name__ == "__main__":
             lr=args.learning_rate,
             gamma=args.discount_factor,
             entropy_coeff=args.entropy,
+            train_batch_size_per_learner=2400,  # 4x episode length (~600) to ensure episodes complete
         )
         .callbacks(VexScoreCallback)  # Track team scores
         .debugging(log_level="ERROR")  # Reduce logging verbosity
