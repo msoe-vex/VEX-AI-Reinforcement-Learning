@@ -601,7 +601,7 @@ class PushBackGame(VexGame):
                 "robot_size": robot.size.value,
                 "held_blocks": 0,
                 "parked": False,
-                "gameTime": 0.0,
+                # "gameTime": REMOVED - Managed by Enviroment
                 "active": True,
                 "agent_name": robot.name,
                 # Per-agent tracking for observation
@@ -626,7 +626,7 @@ class PushBackGame(VexGame):
         }
         return self.state
     
-    def get_observation(self, agent: str) -> np.ndarray:
+    def get_observation(self, agent: str, game_time: float = 0.0) -> np.ndarray:
         """Build observation vector for an agent.
         
         The agent knows the color of blocks it holds (from loaders and field).
@@ -674,7 +674,7 @@ class PushBackGame(VexGame):
         obs_parts.append(1.0 if agent_state["parked"] else 0.0)
         
         # 5. Time remaining (1)
-        obs_parts.append(float(self.total_time - agent_state["gameTime"]))
+        obs_parts.append(float(self.total_time - game_time))
         
         # 6. Count and Position of blocks on field by color (friendly/opponent)
         MAX_TRACKED = 15
@@ -1185,8 +1185,8 @@ class PushBackGame(VexGame):
 
         # Uncomment to enforce parking time penalty
         # # If parking before 10 seconds left, apply penalty
-        # if agent_state["gameTime"] < self.total_time - 10.0:
-        #     penalty += 1000
+        # # Requires game_time passed in or separate check
+        # # For now, ignoring time penalty in parking logic within game.
 
         # Only one robot can park per team
         for other_agent, other_state in self.state["agents"].items():
@@ -1237,7 +1237,7 @@ class PushBackGame(VexGame):
             return "blue"
         return "red"
     
-    def is_agent_terminated(self, agent: str) -> bool:
+    def is_agent_terminated(self, agent: str, game_time: float = 0.0) -> bool:
         """
         Check if an agent has terminated.
         
@@ -1248,7 +1248,7 @@ class PushBackGame(VexGame):
         agent_state = self.state["agents"][agent]
         
         # Time limit exceeded
-        if agent_state["gameTime"] >= self.total_time:
+        if game_time >= self.total_time:
             return True
         
         # Uncomment to enable parking termination
@@ -1313,7 +1313,8 @@ class PushBackGame(VexGame):
         agents: List[str] = None,
         actions: Optional[Dict] = None,
         rewards: Optional[Dict] = None,
-        num_moves: int = 0
+        num_moves: int = 0,
+        agent_times: Optional[Dict[str, float]] = None
     ) -> None:
         """
         Render Push Back specific info panel with held blocks by color.
@@ -1362,8 +1363,14 @@ class PushBackGame(VexGame):
             info_y -= 0.05
             ax_info.text(0.1, info_y, f"{action_text}{reward_text}", fontsize=8, va='top')
             info_y -= 0.03
+            
+            # Show time
+            current_time = 0.0
+            if agent_times and agent in agent_times:
+                current_time = agent_times[agent]
+            
             ax_info.text(0.1, info_y, 
-                        f"Time: {st['gameTime']:.1f}s / {self.total_time:.0f}s",
+                        f"Time: {current_time:.1f}s / {self.total_time:.0f}s",
                         fontsize=7, va='top', color='gray')
             info_y -= 0.03
             # Show held blocks by color

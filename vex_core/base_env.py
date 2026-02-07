@@ -93,6 +93,9 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         # }
         self.busy_state: Dict[str, Dict] = {}
         
+        # Environment-managed agent states (Time, etc.)
+        self.env_agent_states: Dict[str, Dict] = {}
+        
         # Path planner (optional, set up by subclass or game)
         self.path_planner = None
         self._setup_path_planner()
@@ -101,6 +104,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         """Set up path planner if available."""
         try:
             from path_planner import PathPlanner
+            
             field_size = self.game.field_size_inches
             
             self.path_planner = PathPlanner(
@@ -142,8 +146,13 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         # Compute initial score
         self.score = self.game.compute_score()
         
+        # Initialize env state
+        self.env_agent_states = {
+            agent: {"time": 0.0} for agent in self.agents
+        }
+        
         observations = {
-            agent: self.game.get_observation(agent)
+            agent: self.game.get_observation(agent, game_time=0.0)
             for agent in self.agents
         }
         infos = {agent: {} for agent in self.agents}
@@ -173,10 +182,11 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         active_agents = list(self.agents)
         
         # Check which agents are terminated
-        terminated_agents = {
-            agent for agent in active_agents
-            if self.game.is_agent_terminated(agent)
-        }
+        terminated_agents = set()
+        for agent in active_agents:
+             current_time = self.env_agent_states[agent]["time"] if agent in self.env_agent_states else 0.0
+             if self.game.is_agent_terminated(agent, game_time=current_time):
+                 terminated_agents.add(agent)
         
         # If all agents are terminated, end the episode
         if len(terminated_agents) == len(active_agents):
@@ -185,7 +195,10 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             truncations = {agent: False for agent in active_agents}
             truncations["__all__"] = False
             observations = {
-                agent: self.game.get_observation(agent)
+                agent: self.game.get_observation(
+                    agent, 
+                    game_time=self.env_agent_states[agent]["time"] if agent in self.env_agent_states else 0.0
+                )
                 for agent in active_agents
             }
             rewards = {agent: 0.0 for agent in active_agents}
@@ -302,7 +315,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                     "total_ticks": ticks,
                     "remaining_ticks": ticks
                 }
-                
+
                 # Update movement trail
                 if not np.array_equal(start_pos, target_pos):
                     self.agent_movements[agent] = (start_pos.copy(), target_pos.copy())
@@ -314,8 +327,9 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             reward = self.game.compute_reward(agent, initial_scores, new_scores, penalty)
             rewards[agent] = reward
             
-            # Update accumulated duration
-            agent_state["gameTime"] += duration
+            # Update accumulated duration in ENV STATE
+            if agent in self.env_agent_states:
+                self.env_agent_states[agent]["time"] += duration
 
         # 3. Message Aggregation (Update Received Messages for NEXT step)
         self._update_messages(active_agents)
@@ -324,10 +338,10 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self.score = self.game.compute_score()
         
         # Check terminations
-        new_terminations = {
-            agent: self.game.is_agent_terminated(agent)
-            for agent in active_agents
-        }
+        new_terminations = {}
+        for agent in active_agents:
+             current_time = self.env_agent_states[agent]["time"] if agent in self.env_agent_states else 0.0
+             new_terminations[agent] = self.game.is_agent_terminated(agent, game_time=current_time)
         
         # Return for all active agents
         terminations = {agent: new_terminations[agent] for agent in active_agents}
@@ -337,7 +351,10 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         
         # Observations
         observations = {
-            agent: self.game.get_observation(agent)
+            agent: self.game.get_observation(
+                agent,
+                game_time=self.env_agent_states[agent]["time"] if agent in self.env_agent_states else 0.0
+            )
             for agent in active_agents
         }
         
@@ -389,44 +406,6 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             self.environment_state["agents"][agent]["received_messages"] = received_sum
 
     
-    def _update_messages(self, active_agents: List[str]) -> None:
-        """
-        Aggregate messages from neighbors for each agent.
-        Updates agent_state["received_messages"].
-        """
-        # Simple Euclidean Proximity Aggregation
-        COMM_RADIUS = 72.0  # Approx half-field
-        
-        # Pre-fetch positions and messages
-        positions = {}
-        messages = {}
-        for agent in active_agents:
-            st = self.environment_state["agents"][agent]
-            positions[agent] = st["position"]
-            messages[agent] = st.get("emitted_message", np.zeros(8, dtype=np.float32))
-            
-        for agent in active_agents:
-            my_pos = positions[agent]
-            received_sum = np.zeros(8, dtype=np.float32)
-            count = 0
-            
-            for other in active_agents:
-                if agent == other:
-                    continue
-                
-                other_pos = positions[other]
-                dist = np.linalg.norm(my_pos - other_pos)
-                
-                if dist <= COMM_RADIUS:
-                    received_sum += messages[other]
-                    count += 1
-            
-            # Average or Sum? "Coordinated thoughts"
-            # Average is safer for magnitude stability
-            if count > 0:
-                received_sum /= count
-                
-            self.environment_state["agents"][agent]["received_messages"] = received_sum
 
     def is_valid_action(
         self, 
@@ -585,13 +564,20 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                    color='white', fontweight='bold', zorder=11,
                    bbox=dict(boxstyle='circle,pad=0.2', facecolor='black', alpha=0.8))
         
-        # Delegate info panel rendering to game (allows game-specific customization)
+        # Prepare agent times map
+        agent_times = {
+            agent: self.env_agent_states[agent]["time"] if agent in self.env_agent_states else 0.0
+            for agent in self.agents
+        }
+
+        # Delegate info panel rendering to game
         self.game.render_info_panel(
             ax_info=ax_info,
             agents=self.agents,
             actions=actions,
             rewards=rewards,
-            num_moves=self.num_moves
+            num_moves=self.num_moves,
+            agent_times=agent_times
         )
     
     def close(self) -> None:

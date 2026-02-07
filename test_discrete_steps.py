@@ -31,7 +31,7 @@ class MockGame(VexGame):
                 "agent_0": {
                     "position": np.array([0.0, 0.0]),
                     "orientation": np.array([0.0]),
-                    "gameTime": 0.0,
+                    # "gameTime": 0.0, # Removed
                     "action_skipped": False
                 }
             }
@@ -65,7 +65,7 @@ class MockGame(VexGame):
     def render_game_elements(self, ax):
         pass
         
-    def render_info_panel(self, ax_info, agents, actions, rewards, num_moves):
+    def render_info_panel(self, ax_info, agents, actions, rewards, num_moves, agent_times=None):
         pass
         
     def update_tracker(self, tracker):
@@ -96,10 +96,10 @@ class MockGame(VexGame):
     def compute_reward(self, agent, initial_scores, new_scores, penalty):
         return 0.0
         
-    def is_agent_terminated(self, agent):
+    def is_agent_terminated(self, agent, game_time=0.0):
         return False
         
-    def get_observation(self, agent):
+    def get_observation(self, agent, game_time=0.0):
         return np.zeros(10)
     
     def observation_space(self, agent):

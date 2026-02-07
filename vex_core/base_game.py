@@ -143,15 +143,30 @@ class VexGame(ABC):
         pass
     
     @abstractmethod
-    def get_observation(self, agent: str) -> np.ndarray:
+    def get_observation(self, agent: str, game_time: float = 0.0) -> np.ndarray:
         """
         Build the observation vector for an agent.
         
         Args:
             agent: Agent name
+            game_time: Current game time for the agent
             
         Returns:
             Observation array for the agent
+        """
+        pass
+
+    @abstractmethod
+    def is_agent_terminated(self, agent: str, game_time: float = 0.0) -> bool:
+        """
+        Check if an agent has terminated (game-specific logic).
+        
+        Args:
+            agent: Agent name
+            game_time: Current game time for the agent
+            
+        Returns:
+            True if the agent is terminated and should stop acting
         """
         pass
     
@@ -279,12 +294,13 @@ class VexGame(ABC):
         pass
 
     @abstractmethod
-    def is_agent_terminated(self, agent: str) -> bool:
+    def is_agent_terminated(self, agent: str, game_time: float = 0.0) -> bool:
         """
         Check if an agent has terminated (game-specific logic).
         
         Args:
             agent: Agent name
+            game_time: Current game time for the agent
             
         Returns:
             True if the agent is terminated and should stop acting
@@ -335,7 +351,8 @@ class VexGame(ABC):
         agents: List[str] = None,
         actions: Optional[Dict] = None,
         rewards: Optional[Dict] = None,
-        num_moves: int = 0
+        num_moves: int = 0,
+        agent_times: Optional[Dict[str, float]] = None
     ) -> None:
         """
         Render game-specific info panel.
@@ -346,6 +363,7 @@ class VexGame(ABC):
             actions: Dict of actions taken (or None)
             rewards: Dict of rewards received (or None)
             num_moves: Current step number
+            agent_times: Dict mapping agent names to current game time
         """
         pass
     
