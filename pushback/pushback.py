@@ -847,6 +847,10 @@ class PushBackGame(VexGame):
         # Update held block positions (game-specific)
         self._update_held_blocks()
         
+        # Check for robot collision after action execution
+        if self.check_robot_collision(agent):
+            penalty += self.get_collision_penalty()
+        
         # Update tracker (for training, this keeps tracker in sync with simulation)
         self.update_tracker(agent, action)
         

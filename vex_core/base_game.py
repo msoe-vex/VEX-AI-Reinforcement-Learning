@@ -420,3 +420,70 @@ class VexGame(ABC):
         (e.g., goal managers).
         """
         pass
+    
+    def check_robot_collision(self, agent: str) -> bool:
+        """
+        Check if an agent has collided with another robot.
+        
+        Override this to implement custom collision detection logic.
+        
+        Args:
+            agent: Agent name to check for collisions
+            
+        Returns:
+            True if agent is colliding with another robot, False otherwise
+        """
+        if not self.state or "agents" not in self.state:
+            return False
+        
+        agent_state = self.state["agents"].get(agent)
+        if not agent_state:
+            return False
+        
+        agent_pos = agent_state.get("position")
+        if agent_pos is None:
+            return False
+        
+        agent_robot = self.get_robot_for_agent(agent)
+        if not agent_robot:
+            return False
+        
+        # Use robot size as collision radius
+        agent_size = agent_robot.size.value / 2.0  # Convert to radius
+        
+        # Check against all other agents
+        for other_agent, other_state in self.state["agents"].items():
+            if other_agent == agent:
+                continue
+            
+            other_pos = other_state.get("position")
+            if other_pos is None:
+                continue
+            
+            other_robot = self.get_robot_for_agent(other_agent)
+            if not other_robot:
+                continue
+            
+            other_size = other_robot.size.value / 2.0  # Convert to radius
+            
+            # Calculate distance between robots
+            distance = np.linalg.norm(agent_pos - other_pos)
+            
+            # Collision if distance is less than sum of radii
+            min_distance = agent_size + other_size
+            
+            if distance < min_distance:
+                return True
+        
+        return False
+    
+    def get_collision_penalty(self) -> float:
+        """
+        Get the collision penalty value.
+        
+        Override this to customize the penalty for collisions.
+        
+        Returns:
+            Penalty value (default: 5.0)
+        """
+        return 100.0
