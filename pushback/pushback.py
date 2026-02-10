@@ -597,6 +597,8 @@ class PushBackGame(VexGame):
             agents_dict[robot.name] = {
                 "position": robot.start_position.copy().astype(np.float32),
                 "orientation": np.array([robot.start_orientation], dtype=np.float32),
+                # camera_rotation_offset is a scalar (radians) relative to robot body orientation
+                "camera_rotation_offset": float(getattr(robot, "camera_rotation_offset", 0.0)),
                 "team": robot.team.value,
                 "robot_size": robot.size.value,
                 "held_blocks": 0,
@@ -946,7 +948,9 @@ class PushBackGame(VexGame):
         min_dist = float('inf')
         
         robot_pos = agent_state["position"]
-        robot_theta = agent_state["orientation"][0]
+        # Camera angle is robot body orientation plus the stored offset
+        camera_offset = float(agent_state.get("camera_rotation_offset", 0.0))
+        camera_theta = float(agent_state["orientation"][0]) + camera_offset
         robot_team = agent_state["team"]
         
         # Determine which team's blocks to pick up (actual game logic)
@@ -964,7 +968,7 @@ class PushBackGame(VexGame):
                 
                 if dist > 0:
                     angle_to_block = np.arctan2(direction[1], direction[0])
-                    angle_diff = angle_to_block - robot_theta
+                    angle_diff = angle_to_block - camera_theta
                     while angle_diff > np.pi:
                         angle_diff -= 2 * np.pi
                     while angle_diff < -np.pi:
@@ -1550,7 +1554,8 @@ class PushBackGame(VexGame):
         # Robot FOV wedges
         for agent_name, agent_state in self.state["agents"].items():
             x, y = agent_state["position"]
-            theta = agent_state["orientation"][0]
+            camera_offset = float(agent_state.get("camera_rotation_offset", 0.0))
+            theta = float(agent_state["orientation"][0]) + camera_offset
             
             fov_radius = 72
             fov_start_angle = np.degrees(theta - FOV/2)
