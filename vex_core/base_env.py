@@ -201,6 +201,12 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                     agent_state["orientation"] = busy_info["target_orient"].copy()
                     del self.busy_state[agent]
                     infos[agent]["action_completed"] = True
+                    # Apply any pending events scheduled for this agent's action
+                    if hasattr(self.game, "apply_pending_events"):
+                        try:
+                            self.game.apply_pending_events(agent)
+                        except Exception:
+                            pass
                 else:
                     # Interpolate
                     total = busy_info["total_ticks"]
