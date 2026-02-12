@@ -219,6 +219,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                     
                     # Linear Int: P = P0 + (P1 - P0) * alpha
                     current_pos = start_pos + (target_pos - start_pos) * alpha
+                    self.game._update_held_blocks(agent, current_pos + 5)
                     agent_state["position"] = current_pos
                     
                     # Orientation: Point in direction of movement

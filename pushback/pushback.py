@@ -846,7 +846,6 @@ class PushBackGame(VexGame):
             penalty = DEFAULT_PENALTY # Small penalty for idle
         
         # Update held block positions (game-specific)
-        self._update_held_blocks()
         
         # Check for robot collision after action execution
         if self.check_robot_collision(agent):
@@ -1287,17 +1286,12 @@ class PushBackGame(VexGame):
                 return False
         
         return True
-    
-    def _update_held_blocks(self) -> None:
-        """Update held block positions internally."""
-        for agent_name, agent_state in self.state["agents"].items():
-            if agent_state["held_blocks"] > 0:
-                for block in self.state["blocks"]:
-                    if block["status"] == BlockStatus.HELD and block.get("held_by") == agent_name:
-                        block["position"] = agent_state["position"].copy()
-    
 
-    
+    def _update_held_blocks(self, agent_name: str, position: np.ndarray):
+        for block in self.state["blocks"]:
+            if block["status"] == BlockStatus.HELD and block.get("held_by") == agent_name:
+                block["position"] = position.copy()
+            
     def apply_pending_events(self, agent: str) -> None:
         """Apply any pending events that were scheduled for `agent`.
 
@@ -1400,7 +1394,7 @@ class PushBackGame(VexGame):
             # Unknown event types are ignored
         # Persist remaining events
         self.state["pending_events"] = remaining
-        
+
     def get_permanent_obstacles(self) -> List[Obstacle]:
         """Get permanent obstacles."""
         return PERMANENT_OBSTACLES
