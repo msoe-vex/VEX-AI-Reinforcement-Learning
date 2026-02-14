@@ -1131,25 +1131,19 @@ class PushBackGame(VexGame):
         speed = self.get_robot_speed(agent_state["agent_name"])
         duration = DEFAULT_DURATION + (dist / speed)
         
-                # Find which block indices are in this loader now (to be collected)
-        block_indices = [i for i, b in enumerate(self.state["blocks"]) if b["status"] == BlockStatus.IN_LOADER_TL + loader_idx]
-        blocks_collected = len(block_indices)
-        
         # Schedule pending event to apply when action completes
         pending = self.state.setdefault("pending_events", [])
         pending.append({
             "type": "clear_loader",
             "agent": agent_state["agent_name"],
             "loader_idx": loader_idx,
-            "block_indices": block_indices,
-            "collected_count": blocks_collected,
         })
         self.state["pending_events"] = pending
         
         # Agent assumes it got all 6 blocks (doesn't know colors) visually handled by tracker
         
         # Time to collect all blocks
-        duration += DEFAULT_DURATION * blocks_collected
+        duration += DEFAULT_DURATION
         
         return duration, 0.0
     
@@ -1306,7 +1300,7 @@ class PushBackGame(VexGame):
                 continue
             if ev.get("type") == "clear_loader":
                 loader_idx = ev.get("loader_idx")
-                block_indices = ev.get("block_indices", [])
+                block_indices = [i for i, b in enumerate(self.state["blocks"]) if b["status"] == BlockStatus.IN_LOADER_TL + loader_idx]
 
                 # Update actual loader count
                 if "loaders" in self.state and 0 <= loader_idx < len(self.state["loaders"]):
@@ -1320,7 +1314,7 @@ class PushBackGame(VexGame):
                     agent_state["held_blocks"] += collected_count
                     if agent_state["held_blocks"] > MAX_HELD_BLOCKS:
                         agent_state["held_blocks"] = MAX_HELD_BLOCKS
-
+        
                     # Update block entries to HELD
                     for idx in block_indices:
                         if 0 <= idx < len(self.state["blocks"]):
