@@ -3,6 +3,7 @@ import argparse
 import os
 import numpy as np
 import glob
+from gymnasium import spaces
 
 # Import from new modular architecture
 from vex_core.base_env import VexMultiAgentEnv
