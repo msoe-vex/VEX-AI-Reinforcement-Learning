@@ -276,12 +276,22 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 agent, action_int
             )
             
-            # Store Emitted Message (if any)
+            # Store Emitted Message (if any) - validate length and dtype
             if emitted_msg is not None:
-                agent_state["emitted_message"] = np.array(emitted_msg, dtype=np.float32)
+                arr = np.array(emitted_msg, dtype=np.float32).ravel()
+                # Pad or truncate to length 8 to avoid downstream broadcasting errors
+                if arr.size != 8:
+                    if arr.size < 8:
+                        padded = np.zeros(8, dtype=np.float32)
+                        if arr.size > 0:
+                            padded[: arr.size] = arr
+                        arr = padded
+                    else:
+                        arr = arr[:8].astype(np.float32)
+                agent_state["emitted_message"] = arr
             else:
                 agent_state["emitted_message"] = np.zeros(8, dtype=np.float32)
-            
+
             # Capture state AFTER action execution (Target)
             target_pos = agent_state["position"].copy()
             target_orient = agent_state["orientation"].copy()
@@ -375,8 +385,22 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         for agent in active_agents:
             st = self.environment_state["agents"][agent]
             positions[agent] = st["position"]
-            messages[agent] = st.get("emitted_message", np.zeros(8, dtype=np.float32))
-            
+            # Normalize emitted_message to an 8-dim float32 vector (robustness against malformed state)
+            m = st.get("emitted_message", None)
+            if m is None:
+                messages[agent] = np.zeros(8, dtype=np.float32)
+            else:
+                m_arr = np.array(m, dtype=np.float32).ravel()
+                if m_arr.size != 8:
+                    if m_arr.size < 8:
+                        padded = np.zeros(8, dtype=np.float32)
+                        if m_arr.size > 0:
+                            padded[: m_arr.size] = m_arr
+                        m_arr = padded
+                    else:
+                        m_arr = m_arr[:8]
+                messages[agent] = m_arr
+
         for agent in active_agents:
             my_pos = positions[agent]
             received_sum = np.zeros(8, dtype=np.float32)

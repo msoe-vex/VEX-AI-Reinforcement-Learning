@@ -23,12 +23,31 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
 
     register_env("VEX_Multi_Agent_Env", env_creator)
 
+    # Normalize the checkpoint URI to an absolute path (Ray may expect a file:// or absolute path)
     print(f"Loading checkpoint: {checkpoint_path}")
+    if not os.path.isabs(checkpoint_path):
+        checkpoint_path = os.path.abspath(checkpoint_path)
+        print(f"Resolved checkpoint to absolute path: {checkpoint_path}")
+
+    if not os.path.exists(checkpoint_path):
+        print(f"Checkpoint path does not exist: {checkpoint_path}")
+        return
+
     try:
         algo = Algorithm.from_checkpoint(checkpoint_path)
     except Exception as e:
-        print(f"Error restoring algorithm: {e}")
-        return
+        # Provide clearer guidance for common URI errors
+        err_msg = str(e)
+        print(f"Error restoring algorithm: {err_msg}")
+        if "URI has empty scheme" in err_msg:
+            print("Retrying with file:// scheme...")
+            try:
+                algo = Algorithm.from_checkpoint(f"file://{checkpoint_path}")
+            except Exception as e2:
+                print(f"Retry failed: {e2}")
+                return
+        else:
+            return
 
     for policy_id in algo.config.policies:
         print(f"--- Exporting Policy: {policy_id} ---")
@@ -38,7 +57,32 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
         
         if hasattr(rl_module, 'clean_encoder'):
             clean_encoder = rl_module.clean_encoder
-            clean_head = rl_module.pi
+            # Export head: include message head + log-std when available so
+            # the exported TorchScript matches RLModule ACTION_DIST_INPUTS.
+            pi_head = rl_module.pi
+            message_head = getattr(rl_module, "message_head", None)
+            msg_log_std = getattr(rl_module, "msg_log_std", None)
+
+            class CombinedHead(nn.Module):
+                """Wrapper that returns concatenated [logits, msg_mean, msg_log_std]
+                when the ATOC message head exists; otherwise returns logits only.
+                """
+                def __init__(self, pi, msg_head=None, msg_log_std=None):
+                    super().__init__()
+                    self.pi = pi
+                    self.msg_head = msg_head
+                    self.msg_log_std = msg_log_std
+
+                def forward(self, feats):
+                    logits = self.pi(feats)
+                    if (self.msg_head is None) or (self.msg_log_std is None):
+                        return logits
+                    batch_size = feats.shape[0]
+                    msg_mean = self.msg_head(feats)
+                    msg_log_std_exp = self.msg_log_std.expand(batch_size, -1)
+                    return torch.cat([logits, msg_mean, msg_log_std_exp], dim=1)
+
+            clean_head = CombinedHead(pi_head, message_head, msg_log_std)
             
             # CRITICAL: Convert any numpy types to Python native types
             # This is necessary for torch.jit.script compatibility

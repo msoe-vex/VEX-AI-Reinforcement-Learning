@@ -155,15 +155,25 @@ def run_simulation(model_dir, game_name, output_dir):
             action_space = env.action_space(agent_id)
             if isinstance(action_space, spaces.Tuple):
                 num_actions = action_space[0].n
-                # Slice:
+                # Slice logits and message-related params
                 action_logits = model_output[:, :num_actions]
                 message_params = model_output[:, num_actions:]
-                # Message is Mean part (first 8 of remainder)
-                # Box params = Mean(8) + LogStd(8) = 16
-                message_mean = message_params[:, :8]
-                
-                # We use message_mean directly (deterministic message for inference?)
-                # Or sample? For simplicity, use mean.
+
+                # If the exported model omitted the message head the remainder
+                # will be empty (shape[1] == 0). Fall back to zeros and warn.
+                if message_params.numel() == 0:
+                    print(f"Warning: model for {agent_id} returned no message params (output shape={model_output.shape}). Using zero message vector.")
+                    message_mean = torch.zeros(1, 8, device=model_output.device)
+                else:
+                    # Ensure we have at least 8 dims for the mean; pad/truncate if needed
+                    if message_params.shape[1] < 8:
+                        mm = torch.zeros(1, 8, device=model_output.device)
+                        mm[:, : message_params.shape[1]] = message_params[:, :8]
+                        message_mean = mm
+                    else:
+                        message_mean = message_params[:, :8]
+
+                # Use deterministic mean for inference (safe fallback)
                 message_vector = message_mean.cpu().numpy()[0]
             else:
                 # Normal Discrete
