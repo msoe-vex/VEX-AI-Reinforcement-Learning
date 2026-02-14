@@ -272,6 +272,9 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 
             # Execute physical action
             action_int = int(action_val.value if hasattr(action_val, 'value') else action_val)
+            # Record executed action in the game state so the UI "Current:" row
+            # only changes when an actual action was performed.
+            agent_state["current_action"] = action_int
             duration, penalty = self.game.execute_action(
                 agent, action_int
             )

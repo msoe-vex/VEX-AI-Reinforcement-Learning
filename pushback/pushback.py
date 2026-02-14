@@ -606,7 +606,7 @@ class PushBackGame(VexGame):
                 # "gameTime": REMOVED - Managed by Enviroment
                 "active": True,
                 "agent_name": robot.name,
-                # Per-agent tracking for observation
+            "current_action": None,
                 "goals_added": [0, 0, 0, 0],  # [LONG_1, LONG_2, CENTER_UPPER, CENTER_LOWER]
                 "loaders_taken": [0, 0, 0, 0],  # [TL, TR, BL, BR]
             }
@@ -1442,7 +1442,15 @@ class PushBackGame(VexGame):
                     action_text = "--"
                 else:
                     try:
-                        action_text = self.action_to_name(actions[agent])
+                        raw_action = actions[agent]
+                        # If action is a tuple/list/ndarray (action, message), display only the discrete action
+                        if isinstance(raw_action, (list, tuple, np.ndarray)):
+                            candidate = raw_action[0] if len(raw_action) > 0 else raw_action
+                        elif isinstance(raw_action, dict) and "action" in raw_action:
+                            candidate = raw_action["action"]
+                        else:
+                            candidate = raw_action
+                        action_text = self.action_to_name(int(candidate))
                     except Exception:
                         action_text = str(actions[agent])
             
@@ -1454,6 +1462,16 @@ class PushBackGame(VexGame):
                         fontsize=9, color=robot_color, fontweight='bold', va='top')
             info_y -= 0.05
             ax_info.text(0.1, info_y, f"{action_text}{reward_text}", fontsize=8, va='top')
+            info_y -= 0.03
+
+            # Persistent display of the last executed action (only changes when
+            # the env actually executes a new action for this robot)
+            current_val = st.get("current_action", None)
+            try:
+                current_text = self.action_to_name(int(current_val)) if current_val is not None else "---"
+            except Exception:
+                current_text = str(current_val) if current_val is not None else "---"
+            ax_info.text(0.1, info_y, f"Current: {current_text}", fontsize=8, va='top')
             info_y -= 0.03
             
             # Show time
