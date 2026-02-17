@@ -43,6 +43,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         render_mode: Optional[str] = None,
         output_directory: str = "",
         randomize: bool = True,
+        enable_communication: bool = False,
     ):
         """
         Initialize the VEX environment.
@@ -52,10 +53,12 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             render_mode: 'human' for display, 'rgb_array' or 'all' to save frames
             output_directory: Directory for saving renders
             randomize: Whether to randomize initial positions
+            enable_communication: Whether to enable agent-to-agent communication
         """
         super().__init__()
         
         self.game = game
+        self.enable_communication = enable_communication
             
         self.render_mode = render_mode
         self.output_directory = output_directory

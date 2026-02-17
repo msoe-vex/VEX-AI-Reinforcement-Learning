@@ -14,9 +14,14 @@ from pushback import PushBackGame
 # Import your custom model class to ensure pickle can find it
 from vex_custom_model import VexCustomPPO
 
-def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, output_path: str = None):
+def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, output_path: str = None, enable_communication: bool = True):
     def env_creator(config=None):
-        return VexMultiAgentEnv(game=game, render_mode=None)
+        config = config or {}
+        return VexMultiAgentEnv(
+            game=game, 
+            render_mode=None,
+            enable_communication=config.get("enable_communication", enable_communication)
+        )
 
     if not ray.is_initialized():
         ray.init(ignore_reinit_error=True)
@@ -146,5 +151,17 @@ if __name__ == "__main__":
     parser.add_argument("--game", type=str, default="vexai_skills")
     args = parser.parse_args()
     
+    # Try to read enable_communication from metadata if available
+    enable_communication = False
+    metadata_path = os.path.join(args.output_path, "training_metadata.json")
+    if os.path.exists(metadata_path):
+        try:
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+                enable_communication = metadata.get("enable_communication", False)
+            print(f"Read enable_communication={enable_communication} from metadata")
+        except Exception as e:
+            print(f"Warning: Could not read metadata: {e}")
+    
     game = PushBackGame.get_game(args.game)
-    compile_checkpoint_to_torchscript(game, args.checkpoint_path, args.output_path)
+    compile_checkpoint_to_torchscript(game, args.checkpoint_path, args.output_path, enable_communication)

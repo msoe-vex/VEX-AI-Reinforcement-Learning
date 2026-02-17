@@ -81,11 +81,25 @@ def run_simulation(model_dir, game_name, output_dir):
 
     # Initialize the environment using new modular architecture
     game = PushBackGame.get_game(game_name)
+    
+    # Try to read enable_communication from metadata
+    enable_communication = True
+    metadata_path = os.path.join(model_dir, "training_metadata.json")
+    if os.path.exists(metadata_path):
+        try:
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+                enable_communication = metadata.get("enable_communication", False)
+            print(f"Read enable_communication={enable_communication} from metadata")
+        except Exception as e:
+            print(f"Warning: Could not read enable_communication from metadata: {e}")
+    
     env = VexMultiAgentEnv(
         game=game,
         render_mode="all", 
         output_directory=output_dir, 
-        randomize=True
+        randomize=True,
+        enable_communication=enable_communication
     )
     
     # Load models for each agent

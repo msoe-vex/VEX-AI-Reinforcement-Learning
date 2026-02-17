@@ -65,6 +65,7 @@ def env_creator(config=None):
         game=game,
         render_mode=None,
         randomize=config.get("randomize", True),
+        enable_communication=config.get("enable_communication", True),
     )
 
 
@@ -99,6 +100,7 @@ if __name__ == "__main__":
     parser.add_argument('--checkpoint-path', type=str, default="", help='Path to the checkpoint directory')
     parser.add_argument('--verbose', type=int, default=1, help='Verbosity mode: 0 = silent, 1 = default, 2 = verbose')
     parser.add_argument('--game', type=str, default="vexai_skills", help='Game variant to train')
+    parser.add_argument('--enable-communication', type=bool, default=True, help='Enable or disable agent communication')
 
     args = parser.parse_args()
 
@@ -147,7 +149,7 @@ if __name__ == "__main__":
         )
         .environment(
             env="VEX_Multi_Agent_Env",
-            env_config={"randomize": args.randomize, "game": args.game}
+            env_config={"randomize": args.randomize, "game": args.game, "enable_communication": args.enable_communication}
         )
         .framework("torch")  # change to "tf" for TensorFlow
         .resources(
@@ -172,7 +174,7 @@ if __name__ == "__main__":
                 module_class=VexCustomPPO,  # Use custom model with clean architecture
                 observation_space=obs_space,
                 action_space=act_space,
-                model_config={}  # Model architecture defined in vex_custom_model.py
+                model_config={"enable_communication": args.enable_communication}  # Model architecture defined in vex_custom_model.py
             )
         )
         .fault_tolerance(
@@ -213,6 +215,7 @@ if __name__ == "__main__":
         "randomize": args.randomize,
         "num_iters": args.num_iters,
         "checkpoint_path": args.checkpoint_path,
+        "enable_communication": args.enable_communication,
         "start_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()),
     }
     metadata_path = os.path.join(experiment_dir, "training_metadata.json")

@@ -2,7 +2,7 @@
 #SBATCH --job-name=vex_ai_reinforcement_learning    # Job name
 #SBATCH --output=job_results/job_%j/output.txt      # Output file (%j will be replaced with the job ID)
 #SBATCH --error=job_results/job_%j/error.txt        # Error file (%j will be replaced with the job ID)
-#SBATCH --time=0-12:0                                # Time limit (DD-HH:MM)
+#SBATCH --time=0-24:0                                # Time limit (DD-HH:MM)
 #SBATCH --partition=teaching --gpus=0               # Partition to submit to. `teaching` (for the T4 GPUs) is default on Rosie, but it's still being specified here
 #SBATCH --cpus-per-task=8 --tasks=1                # Number of CPU cores to use
 
@@ -18,6 +18,7 @@ while [[ "$#" -gt 0 ]]; do
         --algorithm) ALGORITHM="$2"; shift 2 ;;
         --verbose) VERBOSE="$2"; shift 2 ;;
         --game) GAME="$2"; shift 2 ;;
+        --enable-communication) ENABLE_COMMUNICATION="$2"; shift 2 ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
 done
@@ -36,4 +37,5 @@ python vex_model_training.py \
     --algorithm ${ALGORITHM:-PPO} \
     --checkpoint-path ${CHECKPOINT_PATH:-""} \
     --verbose ${VERBOSE:-1} \
-    --game ${GAME:-vexai_skills}
+    --game ${GAME:-vexai_skills} \
+    --enable-communication ${ENABLE_COMMUNICATION:-True}
