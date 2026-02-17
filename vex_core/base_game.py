@@ -440,7 +440,8 @@ class VexGame(ABC):
         if not agent_state:
             return False
         
-        agent_pos = agent_state.get("position")
+        # Prefer a projection (when present) — fall back to actual `position`.
+        agent_pos = agent_state.get("projected_position", agent_state.get("position"))
         if agent_pos is None:
             return False
         
@@ -451,12 +452,12 @@ class VexGame(ABC):
         # Use robot size as collision radius
         agent_size = agent_robot.size.value / 2.0  # Convert to radius
         
-        # Check against all other agents
+        # Check against all other agents (use their projected_position when available)
         for other_agent, other_state in self.state["agents"].items():
             if other_agent == agent:
                 continue
             
-            other_pos = other_state.get("position")
+            other_pos = other_state.get("projected_position", other_state.get("position"))
             if other_pos is None:
                 continue
             
@@ -466,7 +467,7 @@ class VexGame(ABC):
             
             other_size = other_robot.size.value / 2.0  # Convert to radius
             
-            # Calculate distance between robots
+            # Calculate distance between robot projections (or positions)
             distance = np.linalg.norm(agent_pos - other_pos)
             
             # Collision if distance is less than sum of radii

@@ -173,5 +173,61 @@ class TestDiscreteTime(unittest.TestCase):
         self.assertFalse("agent_0" in env.busy_state)
         np.testing.assert_array_almost_equal(agent_state["position"], [10.0, 0.0])
 
+
+
+    def test_projection_collision_terminates_actions(self):
+        """If two robots plan to move to overlapping targets, both are stopped immediately.
+
+        - Both agents execute an action that would put their `target_pos` at the same point.
+        - Environment uses projections (target_pos) to detect collision and cancels both actions.
+        """
+        class MockTwoRobotGame(MockGame):
+            @property
+            def possible_agents(self):
+                return ["agent_0", "agent_1"]
+
+            def get_initial_state(self, randomize=False, seed=None):
+                self.state = {
+                    "agents": {
+                        "agent_0": {"position": np.array([0.0, 0.0]), "orientation": np.array([0.0])},
+                        "agent_1": {"position": np.array([10.0, 0.0]), "orientation": np.array([0.0])},
+                    }
+                }
+                return self.state
+
+            def execute_action(self, agent, action):
+                # Both agents try to move to the same target (5, 0)
+                if action == 0:
+                    self.state["agents"][agent]["position"] = np.array([5.0, 0.0])
+                    return 1.0, 0.0
+                return 0.1, 0.0
+
+        game = MockTwoRobotGame()
+        env = VexMultiAgentEnv(game=game)
+        env.reset()
+
+        # Both agents attempt to move to (5,0) — projections collide and env should cancel them
+        obs, rewards, terms, truncs, infos = env.step({"agent_0": 0, "agent_1": 0})
+
+        # Neither agent should be left in busy_state (actions cancelled)
+        self.assertFalse("agent_0" in env.busy_state)
+        self.assertFalse("agent_1" in env.busy_state)
+
+        # Their visible positions should NOT have advanced towards the target (remain at starts)
+        np.testing.assert_array_almost_equal(env.environment_state["agents"]["agent_0"]["position"], [0.0, 0.0])
+        np.testing.assert_array_almost_equal(env.environment_state["agents"]["agent_1"]["position"], [10.0, 0.0])
+
+        # infos should indicate early termination due to projected collision
+        self.assertTrue(infos["agent_0"].get("action_terminated_early", False))
+        self.assertTrue(infos["agent_1"].get("action_terminated_early", False))
+
+        # projected_collision flag is set on state for inspection
+        self.assertTrue(env.environment_state["agents"]["agent_0"].get("projected_collision", False))
+        self.assertTrue(env.environment_state["agents"]["agent_1"].get("projected_collision", False))
+
+        # Rewards should include the projected-collision penalty applied by the environment
+        self.assertEqual(rewards["agent_0"], -game.get_collision_penalty())
+        self.assertEqual(rewards["agent_1"], -game.get_collision_penalty())
+
 if __name__ == "__main__":
     unittest.main()

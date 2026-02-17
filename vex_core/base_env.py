@@ -330,6 +330,28 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             if agent in self.env_agent_states:
                 self.env_agent_states[agent]["time"] += duration
 
+        # 3a. Projection-based collision check (prevent collisions using next-step projections)
+        # Compute projected next-step positions for all agents and immediately
+        # terminate any agents whose projections would collide.
+        try:
+            self._resolve_projected_collisions(active_agents, infos)
+        except Exception:
+            # Fail-safe: do not break the step if projection logic errors
+            pass
+
+        # Apply projected-collision penalties (environment-level)
+        for agent in active_agents:
+            if infos.get(agent, {}).get("action_terminated_early", False):
+                # Subtract a collision penalty from the agent's reward so it matches
+                # game-level collision semantics. compute_reward already subtracts
+                # penalties returned by execute_action; here we apply the env-level
+                # projected collision penalty using the same value as the game.
+                try:
+                    penalty_value = float(self.game.get_collision_penalty())
+                except Exception:
+                    penalty_value = 0.0
+                rewards[agent] = rewards.get(agent, 0.0) - penalty_value
+
         # 3. Message Aggregation (Update Received Messages for NEXT step)
         self._update_messages(active_agents)
 
@@ -427,6 +449,90 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             self.environment_state["agents"][agent]["received_messages"] = received_sum
 
     
+
+    def _project_agent_next_position(self, agent: str) -> np.ndarray:
+        """
+        Project the position this agent is trying to reach on the next step.
+
+        - If the agent is busy (has a queued target), return its `target_pos`.
+        - Otherwise return its current `position` (projection within robot).
+
+        This projection is used for collision checks that operate on planned
+        next-step positions instead of the robot's current footprint.
+        """
+        if self.environment_state is None:
+            raise RuntimeError("Environment state is not initialized")
+
+        agent_state = self.environment_state["agents"].get(agent)
+        if agent_state is None:
+            raise KeyError(f"Unknown agent: {agent}")
+
+        busy = self.busy_state.get(agent)
+        if busy is not None:
+            proj = busy["target_pos"].copy()
+        else:
+            proj = agent_state["position"].copy()
+
+        agent_state["projected_position"] = proj
+        return proj
+
+    def _resolve_projected_collisions(self, active_agents: list, infos: Dict[str, Dict]) -> None:
+        """
+        Project all agents' intended next-step positions and force immediate
+        termination of any agents whose projections collide.
+
+        - Agents with `busy_state` use `busy_state["target_pos"]` as projection.
+        - Stationary agents project to their current center (within robot).
+        - If two projections overlap (distance < sum of radii) both agents are
+          forced to terminate their current action immediately (busy_state cleared)
+          and `infos[agent]["action_terminated_early"] = True` is set.
+        """
+        # Build projected positions
+        projections: Dict[str, np.ndarray] = {}
+        for agent in active_agents:
+            try:
+                projections[agent] = self._project_agent_next_position(agent)
+            except Exception:
+                projections[agent] = self.environment_state["agents"][agent]["position"].copy()
+
+        # Pairwise collision check on projected positions
+        colliding_pairs: set[tuple[str, str]] = set()
+        agents_list = list(active_agents)
+        for i in range(len(agents_list)):
+            a = agents_list[i]
+            pa = projections[a]
+            ra = (self.game.get_robot_for_agent(a).size.value / 2.0) if self.game.get_robot_for_agent(a) else 9.0
+            for j in range(i + 1, len(agents_list)):
+                b = agents_list[j]
+                pb = projections[b]
+                rb = (self.game.get_robot_for_agent(b).size.value / 2.0) if self.game.get_robot_for_agent(b) else 9.0
+                if float(np.linalg.norm(pa - pb)) < (ra + rb):
+                    colliding_pairs.add((a, b))
+
+        # Enforce immediate termination for any agent involved in a projected collision
+        impacted: set[str] = set()
+        for a, b in colliding_pairs:
+            impacted.add(a)
+            impacted.add(b)
+
+        for agent in impacted:
+            # Cancel busy action (if any) so robot will not continue moving
+            if agent in self.busy_state:
+                try:
+                    del self.busy_state[agent]
+                except KeyError:
+                    pass
+                self.agent_movements[agent] = None
+                infos.setdefault(agent, {})["action_terminated_early"] = True
+            else:
+                # Not busy but projection conflicts with someone else
+                infos.setdefault(agent, {})["projection_conflict"] = True
+
+            # Mark flag on state for tests/logging
+            try:
+                self.environment_state["agents"][agent]["projected_collision"] = True
+            except Exception:
+                pass
 
     def is_valid_action(
         self, 
@@ -560,6 +666,20 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 agent
             )
             
+            # Draw projected position (if available) as a dashed outline rectangle
+            proj = st.get("projected_position", None)
+            if proj is not None:
+                px, py = float(proj[0]), float(proj[1])
+                proj_rect = patches.Rectangle(
+                    (-robot_len/2, -robot_wid/2),
+                    robot_len, robot_wid,
+                    edgecolor='yellow', facecolor='none',
+                    linestyle='--', linewidth=1.2, alpha=0.8, zorder=2
+                )
+                tproj = mtransforms.Affine2D().rotate(theta).translate(px, py) + ax.transData
+                proj_rect.set_transform(tproj)
+                ax.add_patch(proj_rect)
+
             # Draw robot rectangle
             robot_rect = patches.Rectangle(
                 (-robot_len/2, -robot_wid/2),

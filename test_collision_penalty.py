@@ -144,8 +144,35 @@ def test_different_robot_sizes():
     print("✓ Different robot sizes test passed!")
 
 
+def test_projection_considered_in_collision_check():
+    """Ensure check_robot_collision consults `projected_position` when present."""
+    robots = [
+        Robot(name="red_robot_0", team=Team.RED, size=RobotSize.INCH_24,
+              start_position=np.array([0.0, 0.0], dtype=np.float32)),
+        Robot(name="blue_robot_0", team=Team.BLUE, size=RobotSize.INCH_24,
+              start_position=np.array([50.0, 0.0], dtype=np.float32)),
+    ]
+
+    game = PushBackGame.get_game("vexai_comp")
+    game.robots = robots
+    game._robot_map = {r.name: r for r in robots}
+    game.get_initial_state()
+
+    # Set projected positions such that projections overlap even though actual positions do not
+    game.state["agents"]["red_robot_0"]["projected_position"] = np.array([10.0, 0.0], dtype=np.float32)
+    game.state["agents"]["blue_robot_0"]["projected_position"] = np.array([12.0, 0.0], dtype=np.float32)
+
+    # With two 24" robots, radius sum = 24/2 + 24/2 = 24.0 — distance 2.0 -> collision
+    assert game.check_robot_collision("red_robot_0"), "Projected positions should cause a collision"
+
+    # Move projected positions apart (no collision)
+    game.state["agents"]["blue_robot_0"]["projected_position"] = np.array([50.0, 0.0], dtype=np.float32)
+    assert not game.check_robot_collision("red_robot_0"), "No collision when projected positions are far apart"
+
+
 if __name__ == "__main__":
     test_collision_detection()
     test_no_penalty_without_collision()
     test_different_robot_sizes()
+    test_projection_considered_in_collision_check()
     print("\n✓✓✓ All collision penalty tests passed! ✓✓✓")
