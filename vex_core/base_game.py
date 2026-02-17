@@ -66,12 +66,13 @@ class VexGame(ABC):
     should create its own game instance.
     """
     
-    def __init__(self, robots: list[Robot] = None):
+    def __init__(self, robots: list[Robot] = None, enable_communication: bool = False):
         """Initialize with robot configurations."""
         from path_planner import PathPlanner  # Lazy import to avoid circular dependency
         self.robots = robots or []
         self._robot_map = {r.name: r for r in self.robots}
         self.path_planner = PathPlanner()
+        self.enable_communication = enable_communication
         self.state: Dict = None  # Game state, initialized by get_initial_state()
     
     @property

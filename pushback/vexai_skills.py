@@ -17,7 +17,7 @@ from vex_core.base_game import Robot, RobotSize, Team
 class VexAISkillsGame(PushBackGame):
     """VEX AI Skills game variant."""
     
-    def __init__(self, robots: list = None):
+    def __init__(self, robots: list = None, enable_communication: bool = False):
         # Default: 24" in blue park zone, 15" in red park zone (per VAIRS4)
         if robots is None:
             robots = [
@@ -26,7 +26,7 @@ class VexAISkillsGame(PushBackGame):
                 Robot(name="red_robot_0", team=Team.RED, size=RobotSize.INCH_15, length=15, width=15,
                       start_position=np.array([-60.0, 0.0], dtype=np.float32)),
             ]
-        super().__init__(robots)
+        super().__init__(robots, enable_communication=enable_communication)
     
     @property
     def total_time(self) -> float:

@@ -60,12 +60,13 @@ class VexScoreCallback(RLlibCallback):
 def env_creator(config=None):
     """Create environment instance for RLlib registration."""
     config = config or {}
-    game = PushBackGame.get_game(config.get("game", "vexai_skills"))
+    enable_communication = config.get("enable_communication", True)
+    game = PushBackGame.get_game(config.get("game", "vexai_skills"), enable_communication=enable_communication)
     return VexMultiAgentEnv(
         game=game,
         render_mode=None,
         randomize=config.get("randomize", True),
-        enable_communication=config.get("enable_communication", True),
+        enable_communication=enable_communication,
     )
 
 
@@ -128,7 +129,7 @@ if __name__ == "__main__":
     register_env("VEX_Multi_Agent_Env", env_creator)
 
     # Create a temporary instance to retrieve observation and action spaces for a sample agent.
-    temp_env = env_creator({"game": args.game, "randomize": args.randomize})
+    temp_env = env_creator({"game": args.game, "randomize": args.randomize, "enable_communication": args.enable_communication})
 
     # Get observation and action spaces for module spec
     sample_agent = temp_env.possible_agents[0]

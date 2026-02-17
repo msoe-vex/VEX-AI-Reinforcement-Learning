@@ -516,8 +516,8 @@ class PushBackGame(VexGame):
     """
     
     
-    def __init__(self, robots: list = None):
-        super().__init__(robots)
+    def __init__(self, robots: list = None, enable_communication: bool = False):
+        super().__init__(robots, enable_communication=enable_communication)
         self.goal_manager = GoalManager()
         self._agents: Optional[List[str]] = None
         
@@ -549,18 +549,19 @@ class PushBackGame(VexGame):
         return FIELD_SIZE_INCHES
     
     @staticmethod
-    def get_game(game_name: str) -> VexGame:
+    def get_game(game_name: str, enable_communication: bool = False) -> VexGame:
         """
         Factory method to create a game instance from a string identifier.
         
         Args:
             game_name: String identifier (e.g., 'vexu_skills', 'vexai_comp')
+            enable_communication: Whether to enable agent communication
             
         Returns:
             VexGame instance
         """
         game_class = _get_game_class(game_name)
-        return game_class()
+        return game_class(enable_communication=enable_communication)
     
     @property
     @abstractmethod
@@ -767,11 +768,16 @@ class PushBackGame(VexGame):
         return (ObsIndex.TOTAL,)
     
     def action_space(self, agent: str) -> spaces.Space:
-        """Get action space for an agent (Tuple: Discrete Action + Message)."""
-        return spaces.Tuple((
-            spaces.Discrete(self.num_actions),
-            spaces.Box(low=-1.0, high=1.0, shape=(8,), dtype=np.float32)
-        ))
+        """Get action space for an agent based on communication setting."""
+        if self.enable_communication:
+            # With communication: Tuple of (Discrete Action, Continuous Message)
+            return spaces.Tuple((
+                spaces.Discrete(self.num_actions),
+                spaces.Box(low=-1.0, high=1.0, shape=(8,), dtype=np.float32)
+            ))
+        else:
+            # Without communication: Just discrete action
+            return spaces.Discrete(self.num_actions)
 
     @staticmethod
     def get_action_space_shape() -> Tuple[int]:

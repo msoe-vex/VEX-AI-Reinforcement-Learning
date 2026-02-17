@@ -97,9 +97,9 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
         # Get dimensions from environment spaces
         obs_dim = self.observation_space.shape[0]
         
-        # Get enable_communication from model config
-        # model_config is a dict passed during RLModule initialization
-        enable_communication = self.model_config.get("enable_communication", False) if isinstance(self.model_config, dict) else False
+        # Determine enable_communication from ACTION SPACE TYPE (primary source of truth)
+        # This ensures the model outputs match what RLlib expects
+        enable_communication = isinstance(self.action_space, Tuple)
         
         if isinstance(self.action_space, Discrete):
             action_dim = self.action_space.n

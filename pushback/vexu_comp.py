@@ -16,7 +16,7 @@ from vex_core.base_game import Robot, RobotSize, Team
 class VexUCompGame(PushBackGame):
     """VEX U Competition game variant."""
     
-    def __init__(self, robots: list = None):
+    def __init__(self, robots: list = None, enable_communication: bool = False):
         # Default: 2v2 (2 per team, 24" and 15")
         if robots is None:
             robots = [
@@ -29,7 +29,7 @@ class VexUCompGame(PushBackGame):
                 Robot(name="blue_robot_1", team=Team.BLUE, size=RobotSize.INCH_15, 
                       start_position=np.array([46.5, -24.0], dtype=np.float32)),
             ]
-        super().__init__(robots)
+        super().__init__(robots, enable_communication=enable_communication)
     
     @property
     def total_time(self) -> float:
