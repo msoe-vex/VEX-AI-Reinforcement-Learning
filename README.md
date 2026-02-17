@@ -64,7 +64,7 @@ All commands use SLURM to run on the MSOE computing cluster (ROSIE).
    If you need to recompile a specific checkpoint to TorchScript:
 
    ```bash
-   srun python vex_model_compile.py --checkpoint-path job_results/job_220065/PPO_2026-01-29_00-36-09/PPO_VEX_Multi_Agent_Env_6a53c_00000_0_2026-01-29_00-36-09/checkpoint_000050 --output-path job_results/job_220065/
+   srun python vex_model_compile.py --checkpoint-path job_results/job_220065/PPO_2026-01-29_00-36-09/PPO_VEX_Multi_Agent_Env_6a53c_00000_0_2026-01-29_00-36-09/checkpoint_000050 --output-path job_results/job_220065/PPO_2026-01-29_00-36-09/
    ```
 
 4. **Run a Trained Model**
