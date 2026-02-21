@@ -74,6 +74,7 @@ class VexGame(ABC):
         self.path_planner = PathPlanner()
         self.enable_communication = enable_communication
         self.state: Dict = None  # Game state, initialized by get_initial_state()
+        self._last_interpolation_plan_by_agent: Dict[str, List[Dict[str, Any]]] = {}
     
     @property
     def agents(self) -> Dict:
@@ -489,3 +490,55 @@ class VexGame(ABC):
             Penalty value (default: 5.0)
         """
         return 1.0
+
+    def update_robot_position(self, agent: str, position: np.ndarray) -> None:
+        """
+        Hook for game-specific side effects when a robot's position is updated.
+
+        The environment owns authoritative robot position updates. Games can
+        override this hook to keep related game state synchronized (e.g.,
+        held objects following the robot center).
+
+        Args:
+            agent: Agent name
+            position: Updated robot center position
+        """
+        pass
+
+    def get_interpolation_plan(
+        self,
+        agent: str,
+        action: int,
+        start_pos: np.ndarray,
+        start_orient: np.ndarray,
+        target_pos: np.ndarray,
+        target_orient: np.ndarray,
+        duration: float,
+    ) -> List[Dict[str, Any]]:
+        """
+        Build a list of interpolation segments for an executed action.
+
+        Each segment dict should contain:
+        - "duration": seconds for this segment
+        - "target_pos": np.ndarray target position at segment end
+        - "target_orient": np.ndarray target orientation at segment end
+
+        Default behavior is a single segment from start -> target over `duration`.
+        Games can override to model wait/move/wait timing explicitly.
+        """
+        return [{
+            "duration": float(max(0.0, duration)),
+            "target_pos": target_pos.copy(),
+            "target_orient": target_orient.copy(),
+        }]
+
+    def set_last_interpolation_plan(self, agent: str, plan: Optional[List[Dict[str, Any]]]) -> None:
+        """Store the interpolation plan produced by the most recent action for an agent."""
+        if not plan:
+            self._last_interpolation_plan_by_agent.pop(agent, None)
+            return
+        self._last_interpolation_plan_by_agent[agent] = plan
+
+    def consume_last_interpolation_plan(self, agent: str) -> Optional[List[Dict[str, Any]]]:
+        """Get and clear the most recent action-authored interpolation plan for an agent."""
+        return self._last_interpolation_plan_by_agent.pop(agent, None)

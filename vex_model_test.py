@@ -81,9 +81,6 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
 
-    # Initialize the environment using new modular architecture
-    game = PushBackGame.get_game(game_name)
-    
     # Try to read enable_communication from metadata
     enable_communication = True
     metadata_path = os.path.join(model_dir, "training_metadata.json")
@@ -95,6 +92,9 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
             print(f"Read enable_communication={enable_communication} from metadata")
         except Exception as e:
             print(f"Warning: Could not read enable_communication from metadata: {e}")
+
+    # Initialize the game/environment with matching communication configuration
+    game = PushBackGame.get_game(game_name, enable_communication=enable_communication)
     
     env = VexMultiAgentEnv(
         game=game,
@@ -185,7 +185,10 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
 
                     message_vector = message_mean.cpu().numpy()[0]
                 else:
-                    action_logits = model_output
+                    # In case a communication-enabled model is loaded into a non-communication
+                    # action space, only keep the discrete action logits expected by env.
+                    num_actions = action_space.n
+                    action_logits = model_output[:, :num_actions]
                     message_vector = None
 
                 probs = torch.softmax(action_logits, dim=-1)

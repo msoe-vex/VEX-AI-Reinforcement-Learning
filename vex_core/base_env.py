@@ -202,6 +202,12 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                     # Action complete - snap to target
                     agent_state["position"] = busy_info["target_pos"].copy()
                     agent_state["orientation"] = busy_info["target_orient"].copy()
+                    # Keep any already-held blocks centered on the robot.
+                    if hasattr(self.game, "update_robot_position"):
+                        try:
+                            self.game.update_robot_position(agent, agent_state["position"])
+                        except Exception:
+                            pass
                     del self.busy_state[agent]
                     infos[agent]["action_completed"] = True
                     # Apply any pending events scheduled for this agent's action
@@ -211,26 +217,49 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                         except Exception:
                             pass
                 else:
-                    # Interpolate
+                    # Interpolate using a potentially multi-segment plan
                     total = busy_info["total_ticks"]
                     rem = busy_info["remaining_ticks"]
-                    # Calculate progress (0.0 to 1.0)
-                    alpha = (total - rem) / total
-                    
-                    start_pos = busy_info["start_pos"]
-                    target_pos = busy_info["target_pos"]
-                    
-                    # Linear Int: P = P0 + (P1 - P0) * alpha
-                    current_pos = start_pos + (target_pos - start_pos) * alpha
-                    self.game._update_held_blocks(agent, current_pos + 5)
+                    elapsed = total - rem
+                    plan = busy_info.get("plan", [])
+
+                    current_pos = busy_info["start_pos"].copy()
+                    current_orient = busy_info["start_orient"].copy()
+
+                    # Find active segment by elapsed ticks
+                    for seg in plan:
+                        seg_start = seg["tick_start"]
+                        seg_end = seg["tick_end"]
+                        if elapsed <= seg_end:
+                            seg_ticks = max(1, seg_end - seg_start)
+                            seg_alpha = (elapsed - seg_start) / seg_ticks
+                            seg_alpha = float(np.clip(seg_alpha, 0.0, 1.0))
+
+                            s_pos = seg["start_pos"]
+                            e_pos = seg["end_pos"]
+                            current_pos = s_pos + (e_pos - s_pos) * seg_alpha
+
+                            s_or = float(seg["start_orient"][0])
+                            e_or = float(seg["end_orient"][0])
+                            d_or = np.arctan2(np.sin(e_or - s_or), np.cos(e_or - s_or))
+                            interp_or = s_or + d_or * seg_alpha
+
+                            # If actually moving in this segment, face movement direction.
+                            diff = e_pos - s_pos
+                            dist = np.linalg.norm(diff)
+                            if dist > 0.1:
+                                interp_or = np.arctan2(diff[1], diff[0])
+
+                            current_orient = np.array([interp_or], dtype=np.float32)
+                            break
+                        else:
+                            # Segment fully completed
+                            current_pos = seg["end_pos"].copy()
+                            current_orient = seg["end_orient"].copy()
+
+                    self.game.update_robot_position(agent, current_pos)
                     agent_state["position"] = current_pos
-                    
-                    # Orientation: Point in direction of movement
-                    diff = target_pos - start_pos
-                    dist = np.linalg.norm(diff)
-                    if dist > 0.1: # Only if moving significantly
-                        heading = np.arctan2(diff[1], diff[0])
-                        agent_state["orientation"] = np.array([heading])
+                    agent_state["orientation"] = current_orient
             
                 if agent in self.busy_state:
                      infos[agent]["action_skipped"] = True
@@ -301,9 +330,71 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             # Capture state AFTER action execution (Target)
             target_pos = agent_state["position"].copy()
             target_orient = agent_state["orientation"].copy()
-            
+
+            # Build interpolation plan:
+            # 1) consume action-authored plan, if provided by game.execute_action()
+            # 2) otherwise use generic game hook fallback
+            raw_plan = None
+            if hasattr(self.game, "consume_last_interpolation_plan"):
+                try:
+                    raw_plan = self.game.consume_last_interpolation_plan(agent)
+                except Exception:
+                    raw_plan = None
+
+            if raw_plan is None:
+                raw_plan = self.game.get_interpolation_plan(
+                    agent=agent,
+                    action=action_int,
+                    start_pos=start_pos,
+                    start_orient=start_orient,
+                    target_pos=target_pos,
+                    target_orient=target_orient,
+                    duration=duration,
+                )
+
+            # Normalize plan into tick-based segments
+            plan = []
+            cursor_pos = start_pos.copy()
+            cursor_orient = start_orient.copy()
+            tick_cursor = 0
+            for seg in raw_plan or []:
+                seg_duration = float(max(0.0, seg.get("duration", 0.0)))
+                if seg_duration <= 0.0:
+                    continue
+                seg_ticks = max(1, int(np.ceil(seg_duration / DELTA_T)))
+                end_pos = np.array(seg.get("target_pos", cursor_pos), dtype=np.float32).copy()
+                end_orient = np.array(seg.get("target_orient", cursor_orient), dtype=np.float32).copy()
+
+                plan.append({
+                    "start_pos": cursor_pos.copy(),
+                    "end_pos": end_pos,
+                    "start_orient": cursor_orient.copy(),
+                    "end_orient": end_orient,
+                    "tick_start": tick_cursor,
+                    "tick_end": tick_cursor + seg_ticks,
+                })
+
+                tick_cursor += seg_ticks
+                cursor_pos = end_pos.copy()
+                cursor_orient = end_orient.copy()
+
+            # Fallback to single segment if plan is empty
+            if not plan:
+                seg_ticks = max(1, int(np.ceil(max(0.0, duration) / DELTA_T)))
+                plan = [{
+                    "start_pos": start_pos.copy(),
+                    "end_pos": target_pos.copy(),
+                    "start_orient": start_orient.copy(),
+                    "end_orient": target_orient.copy(),
+                    "tick_start": 0,
+                    "tick_end": seg_ticks,
+                }]
+                tick_cursor = seg_ticks
+
             # Prepare Busy State
-            ticks = int(max(1, duration / DELTA_T)) 
+            ticks = max(1, int(tick_cursor))
+            final_target_pos = plan[-1]["end_pos"].copy()
+            final_target_orient = plan[-1]["end_orient"].copy()
             
             if ticks > 0:
                 # Revert visible state to start
@@ -312,15 +403,17 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 
                 self.busy_state[agent] = {
                     "start_pos": start_pos,
-                    "target_pos": target_pos,
-                    "target_orient": target_orient,
+                    "start_orient": start_orient,
+                    "target_pos": final_target_pos,
+                    "target_orient": final_target_orient,
+                    "plan": plan,
                     "total_ticks": ticks,
                     "remaining_ticks": ticks
                 }
 
                 # Update movement trail
-                if not np.array_equal(start_pos, target_pos):
-                    self.agent_movements[agent] = (start_pos.copy(), target_pos.copy())
+                if not np.array_equal(start_pos, final_target_pos):
+                    self.agent_movements[agent] = (start_pos.copy(), final_target_pos.copy())
             else:
                 self.agent_movements[agent] = None
             
@@ -328,10 +421,6 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             new_scores = self.game.compute_score()
             reward = self.game.compute_reward(agent, initial_scores, new_scores, penalty)
             rewards[agent] = reward
-            
-            # Update accumulated duration in ENV STATE
-            if agent in self.env_agent_states:
-                self.env_agent_states[agent]["time"] += duration
 
         # 3a. Projection-based collision check (prevent collisions using next-step projections)
         # Compute projected next-step positions for all agents and immediately
@@ -354,6 +443,13 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 except Exception:
                     penalty_value = 0.0
                 rewards[agent] = rewards.get(agent, 0.0) - penalty_value
+
+        # Advance synchronized match clock for all active agents.
+        # Busy/idle/action differences are modeled via busy_state ticks,
+        # but game time remains globally aligned across agents.
+        for agent in active_agents:
+            if agent in self.env_agent_states:
+                self.env_agent_states[agent]["time"] += DELTA_T
 
         # 3. Message Aggregation (Update Received Messages for NEXT step)
         self._update_messages(active_agents)

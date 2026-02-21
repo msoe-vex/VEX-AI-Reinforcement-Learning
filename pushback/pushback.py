@@ -800,6 +800,8 @@ class PushBackGame(VexGame):
     ) -> Tuple[float, float]:
         """Execute an action for an agent."""
         agent_state = self.state["agents"][agent]
+        start_pos = agent_state["position"].copy()
+        start_orient = agent_state["orientation"].copy()
         
         # Uncomment to disable actions for parked robots
         # Parked robots cannot act
@@ -809,24 +811,29 @@ class PushBackGame(VexGame):
         # Default values (if action logic falls through or for simple actions)
         duration = DEFAULT_DURATION
         penalty = 0.0
+        plan: List[Dict[str, Any]] = [{
+            "duration": float(DEFAULT_DURATION),
+            "target_pos": start_pos.copy(),
+            "target_orient": start_orient.copy(),
+        }]
         
         if action == Actions.PICK_UP_BLOCK.value:
-            duration, penalty = self._action_pickup_block(agent_state, target_team=None)
+            duration, penalty, plan = self._action_pickup_block(agent_state, target_team=None)
         
         elif action == Actions.SCORE_IN_LONG_GOAL_1.value:
-            duration, penalty = self._action_score_in_goal(
+            duration, penalty, plan = self._action_score_in_goal(
                 agent_state, GoalType.LONG_1
             )
         elif action == Actions.SCORE_IN_LONG_GOAL_2.value:
-            duration, penalty = self._action_score_in_goal(
+            duration, penalty, plan = self._action_score_in_goal(
                 agent_state, GoalType.LONG_2
             )
         elif action == Actions.SCORE_IN_CENTER_UPPER.value:
-            duration, penalty = self._action_score_in_goal(
+            duration, penalty, plan = self._action_score_in_goal(
                 agent_state, GoalType.CENTER_UPPER
             )
         elif action == Actions.SCORE_IN_CENTER_LOWER.value:
-            duration, penalty = self._action_score_in_goal(
+            duration, penalty, plan = self._action_score_in_goal(
                 agent_state, GoalType.CENTER_LOWER
             )
         
@@ -837,19 +844,24 @@ class PushBackGame(VexGame):
             Actions.TAKE_FROM_LOADER_BR.value,
         ]:
             idx = action - Actions.TAKE_FROM_LOADER_TL.value
-            duration, penalty = self._action_clear_loader(
+            duration, penalty, plan = self._action_clear_loader(
                 agent_state, idx
             )
         
         elif action == Actions.PARK.value:
-            duration, penalty = self._action_park(agent_state)
+            duration, penalty, plan = self._action_park(agent_state)
         
         elif action == Actions.TURN_TOWARD_CENTER.value:
-            duration, penalty = self._action_turn_toward_center(agent_state)
+            duration, penalty, plan = self._action_turn_toward_center(agent_state)
         
         elif action == Actions.IDLE.value:
             duration = DEFAULT_DURATION
             penalty = DEFAULT_PENALTY # Small penalty for idle
+            plan = [{
+                "duration": float(duration),
+                "target_pos": start_pos.copy(),
+                "target_orient": start_orient.copy(),
+            }]
         
         # Update held block positions (game-specific)
         
@@ -859,6 +871,9 @@ class PushBackGame(VexGame):
         
         # Update tracker (for training, this keeps tracker in sync with simulation)
         self.update_tracker(agent, action)
+
+        # Publish action-authored interpolation plan to the environment.
+        self.set_last_interpolation_plan(agent, plan)
         
         return duration, penalty
     
@@ -903,10 +918,10 @@ class PushBackGame(VexGame):
             observation[ObsIndex.LOADERS_CLEARED_START + i] = float(taken)
         
         return observation
-    
+
     def _action_pickup_block(
         self, agent_state: Dict, target_team: Optional[str] = None
-    ) -> Tuple[float, float]:
+    ) -> Tuple[float, float, List[Dict[str, Any]]]:
         """Pick up nearest block in FOV.
         
         The agent ALWAYS assumes it picked up a block (increments held_blocks).
@@ -919,7 +934,11 @@ class PushBackGame(VexGame):
         """
         # Check if already at max capacity
         if agent_state["held_blocks"] >= MAX_HELD_BLOCKS:
-            return DEFAULT_DURATION, DEFAULT_PENALTY
+            return DEFAULT_DURATION, DEFAULT_PENALTY, [{
+                "duration": float(DEFAULT_DURATION),
+                "target_pos": agent_state["position"].copy(),
+                "target_orient": agent_state["orientation"].copy(),
+            }]
         
         target_idx = -1
         min_dist = float('inf')
@@ -958,6 +977,11 @@ class PushBackGame(VexGame):
         
         duration = DEFAULT_DURATION # Base duration
         penalty = 0.0
+        move_duration = 0.0
+        start_pos = agent_state["position"].copy()
+        start_orient = agent_state["orientation"].copy()
+        target_pos_plan = start_pos.copy()
+        target_orient_plan = start_orient.copy()
         
         if target_idx != -1:
             # Actually picked up a block - move to it
@@ -971,7 +995,10 @@ class PushBackGame(VexGame):
             
             # Use dynamic robot speed
             speed = self.get_robot_speed(agent_state["agent_name"])
-            duration += dist / speed
+            move_duration = dist / speed
+            duration += move_duration
+            target_pos_plan = target_pos.copy()
+            target_orient_plan = agent_state["orientation"].copy()
         else:
             # No block found, but agent still thinks it picked one up
             # Small penalty for failed pickup attempt
@@ -985,17 +1012,36 @@ class PushBackGame(VexGame):
             "block_idx": target_idx,
         })
         self.state["pending_events"] = pending
-        
-        return duration, penalty
+
+        plan: List[Dict[str, Any]] = [{
+            "duration": float(DEFAULT_DURATION),
+            "target_pos": start_pos.copy(),
+            "target_orient": start_orient.copy(),
+        }]
+        if move_duration > 0.0:
+            plan.append({
+                "duration": float(move_duration),
+                "target_pos": target_pos_plan.copy(),
+                "target_orient": target_orient_plan.copy(),
+            })
+
+        return duration, penalty, plan
     
     def _action_score_in_goal(
         self, 
         agent_state: Dict, 
         goal_type: GoalType
-    ) -> Tuple[float, float]:
+    ) -> Tuple[float, float, List[Dict[str, Any]]]:
         """Score held blocks in a goal."""
         if agent_state["held_blocks"] <= 0:
-            return DEFAULT_DURATION, DEFAULT_PENALTY
+            return DEFAULT_DURATION, DEFAULT_PENALTY, [{
+                "duration": float(DEFAULT_DURATION),
+                "target_pos": agent_state["position"].copy(),
+                "target_orient": agent_state["orientation"].copy(),
+            }]
+
+        start_pos = agent_state["position"].copy()
+        start_orient = agent_state["orientation"].copy()
         
         goal = self.goal_manager.get_goal(goal_type)
         scoring_side = goal.get_nearest_side(agent_state["position"])
@@ -1081,8 +1127,28 @@ class PushBackGame(VexGame):
             "ejected_blocks": ejected_blocks,
         })
         self.state["pending_events"] = pending
-        
-        return duration, 0.0
+
+        move_duration = dist / speed
+        post_duration = DEFAULT_DURATION * scored_count
+        plan: List[Dict[str, Any]] = [{
+            "duration": float(DEFAULT_DURATION),
+            "target_pos": start_pos.copy(),
+            "target_orient": start_orient.copy(),
+        }]
+        if move_duration > 0.0:
+            plan.append({
+                "duration": float(move_duration),
+                "target_pos": robot_pos.astype(np.float32).copy(),
+                "target_orient": np.array([orientation], dtype=np.float32),
+            })
+        if post_duration > 0.0:
+            plan.append({
+                "duration": float(post_duration),
+                "target_pos": robot_pos.astype(np.float32).copy(),
+                "target_orient": np.array([orientation], dtype=np.float32),
+            })
+
+        return duration, 0.0, plan
     
     def _update_goal_block_positions(
         self, goal: GoalQueue, target_status: int
@@ -1100,7 +1166,7 @@ class PushBackGame(VexGame):
         self, 
         agent_state: Dict, 
         loader_idx: int
-    ) -> Tuple[float, float]:
+    ) -> Tuple[float, float, List[Dict[str, Any]]]:
         """Clear all blocks from a loader (can only be done once per loader per agent).
         
         The agent collects all 6 blocks from the loader at once.
@@ -1110,7 +1176,14 @@ class PushBackGame(VexGame):
         
         # Check if this loader has already been cleared by this agent
         if agent_state["loaders_taken"][loader_idx] >= 1:
-            return DEFAULT_DURATION, DEFAULT_PENALTY
+            return DEFAULT_DURATION, DEFAULT_PENALTY, [{
+                "duration": float(DEFAULT_DURATION),
+                "target_pos": agent_state["position"].copy(),
+                "target_orient": agent_state["orientation"].copy(),
+            }]
+
+        start_pos = agent_state["position"].copy()
+        start_orient = agent_state["orientation"].copy()
         
         loader_pos = LOADERS[loader_idx].position
         robot_len, _ = self.get_robot_dimensions(agent_state["agent_name"])
@@ -1150,18 +1223,41 @@ class PushBackGame(VexGame):
         
         # Time to collect all blocks
         duration += DEFAULT_DURATION
-        
-        return duration, 0.0
+
+        move_duration = dist / speed
+        post_duration = DEFAULT_DURATION
+        target_pos_plan = robot_pos.astype(np.float32).copy()
+        target_orient_plan = np.array([orientation], dtype=np.float32)
+        plan: List[Dict[str, Any]] = [{
+            "duration": float(DEFAULT_DURATION),
+            "target_pos": start_pos.copy(),
+            "target_orient": start_orient.copy(),
+        }]
+        if move_duration > 0.0:
+            plan.append({
+                "duration": float(move_duration),
+                "target_pos": target_pos_plan,
+                "target_orient": target_orient_plan,
+            })
+        plan.append({
+            "duration": float(post_duration),
+            "target_pos": target_pos_plan.copy(),
+            "target_orient": target_orient_plan.copy(),
+        })
+
+        return duration, 0.0, plan
     
     def _action_park(
         self, agent_state: Dict
-    ) -> Tuple[float, float]:
+    ) -> Tuple[float, float, List[Dict[str, Any]]]:
         """Park in team's zone."""
         team = agent_state["team"]
         park_zone = PARK_ZONES[team]
 
         duration = DEFAULT_DURATION
         penalty = 0.0
+        start_pos = agent_state["position"].copy()
+        start_orient = agent_state["orientation"].copy()
 
         # Uncomment to enforce parking time penalty
         # # If parking before 10 seconds left, apply penalty
@@ -1172,7 +1268,11 @@ class PushBackGame(VexGame):
         for other_agent, other_state in self.state["agents"].items():
             if other_agent != agent_state["agent_name"]:
                 if other_state["team"] == team and other_state.get("parked", False):
-                    return duration, penalty + DEFAULT_PENALTY
+                    return duration, penalty + DEFAULT_PENALTY, [{
+                        "duration": float(duration),
+                        "target_pos": start_pos.copy(),
+                        "target_orient": start_orient.copy(),
+                    }]
         
         movement = park_zone.center - agent_state["position"]
         dist = np.linalg.norm(movement)
@@ -1189,12 +1289,34 @@ class PushBackGame(VexGame):
             "agent": agent_state["agent_name"],
         })
         self.state["pending_events"] = pending
-        
-        return duration, penalty
+
+        move_duration = dist / speed
+        post_duration = DEFAULT_DURATION
+        target_pos_plan = park_zone.center.copy()
+        target_orient_plan = agent_state["orientation"].copy()
+        plan: List[Dict[str, Any]] = [{
+            "duration": float(DEFAULT_DURATION),
+            "target_pos": start_pos.copy(),
+            "target_orient": start_orient.copy(),
+        }]
+        if move_duration > 0.0:
+            plan.append({
+                "duration": float(move_duration),
+                "target_pos": target_pos_plan.copy(),
+                "target_orient": target_orient_plan.copy(),
+            })
+        if post_duration > 0.0:
+            plan.append({
+                "duration": float(post_duration),
+                "target_pos": target_pos_plan.copy(),
+                "target_orient": target_orient_plan.copy(),
+            })
+
+        return duration, penalty, plan
     
     def _action_turn_toward_center(
         self, agent_state: Dict
-    ) -> Tuple[float, float]:
+    ) -> Tuple[float, float, List[Dict[str, Any]]]:
         """Turn robot to face center."""
 
         direction = np.array([0.0, 0.0]) - agent_state["position"]
@@ -1212,7 +1334,11 @@ class PushBackGame(VexGame):
 
         # If camera is already facing center, give a small penalty
         if abs(angle_error) < 1e-4:
-            return DEFAULT_DURATION, DEFAULT_PENALTY
+            return DEFAULT_DURATION, DEFAULT_PENALTY, [{
+                "duration": float(DEFAULT_DURATION),
+                "target_pos": agent_state["position"].copy(),
+                "target_orient": agent_state["orientation"].copy(),
+            }]
         
         # Schedule pending event to apply when action completes
         pending = self.state.setdefault("pending_events", [])
@@ -1222,8 +1348,14 @@ class PushBackGame(VexGame):
             "target_angle": target_body_angle,
         })
         self.state["pending_events"] = pending
-        
-        return DEFAULT_DURATION, 0.0
+
+        plan = [{
+            "duration": float(DEFAULT_DURATION),
+            "target_pos": agent_state["position"].copy(),
+            "target_orient": np.array([target_body_angle], dtype=np.float32),
+        }]
+
+        return DEFAULT_DURATION, 0.0, plan
     
     @abstractmethod
     def compute_score(self) -> Dict[str, int]:
@@ -1297,7 +1429,7 @@ class PushBackGame(VexGame):
         
         return True
 
-    def _update_held_blocks(self, agent_name: str, position: np.ndarray):
+    def update_robot_position(self, agent_name: str, position: np.ndarray) -> None:
         for block in self.state["blocks"]:
             if block["status"] == BlockStatus.HELD and block.get("held_by") == agent_name:
                 block["position"] = position.copy()

@@ -97,8 +97,12 @@ if __name__ == "__main__":
     # Get parameters from command line arguments
     parser = argparse.ArgumentParser(description="Train multiple agents concurrently.")
     parser.add_argument('--learning-rate', type=float, default=0.0005, help='Learning rate')  # Default: 0.0005
+    parser.add_argument('--learning-rate-final', type=float, default=None,
+                        help='Final learning rate for linear schedule (if not set, learning rate is constant)')
     parser.add_argument('--discount-factor', type=float, default=0.99, help='Discount factor')  # Default: 0.99
     parser.add_argument('--entropy', type=float, default=0.05, help='Entropy coefficient')  # Default: 0.05
+    parser.add_argument('--entropy-final', type=float, default=None,
+                        help='Final entropy coefficient for linear schedule (if not set, entropy is constant)')
     parser.add_argument('--num-iters', type=int, default=1, help='Number of training iterations')  # Default: 1
     parser.add_argument('--cpus-per-task', type=int, default=1, help='Number of CPUs per task')  # Default: 1
     parser.add_argument('--job-id', type=str, default="", help='SLURM job ID')  # Job ID for logging
@@ -155,6 +159,39 @@ if __name__ == "__main__":
     print(f"GPUs detected by Ray: {num_gpus_available}")
 
     all_policies = temp_env.possible_agents
+    train_batch_size_per_learner = 2400
+
+    # Optional schedules for lr and entropy over estimated total timesteps.
+    # Behavior: hold initial value for first 20%, then linearly move to final value.
+    estimated_total_timesteps = max(1, args.num_iters * train_batch_size_per_learner)
+    hold_fraction = 0.2
+    hold_timesteps = int(estimated_total_timesteps * hold_fraction)
+    lr_schedule = None
+    entropy_schedule = None
+
+    if args.learning_rate_final is not None and args.learning_rate_final != args.learning_rate:
+        lr_schedule = [
+            [0, float(args.learning_rate)],
+            [hold_timesteps, float(args.learning_rate)],
+            [estimated_total_timesteps, float(args.learning_rate_final)],
+        ]
+
+    if args.entropy_final is not None and args.entropy_final != args.entropy:
+        entropy_schedule = [
+            [0, float(args.entropy)],
+            [hold_timesteps, float(args.entropy)],
+            [estimated_total_timesteps, float(args.entropy_final)],
+        ]
+
+    if lr_schedule:
+        print(f"Using learning rate schedule: {lr_schedule}")
+    else:
+        print(f"Using constant learning rate: {args.learning_rate}")
+
+    if entropy_schedule:
+        print(f"Using entropy schedule: {entropy_schedule}")
+    else:
+        print(f"Using constant entropy coefficient: {args.entropy}")
     
     # Configure the RLlib Trainer using PPO with new API stack
     config = (
@@ -198,9 +235,11 @@ if __name__ == "__main__":
         )
         .training(
             lr=args.learning_rate,
+            lr_schedule=lr_schedule,
             gamma=args.discount_factor,
             entropy_coeff=args.entropy,
-            train_batch_size_per_learner=2400,  # 4x episode length (~600) to ensure episodes complete
+            entropy_coeff_schedule=entropy_schedule,
+            train_batch_size_per_learner=train_batch_size_per_learner,  # 4x episode length (~600) to ensure episodes complete
         )
         .callbacks(VexScoreCallback)  # Track team scores
         .debugging(log_level="ERROR")  # Reduce logging verbosity
@@ -226,10 +265,17 @@ if __name__ == "__main__":
     metadata = {
         "game": args.game,
         "learning_rate": args.learning_rate,
+        "learning_rate_final": args.learning_rate_final,
+        "learning_rate_schedule": lr_schedule,
         "discount_factor": args.discount_factor,
         "entropy": args.entropy,
+        "entropy_final": args.entropy_final,
+        "entropy_schedule": entropy_schedule,
         "randomize": args.randomize,
         "num_iters": args.num_iters,
+        "estimated_total_timesteps": estimated_total_timesteps,
+        "schedule_hold_fraction": hold_fraction,
+        "schedule_hold_timesteps": hold_timesteps,
         "checkpoint_path": args.checkpoint_path,
         "enable_communication": args.enable_communication,
         "start_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()),

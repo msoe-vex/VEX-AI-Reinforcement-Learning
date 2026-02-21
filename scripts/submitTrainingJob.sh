@@ -11,7 +11,9 @@ while [[ "$#" -gt 0 ]]; do
     case $1 in
         --checkpoint-path) CHECKPOINT_PATH="$2"; shift 2 ;;
         --entropy) ENTROPY_I="$2"; shift 2 ;;
+        --entropy-final) ENTROPY_F="$2"; shift 2 ;;
         --learning-rate) LR_I="$2"; shift 2 ;;
+        --learning-rate-final) LR_F="$2"; shift 2 ;;
         --discount-factor) DISCOUNT_I="$2"; shift 2 ;;
         --randomize) RANDOMIZE="$2"; shift 2 ;;
         --no-randomize) RANDOMIZE="False"; shift ;;
@@ -43,9 +45,11 @@ fi
 python vex_model_training.py \
     --num-iters ${NUM_ITERS:-10} \
     --cpus-per-task $SLURM_CPUS_PER_TASK \
-    --entropy ${ENTROPY_I:-0.01} \
+    --entropy ${ENTROPY_I:-0.05} \
+    --entropy-final ${ENTROPY_F:-0.005} \
     --learning-rate ${LR_I:-0.0005} \
-    --discount-factor ${DISCOUNT_I:-0.99} \
+    --learning-rate-final ${LR_F:-0.00005} \
+    --discount-factor ${DISCOUNT_I:-0.98} \
     --job-id $SLURM_JOB_ID \
     ${RAND_FLAG} \
     --num-gpus $SLURM_GPUS \
