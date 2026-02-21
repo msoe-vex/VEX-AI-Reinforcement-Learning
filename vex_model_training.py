@@ -192,6 +192,11 @@ if __name__ == "__main__":
         print(f"Using entropy schedule: {entropy_schedule}")
     else:
         print(f"Using constant entropy coefficient: {args.entropy}")
+
+    # RLlib new API: schedules must be provided directly via `lr` and
+    # `entropy_coeff` (not via deprecated *_schedule fields).
+    lr_config_value = lr_schedule if lr_schedule is not None else float(args.learning_rate)
+    entropy_config_value = entropy_schedule if entropy_schedule is not None else float(args.entropy)
     
     # Configure the RLlib Trainer using PPO with new API stack
     config = (
@@ -234,11 +239,9 @@ if __name__ == "__main__":
             max_num_env_runner_restarts=0,  # Disable env runner restarts to avoid object store issues
         )
         .training(
-            lr=args.learning_rate,
-            lr_schedule=lr_schedule,
+            lr=lr_config_value,
             gamma=args.discount_factor,
-            entropy_coeff=args.entropy,
-            entropy_coeff_schedule=entropy_schedule,
+            entropy_coeff=entropy_config_value,
             train_batch_size_per_learner=train_batch_size_per_learner,  # 4x episode length (~600) to ensure episodes complete
         )
         .callbacks(VexScoreCallback)  # Track team scores
