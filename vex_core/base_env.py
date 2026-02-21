@@ -141,6 +141,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         """Reset the environment to initial state."""
         self.agents = self.possible_agents[:]
         self.num_moves = 0
+        self._terminated_agents = set()
         self._step_calls = 0  # Counter for external step() calls
         self.agent_movements = {agent: None for agent in self.possible_agents}
         self.busy_state = {}
@@ -281,6 +282,11 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         Rewards are computed AFTER the busy state completes (events have been
         applied and scores have changed), giving correct score-based rewards.
         """
+        # Remove any previously terminated agents so we don't expect actions from them
+        for agent in self._terminated_agents:
+            if agent in self.agents:
+                self.agents.remove(agent)
+                
         if not actions and not self.agents:
             self.agents = []
             return {}, {}, {"__all__": True}, {"__all__": True}, {}
@@ -489,10 +495,13 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             # Check terminations during fast-forward
             _, ff_remove = self._check_terminations()
             for agent in ff_remove:
-                if agent in self.agents:
-                    self.agents.remove(agent)
-                if agent in self.busy_state:
-                    del self.busy_state[agent]
+                if agent not in self._terminated_agents:
+                    self._terminated_agents.add(agent)
+                    # Add them to self.agents so RLlib sees their final terminating state
+                    if agent not in self.agents:
+                        self.agents.append(agent)
+                    if agent in self.busy_state:
+                        del self.busy_state[agent]
             if all(
                 self.game.is_agent_terminated(
                     a, game_time=self.env_agent_states.get(a, {}).get("time", 0.0)
@@ -506,29 +515,40 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         # ──────────────────────────────────────────────────────────────
         terminations, agents_to_remove = self._check_terminations()
         for agent in agents_to_remove:
-            if agent in self.agents:
-                self.agents.remove(agent)
-            if agent in self.busy_state:
-                del self.busy_state[agent]
+            if agent not in self._terminated_agents:
+                self._terminated_agents.add(agent)
+                # Keep them in self.agents for one final return to RLlib
+                if agent not in self.agents:
+                    self.agents.append(agent)
+                if agent in self.busy_state:
+                    del self.busy_state[agent]
         
-        # Game is over when no agents are free AND no agents are busy
-        terminations["__all__"] = len(self.agents) == 0 and not any(
-            a in self.busy_state for a in all_agents
-        )
-        truncations = {agent: False for agent in all_agents}
-        truncations["__all__"] = False
-        
+        # Build strictly filtered observation dicts only for returning agents
         observations = {
             agent: self.game.get_observation(
                 agent,
                 game_time=self.env_agent_states.get(agent, {}).get("time", 0.0)
             )
-            for agent in all_agents
+            for agent in self.agents
         }
+        
+        rewards_out = {agent: rewards.get(agent, 0.0) for agent in self.agents}
+        terminations_out = {agent: terminations.get(agent, False) for agent in self.agents}
+        truncations_out = {agent: False for agent in self.agents}
+        infos_out = {agent: infos.get(agent, {}) for agent in self.agents}
+        
+        # Game is over when all agents have terminated OR no free agents and no busy agents
+        all_done = (len(self._terminated_agents) == len(self.possible_agents)) or \
+                   (len(self.agents) == 0 and not any(a in self.busy_state for a in all_agents))
+
+        terminations_out["__all__"] = all_done
+        truncations_out["__all__"] = False
         
         self._step_calls += 1
         
-        return observations, rewards, terminations, truncations, infos
+        self.render(action_dict=actions, rewards=rewards_out, infos=infos_out)
+        
+        return observations, rewards_out, terminations_out, truncations_out, infos_out
 
 
     def _update_messages(self, active_agents: List[str]) -> None:
