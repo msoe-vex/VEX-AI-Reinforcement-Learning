@@ -1259,10 +1259,15 @@ class PushBackGame(VexGame):
         start_pos = agent_state["position"].copy()
         start_orient = agent_state["orientation"].copy()
 
-        # Uncomment to enforce parking time penalty
-        # # If parking before 10 seconds left, apply penalty
-        # # Requires game_time passed in or separate check
-        # # For now, ignoring time penalty in parking logic within game.
+        # Prevent parking early: only allow when 15 seconds or less remain.
+        current_time = float(agent_state.get("game_time", 0.0))
+        time_remaining = float(self.total_time - current_time)
+        if time_remaining > 15.0:
+            return duration, penalty + DEFAULT_PENALTY, [{
+                "duration": float(duration),
+                "target_pos": start_pos.copy(),
+                "target_orient": start_orient.copy(),
+            }]
 
         # Only one robot can park per team
         for other_agent, other_state in self.state["agents"].items():
@@ -1425,6 +1430,12 @@ class PushBackGame(VexGame):
                 return False
         elif action == Actions.TAKE_FROM_LOADER_BR.value:
             if observation[ObsIndex.LOADERS_CLEARED_START + 3] >= 1:
+                return False
+        
+        if action == Actions.PARK.value:
+            # Parking is only valid if 15 seconds or less remain
+            time_remaining = self.total_time - observation[ObsIndex.GAME_TIME]
+            if time_remaining > 15.0:
                 return False
         
         return True

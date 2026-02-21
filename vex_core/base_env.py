@@ -307,6 +307,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             # Record executed action in the game state so the UI "Current:" row
             # only changes when an actual action was performed.
             agent_state["current_action"] = action_int
+            # Provide current synchronized match time to game action logic.
+            agent_state["game_time"] = self.env_agent_states.get(agent, {}).get("time", 0.0)
             duration, penalty = self.game.execute_action(
                 agent, action_int
             )
