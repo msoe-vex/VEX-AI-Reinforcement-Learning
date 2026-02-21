@@ -1434,7 +1434,7 @@ class PushBackGame(VexGame):
         
         if action == Actions.PARK.value:
             # Parking is only valid if 15 seconds or less remain
-            time_remaining = self.total_time - observation[ObsIndex.GAME_TIME]
+            time_remaining = observation[ObsIndex.TIME_REMAINING]
             if time_remaining > 15.0:
                 return False
         
