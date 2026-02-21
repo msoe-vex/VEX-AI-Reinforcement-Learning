@@ -260,10 +260,10 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run VEX environment simulation with trained models.")
     parser.add_argument(
-        "--model-dir",
+        "--experiment-path",
         type=str,
         required=True,
-        help="Path to the directory containing trained TorchScript models (.pt files)."
+        help="Path to the experiment directory containing trained TorchScript models (.pt files)."
     )
     parser.add_argument(
         "--game",
@@ -296,7 +296,7 @@ if __name__ == "__main__":
     game_name = args.game
     if game_name is None:
         # Look for metadata in the model directory
-        metadata_path = os.path.join(args.model_dir, "training_metadata.json")
+        metadata_path = os.path.join(args.experiment_path, "training_metadata.json")
         if os.path.exists(metadata_path):
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
@@ -310,7 +310,7 @@ if __name__ == "__main__":
         raise ValueError("--iterations must be at least 1")
 
     run_simulation(
-        args.model_dir,
+        args.experiment_path,
         game_name,
         args.output_dir,
         iterations=args.iterations,

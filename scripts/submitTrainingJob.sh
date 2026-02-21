@@ -9,7 +9,7 @@
 # Parse command line arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
-        --checkpoint-path) CHECKPOINT_PATH="$2"; shift 2 ;;
+        --experiment-path) EXPERIMENT_PATH="$2"; shift 2 ;;
         --entropy) ENTROPY_I="$2"; shift 2 ;;
         --entropy-final) ENTROPY_F="$2"; shift 2 ;;
         --learning-rate) LR_I="$2"; shift 2 ;;
@@ -55,7 +55,7 @@ python vex_model_training.py \
     --num-gpus $SLURM_GPUS \
     --partition $SLURM_JOB_PARTITION \
     --algorithm ${ALGORITHM:-PPO} \
-    --checkpoint-path ${CHECKPOINT_PATH:-""} \
+    --experiment-path ${EXPERIMENT_PATH:-""} \
     --verbose ${VERBOSE:-1} \
     --game ${GAME:-vexai_skills} \
     ${COMM_FLAG}

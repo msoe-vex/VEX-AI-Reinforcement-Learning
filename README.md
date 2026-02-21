@@ -52,19 +52,19 @@ All commands use SLURM to run on the MSOE computing cluster (ROSIE).
    # Custom game variant and settings
    sbatch scripts/submitTrainingJob.sh --game vexu_skills --num-iters 50 --entropy 0.02
    
-   # Training with checkpoint resumption
-   sbatch scripts/submitTrainingJob.sh --checkpoint-path job_results/job_220065/PPO_2026-01-29_00-36-09/PPO_VEX_Multi_Agent_Env_6a53c_00000_0_2026-01-29_00-36-09/checkpoint_000050
+   # Training with experiment resumption (auto-loads metadata + latest checkpoint)
+   sbatch scripts/submitTrainingJob.sh --experiment-path job_results/job_220065/PPO_2026-01-29_00-36-09
    ```
    - Check job status: `squeue -u $USER`
    - View output: `cat job_results/job_#####/output.txt`
    - View errors: `cat job_results/job_#####/error.txt`
 
-3. **Compile a Checkpoint (Manual)**
+3. **Compile an Experiment (Manual)**
 
-   If you need to recompile a specific checkpoint to TorchScript:
+   If you need to recompile the latest checkpoint in an experiment to TorchScript:
 
    ```bash
-   srun python vex_model_compile.py --checkpoint-path job_results/job_220065/PPO_2026-01-29_00-36-09/PPO_VEX_Multi_Agent_Env_6a53c_00000_0_2026-01-29_00-36-09/checkpoint_000050 --output-path job_results/job_220065/PPO_2026-01-29_00-36-09/
+   srun python vex_model_compile.py --experiment-path job_results/job_220065/PPO_2026-01-29_00-36-09
    ```
 
 4. **Run a Trained Model**
@@ -72,10 +72,10 @@ All commands use SLURM to run on the MSOE computing cluster (ROSIE).
    Visualize a trained policy from a compiled checkpoint:
 
    ```bash
-   srun python vex_model_test.py --model-dir job_results/job_220065/PPO_2026-01-29_00-36-09/ --output-dir vex_model_test
+   srun python vex_model_test.py --experiment-path job_results/job_220065/PPO_2026-01-29_00-36-09/ --output-dir vex_model_test
    
    # Specify game variant if metadata not found
-   srun python vex_model_test.py --model-dir /path/to/models --game vexai_skills
+   srun python vex_model_test.py --experiment-path /path/to/experiment --game vexai_skills
    ```
    - Saves rendered GIFs to `vex_model_test/` directory by default.
 
@@ -108,7 +108,7 @@ RLlib training script (submit via SLURM using `sbatch scripts/submitTrainingJob.
 | `--game`            | str     | `vexai_skills` | Game variant to train (vexai_skills, vexu_skills, vexai_comp, vexu_comp)   |
 | `--randomize`       | bool    | True         | Enable full-field block randomization                                       |
 | `--num-gpus`        | int     | 0            | Number of GPUs to use (auto-set by SLURM script)                            |
-| `--checkpoint-path` | str     | ""           | Path to checkpoint for resuming training                                    |
+| `--experiment-path` | str     | ""           | Path to experiment directory for resuming (loads metadata + latest checkpoint) |
 | `--verbose`         | int     | 1            | Verbosity level (0=silent, 1=default, 2=verbose)                            |
 | `--job-id`          | str     | auto         | SLURM Job ID (auto-set by SLURM script)                                     |
 
@@ -120,9 +120,7 @@ Compile RLlib checkpoint to TorchScript (run via `srun`).
 
 | Argument           | Type    | Default         | Description                                                                 |
 |---------------------|---------|-----------------|-----------------------------------------------------------------------------|
-| `--checkpoint-path` | str     | Required        | Path to the RLlib checkpoint directory                                      |
-| `--output-path`     | str     | checkpoint dir  | Output directory for `.pt` files                                            |
-| `--game`            | str     | `vexai_skills`  | Game variant (vexai_skills, vexu_skills, vexai_comp, vexu_comp)             |
+| `--experiment-path` | str     | Required        | Path to experiment directory (loads metadata + latest checkpoint)            |
 
 ### vex_model_test.py
 
@@ -130,7 +128,7 @@ Run simulation using trained TorchScript models (run via `srun`).
 
 | Argument         | Type    | Default         | Description                                               |
 |-------------------|---------|-----------------|-----------------------------------------------------------|
-| `--model-dir`    | str     | Required        | Path to directory containing `.pt` model files            |
+| `--experiment-path` | str | Required      | Path to experiment directory containing `.pt` model files |
 | `--game`         | str     | auto-detect     | Game variant (auto-detected from training_metadata.json if available) |
 | `--output-dir`   | str     | `vex_model_test` | Output directory for rendered GIFs                        |
 
@@ -165,9 +163,9 @@ sbatch scripts/submitTrainingJob.sh \
   --learning-rate 0.0001 \
   --entropy 0.02
 
-# Resume from checkpoint
+# Resume from experiment (latest checkpoint auto-selected)
 sbatch scripts/submitTrainingJob.sh \
-  --checkpoint-path job_results/job_220065/PPO_2026-01-29_00-36-09/PPO_VEX_Multi_Agent_Env_6a53c_00000_0_2026-01-29_00-36-09/checkpoint_000050
+   --experiment-path job_results/job_220065/PPO_2026-01-29_00-36-09
 ```
 
 ### Monitoring Jobs

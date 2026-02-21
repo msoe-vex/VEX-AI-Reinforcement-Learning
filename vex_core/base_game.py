@@ -362,7 +362,8 @@ class VexGame(ABC):
         actions: Optional[Dict] = None,
         rewards: Optional[Dict] = None,
         num_moves: int = 0,
-        agent_times: Optional[Dict[str, float]] = None
+        agent_times: Optional[Dict[str, float]] = None,
+        action_time_remaining: Optional[Dict[str, float]] = None,
     ) -> None:
         """
         Render game-specific info panel.
@@ -374,6 +375,8 @@ class VexGame(ABC):
             rewards: Dict of rewards received (or None)
             num_moves: Current step number
             agent_times: Dict mapping agent names to current game time
+            action_time_remaining: Dict mapping agent names to remaining time
+                (seconds) in the currently executing action
         """
         pass
     

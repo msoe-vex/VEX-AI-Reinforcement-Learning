@@ -1,6 +1,7 @@
 import argparse
 import os
 import json
+import glob
 import ray
 from ray.rllib.algorithms.algorithm import Algorithm
 from ray.tune.registry import register_env
@@ -13,6 +14,32 @@ from vex_core.base_env import VexMultiAgentEnv
 from pushback import PushBackGame
 # Import your custom model class to ensure pickle can find it
 from vex_custom_model import VexCustomPPO
+
+
+def find_latest_checkpoint(experiment_path: str):
+    """Find the latest RLlib checkpoint directory under an experiment path."""
+    checkpoint_candidates = []
+
+    primary_pattern = os.path.join(experiment_path, "PPO_VEX*", "checkpoint_*")
+    checkpoint_candidates.extend(glob.glob(primary_pattern))
+
+    if not checkpoint_candidates:
+        fallback_pattern = os.path.join(experiment_path, "**", "checkpoint_*")
+        checkpoint_candidates.extend(glob.glob(fallback_pattern, recursive=True))
+
+    checkpoint_dirs = [p for p in checkpoint_candidates if os.path.isdir(p)]
+    if not checkpoint_dirs:
+        return None
+
+    def checkpoint_sort_key(path):
+        base = os.path.basename(path)
+        try:
+            idx = int(base.split("_")[-1])
+        except (ValueError, IndexError):
+            idx = -1
+        return (idx, os.path.getmtime(path))
+
+    return max(checkpoint_dirs, key=checkpoint_sort_key)
 
 def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, output_path: str = None, enable_communication: bool = True):
     def env_creator(config=None):
@@ -146,22 +173,33 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint-path", type=str, required=True)
-    parser.add_argument("--output-path", type=str, required=True)
-    parser.add_argument("--game", type=str, default="vexai_skills")
+    parser.add_argument("--experiment-path", type=str, required=True)
     args = parser.parse_args()
-    
-    # Try to read enable_communication from metadata if available
+
+    experiment_path = os.path.abspath(args.experiment_path)
+    if not os.path.exists(experiment_path):
+        raise FileNotFoundError(f"Experiment path does not exist: {experiment_path}")
+
+    metadata_path = os.path.join(experiment_path, "training_metadata.json")
+    game_name = "vexai_skills"
     enable_communication = False
-    metadata_path = os.path.join(args.output_path, "training_metadata.json")
+
     if os.path.exists(metadata_path):
         try:
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
+                game_name = metadata.get("game", game_name)
                 enable_communication = metadata.get("enable_communication", False)
-            print(f"Read enable_communication={enable_communication} from metadata")
+            print(f"Read metadata: game={game_name}, enable_communication={enable_communication}")
         except Exception as e:
             print(f"Warning: Could not read metadata: {e}")
-    
-    game = PushBackGame.get_game(args.game)
-    compile_checkpoint_to_torchscript(game, args.checkpoint_path, args.output_path, enable_communication)
+    else:
+        print(f"Warning: No training metadata found at {metadata_path}. Using defaults.")
+
+    checkpoint_path = find_latest_checkpoint(experiment_path)
+    if checkpoint_path is None:
+        raise FileNotFoundError(f"No checkpoint directories found under: {experiment_path}")
+
+    print(f"Using checkpoint: {checkpoint_path}")
+    game = PushBackGame.get_game(game_name, enable_communication=enable_communication)
+    compile_checkpoint_to_torchscript(game, checkpoint_path, experiment_path, enable_communication)

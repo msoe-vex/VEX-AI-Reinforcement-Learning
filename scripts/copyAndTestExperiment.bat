@@ -13,4 +13,4 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
-python vex_model_test.py --model-dir "vex_model_training\%lastFolder%"
+python vex_model_test.py --experiment-path "vex_model_training\%lastFolder%"

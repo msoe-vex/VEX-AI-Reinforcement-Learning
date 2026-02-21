@@ -855,7 +855,7 @@ class PushBackGame(VexGame):
             duration, penalty, plan = self._action_turn_toward_center(agent_state)
         
         elif action == Actions.IDLE.value:
-            duration = DEFAULT_DURATION
+            duration = 0.1
             penalty = DEFAULT_PENALTY # Small penalty for idle
             plan = [{
                 "duration": float(duration),
@@ -919,6 +919,60 @@ class PushBackGame(VexGame):
         
         return observation
 
+    def _build_move_action_plan(
+        self,
+        agent_name: str,
+        start_pos: np.ndarray,
+        start_orient: np.ndarray,
+        target_pos: np.ndarray,
+        final_orient: np.ndarray,
+        post_action_duration: float,
+    ) -> Tuple[float, List[Dict[str, Any]], float]:
+        """Build standard move-action plan: turn -> move -> turn -> post-action."""
+        pre_turn_duration = DEFAULT_DURATION
+        post_turn_duration = DEFAULT_DURATION
+
+        target_pos_np = np.array(target_pos, dtype=np.float32).copy()
+        final_orient_np = np.array(final_orient, dtype=np.float32).copy()
+
+        movement = target_pos_np - start_pos
+        dist = float(np.linalg.norm(movement))
+        speed = float(self.get_robot_speed(agent_name))
+        move_duration = dist / speed if speed > 0 else 0.0
+
+        travel_orientation = (
+            np.array([np.arctan2(movement[1], movement[0])], dtype=np.float32)
+            if dist > 0
+            else start_orient.copy()
+        )
+
+        duration = pre_turn_duration + move_duration + post_turn_duration + max(0.0, float(post_action_duration))
+
+        plan: List[Dict[str, Any]] = [{
+            "duration": float(pre_turn_duration),
+            "target_pos": start_pos.copy(),
+            "target_orient": travel_orientation.copy(),
+        }]
+        if move_duration > 0.0:
+            plan.append({
+                "duration": float(move_duration),
+                "target_pos": target_pos_np.copy(),
+                "target_orient": travel_orientation.copy(),
+            })
+        plan.append({
+            "duration": float(post_turn_duration),
+            "target_pos": target_pos_np.copy(),
+            "target_orient": final_orient_np.copy(),
+        })
+        if post_action_duration > 0.0:
+            plan.append({
+                "duration": float(post_action_duration),
+                "target_pos": target_pos_np.copy(),
+                "target_orient": final_orient_np.copy(),
+            })
+
+        return duration, plan, move_duration
+
     def _action_pickup_block(
         self, agent_state: Dict, target_team: Optional[str] = None
     ) -> Tuple[float, float, List[Dict[str, Any]]]:
@@ -975,9 +1029,8 @@ class PushBackGame(VexGame):
                             min_dist = dist
                             target_idx = i
         
-        duration = DEFAULT_DURATION # Base duration
+        duration = 0.0
         penalty = 0.0
-        move_duration = 0.0
         start_pos = agent_state["position"].copy()
         start_orient = agent_state["orientation"].copy()
         target_pos_plan = start_pos.copy()
@@ -992,11 +1045,6 @@ class PushBackGame(VexGame):
             
             if dist > 0:
                 agent_state["orientation"][0] = np.arctan2(movement[1], movement[0])
-            
-            # Use dynamic robot speed
-            speed = self.get_robot_speed(agent_state["agent_name"])
-            move_duration = dist / speed
-            duration += move_duration
             target_pos_plan = target_pos.copy()
             target_orient_plan = agent_state["orientation"].copy()
         else:
@@ -1013,17 +1061,22 @@ class PushBackGame(VexGame):
         })
         self.state["pending_events"] = pending
 
-        plan: List[Dict[str, Any]] = [{
-            "duration": float(DEFAULT_DURATION),
-            "target_pos": start_pos.copy(),
-            "target_orient": start_orient.copy(),
-        }]
-        if move_duration > 0.0:
-            plan.append({
-                "duration": float(move_duration),
-                "target_pos": target_pos_plan.copy(),
-                "target_orient": target_orient_plan.copy(),
-            })
+        if target_idx != -1:
+            duration, plan, _ = self._build_move_action_plan(
+                agent_name=agent_state["agent_name"],
+                start_pos=start_pos,
+                start_orient=start_orient,
+                target_pos=target_pos_plan,
+                final_orient=target_orient_plan,
+                post_action_duration=DEFAULT_DURATION,
+            )
+        else:
+            duration = DEFAULT_DURATION
+            plan = [{
+                "duration": float(DEFAULT_DURATION),
+                "target_pos": start_pos.copy(),
+                "target_orient": start_orient.copy(),
+            }]
 
         return duration, penalty, plan
     
@@ -1085,10 +1138,6 @@ class PushBackGame(VexGame):
         agent_state["position"] = robot_pos.astype(np.float32)
         agent_state["orientation"] = np.array([orientation], dtype=np.float32)
         
-        # Dynamic speed
-        speed = self.get_robot_speed(agent_state["agent_name"])
-        duration = DEFAULT_DURATION + (dist / speed)
-        
         # Collect information about blocks to score
         scored_blocks = []
         ejected_blocks = []
@@ -1115,7 +1164,6 @@ class PushBackGame(VexGame):
                     })
         
         scored_count = len(scored_blocks)
-        duration += DEFAULT_DURATION * scored_count
         
         # Schedule pending event to apply when action completes
         pending = self.state.setdefault("pending_events", [])
@@ -1128,25 +1176,15 @@ class PushBackGame(VexGame):
         })
         self.state["pending_events"] = pending
 
-        move_duration = dist / speed
         post_duration = DEFAULT_DURATION * scored_count
-        plan: List[Dict[str, Any]] = [{
-            "duration": float(DEFAULT_DURATION),
-            "target_pos": start_pos.copy(),
-            "target_orient": start_orient.copy(),
-        }]
-        if move_duration > 0.0:
-            plan.append({
-                "duration": float(move_duration),
-                "target_pos": robot_pos.astype(np.float32).copy(),
-                "target_orient": np.array([orientation], dtype=np.float32),
-            })
-        if post_duration > 0.0:
-            plan.append({
-                "duration": float(post_duration),
-                "target_pos": robot_pos.astype(np.float32).copy(),
-                "target_orient": np.array([orientation], dtype=np.float32),
-            })
+        duration, plan, _ = self._build_move_action_plan(
+            agent_name=agent_state["agent_name"],
+            start_pos=start_pos,
+            start_orient=start_orient,
+            target_pos=robot_pos.astype(np.float32),
+            final_orient=np.array([orientation], dtype=np.float32),
+            post_action_duration=post_duration,
+        )
 
         return duration, 0.0, plan
     
@@ -1206,10 +1244,6 @@ class PushBackGame(VexGame):
         dist = np.linalg.norm(movement)
         agent_state["position"] = robot_pos.astype(np.float32)
         agent_state["orientation"] = np.array([orientation], dtype=np.float32)
-        # Dynamic speed
-        speed = self.get_robot_speed(agent_state["agent_name"])
-        duration = DEFAULT_DURATION + (dist / speed)
-        
         # Schedule pending event to apply when action completes
         pending = self.state.setdefault("pending_events", [])
         pending.append({
@@ -1221,29 +1255,16 @@ class PushBackGame(VexGame):
         
         # Agent assumes it got all 6 blocks (doesn't know colors) visually handled by tracker
         
-        # Time to collect all blocks
-        duration += DEFAULT_DURATION
-
-        move_duration = dist / speed
-        post_duration = DEFAULT_DURATION
-        target_pos_plan = robot_pos.astype(np.float32).copy()
-        target_orient_plan = np.array([orientation], dtype=np.float32)
-        plan: List[Dict[str, Any]] = [{
-            "duration": float(DEFAULT_DURATION),
-            "target_pos": start_pos.copy(),
-            "target_orient": start_orient.copy(),
-        }]
-        if move_duration > 0.0:
-            plan.append({
-                "duration": float(move_duration),
-                "target_pos": target_pos_plan,
-                "target_orient": target_orient_plan,
-            })
-        plan.append({
-            "duration": float(post_duration),
-            "target_pos": target_pos_plan.copy(),
-            "target_orient": target_orient_plan.copy(),
-        })
+        # Time to collect all assumed 6 blocks
+        post_duration = DEFAULT_DURATION * BLOCKS_PER_LOADER
+        duration, plan, _ = self._build_move_action_plan(
+            agent_name=agent_state["agent_name"],
+            start_pos=start_pos,
+            start_orient=start_orient,
+            target_pos=robot_pos.astype(np.float32),
+            final_orient=np.array([orientation], dtype=np.float32),
+            post_action_duration=post_duration,
+        )
 
         return duration, 0.0, plan
     
@@ -1282,9 +1303,8 @@ class PushBackGame(VexGame):
         movement = park_zone.center - agent_state["position"]
         dist = np.linalg.norm(movement)
         agent_state["position"] = park_zone.center.copy()
-        # Dynamic speed     
-        speed = self.get_robot_speed(agent_state["agent_name"])
-        duration += DEFAULT_DURATION + dist / speed
+        # Dynamic speed
+        post_duration = DEFAULT_DURATION
         agent_state["orientation"] = np.array([np.random.choice([np.pi/2, -np.pi/2])], dtype=np.float32)
         
         # Schedule pending event to apply when action completes
@@ -1295,27 +1315,14 @@ class PushBackGame(VexGame):
         })
         self.state["pending_events"] = pending
 
-        move_duration = dist / speed
-        post_duration = DEFAULT_DURATION
-        target_pos_plan = park_zone.center.copy()
-        target_orient_plan = agent_state["orientation"].copy()
-        plan: List[Dict[str, Any]] = [{
-            "duration": float(DEFAULT_DURATION),
-            "target_pos": start_pos.copy(),
-            "target_orient": start_orient.copy(),
-        }]
-        if move_duration > 0.0:
-            plan.append({
-                "duration": float(move_duration),
-                "target_pos": target_pos_plan.copy(),
-                "target_orient": target_orient_plan.copy(),
-            })
-        if post_duration > 0.0:
-            plan.append({
-                "duration": float(post_duration),
-                "target_pos": target_pos_plan.copy(),
-                "target_orient": target_orient_plan.copy(),
-            })
+        duration, plan, _ = self._build_move_action_plan(
+            agent_name=agent_state["agent_name"],
+            start_pos=start_pos,
+            start_orient=start_orient,
+            target_pos=park_zone.center.copy(),
+            final_orient=agent_state["orientation"].copy(),
+            post_action_duration=post_duration,
+        )
 
         return duration, penalty, plan
     
@@ -1559,7 +1566,8 @@ class PushBackGame(VexGame):
         actions: Optional[Dict] = None,
         rewards: Optional[Dict] = None,
         num_moves: int = 0,
-        agent_times: Optional[Dict[str, float]] = None
+        agent_times: Optional[Dict[str, float]] = None,
+        action_time_remaining: Optional[Dict[str, float]] = None,
     ) -> None:
         """
         Render Push Back specific info panel with held blocks by color.
@@ -1625,6 +1633,14 @@ class PushBackGame(VexGame):
             except Exception:
                 current_text = str(current_val) if current_val is not None else "---"
             ax_info.text(0.1, info_y, f"Current: {current_text}", fontsize=8, va='top')
+            info_y -= 0.03
+
+            remaining_action_time = 0.0
+            if action_time_remaining and agent in action_time_remaining:
+                remaining_action_time = float(action_time_remaining[agent])
+            ax_info.text(0.1, info_y,
+                        f"Action Time Left: {remaining_action_time:.1f}s",
+                        fontsize=7, va='top', color='gray')
             info_y -= 0.03
             
             # Show time

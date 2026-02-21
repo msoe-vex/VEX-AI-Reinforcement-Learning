@@ -10,6 +10,7 @@ from ray import tune
 import warnings
 import time
 import os
+import glob
 
 # Import from new modular architecture
 from vex_core.base_env import VexMultiAgentEnv
@@ -75,6 +76,51 @@ def policy_mapping_fn(agent_id, episode):
     # return "shared_policy" # Use the same policy for all agents
     return agent_id # Change to agent_id if you want to use different policies for each agent
 
+
+def find_latest_checkpoint(experiment_directory: str):
+    """Find the latest RLlib checkpoint directory under experiment_directory."""
+    checkpoint_candidates = []
+
+    primary_pattern = os.path.join(experiment_directory, "PPO_VEX*", "checkpoint_*")
+    checkpoint_candidates.extend(glob.glob(primary_pattern))
+
+    if not checkpoint_candidates:
+        fallback_pattern = os.path.join(experiment_directory, "**", "checkpoint_*")
+        checkpoint_candidates.extend(glob.glob(fallback_pattern, recursive=True))
+
+    checkpoint_dirs = [p for p in checkpoint_candidates if os.path.isdir(p)]
+    if not checkpoint_dirs:
+        return None
+
+    def checkpoint_sort_key(path):
+        base = os.path.basename(path)
+        try:
+            idx = int(base.split("_")[-1])
+        except (ValueError, IndexError):
+            idx = -1
+        return (idx, os.path.getmtime(path))
+
+    return max(checkpoint_dirs, key=checkpoint_sort_key)
+
+
+def apply_training_metadata_overrides(args, metadata):
+    """Override CLI args with values from training_metadata.json."""
+    metadata_to_arg = {
+        "game": "game",
+        "learning_rate": "learning_rate",
+        "learning_rate_final": "learning_rate_final",
+        "discount_factor": "discount_factor",
+        "entropy": "entropy",
+        "entropy_final": "entropy_final",
+        "randomize": "randomize",
+        "num_iters": "num_iters",
+        "enable_communication": "enable_communication",
+    }
+
+    for metadata_key, arg_name in metadata_to_arg.items():
+        if metadata_key in metadata:
+            setattr(args, arg_name, metadata[metadata_key])
+
 if __name__ == "__main__":
     # Suppress excessive experiment checkpoint warnings completely
     os.environ["TUNE_WARN_EXCESSIVE_EXPERIMENT_CHECKPOINT_SYNC_THRESHOLD_S"] = "0"
@@ -114,7 +160,7 @@ if __name__ == "__main__":
     parser.add_argument('--num-gpus', type=int, default=0, help='Number of GPUs to use')
     parser.add_argument('--partition', type=str, default="teaching", help='SLURM partition to use')
     parser.add_argument('--algorithm', type=str, default="PPO", help='Algorithm to use for training')
-    parser.add_argument('--checkpoint-path', type=str, default="", help='Path to the checkpoint directory')
+    parser.add_argument('--experiment-path', type=str, default="", help='Path to an existing experiment directory to restore from')
     parser.add_argument('--verbose', type=int, default=1, help='Verbosity mode: 0 = silent, 1 = default, 2 = verbose')
     parser.add_argument('--game', type=str, default="vexai_skills", help='Game variant to train')
     parser.add_argument('--enable-communication', type=str2bool, nargs='?', const=True, default=True,
@@ -123,6 +169,26 @@ if __name__ == "__main__":
                         help='Disable agent communication (shorthand)')
 
     args = parser.parse_args()
+
+    restore_path = None
+    restore_experiment_directory = args.experiment_path
+    if restore_experiment_directory:
+        restore_experiment_directory = os.path.abspath(restore_experiment_directory)
+        metadata_path = os.path.join(restore_experiment_directory, "training_metadata.json")
+
+        if os.path.exists(metadata_path):
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+            apply_training_metadata_overrides(args, metadata)
+            print(f"Loaded and applied metadata overrides from: {metadata_path}")
+        else:
+            print(f"Warning: No training metadata found at {metadata_path}; using CLI/default parameters.")
+
+        restore_path = find_latest_checkpoint(restore_experiment_directory)
+        if restore_path:
+            print(f"Found latest checkpoint: {restore_path}")
+        else:
+            print(f"Warning: No checkpoint directories found under {restore_experiment_directory}; training will start fresh.")
 
     print("Training parameters:")
     for arg in vars(args):
@@ -279,7 +345,8 @@ if __name__ == "__main__":
         "estimated_total_timesteps": estimated_total_timesteps,
         "schedule_hold_fraction": hold_fraction,
         "schedule_hold_timesteps": hold_timesteps,
-        "checkpoint_path": args.checkpoint_path,
+        "source_experiment_directory": restore_experiment_directory,
+        "restored_checkpoint_path": restore_path,
         "enable_communication": args.enable_communication,
         "start_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()),
     }
@@ -293,8 +360,7 @@ if __name__ == "__main__":
     checkpoint_freq = max(1, min(5, args.num_iters))  # Every 5 iters, but at least once
     print(f"Checkpoint frequency: every {checkpoint_freq} iterations")
 
-    # Prepare restore parameter if checkpoint path is provided
-    restore_path = args.checkpoint_path if args.checkpoint_path else None
+    # Prepare restore parameter if an experiment directory was provided
     if restore_path:
         print(f"Restoring from checkpoint: {restore_path}")
 

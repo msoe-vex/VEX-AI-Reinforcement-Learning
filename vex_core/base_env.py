@@ -771,13 +771,19 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             proj = st.get("projected_position", None)
             if proj is not None:
                 px, py = float(proj[0]), float(proj[1])
+                proj_theta = float(theta)
+                if agent in self.busy_state:
+                    try:
+                        proj_theta = float(self.busy_state[agent]["target_orient"][0])
+                    except Exception:
+                        proj_theta = float(theta)
                 proj_rect = patches.Rectangle(
                     (-robot_len/2, -robot_wid/2),
                     robot_len, robot_wid,
                     edgecolor='yellow', facecolor='none',
                     linestyle='--', linewidth=1.2, alpha=0.8, zorder=2
                 )
-                tproj = mtransforms.Affine2D().rotate(theta).translate(px, py) + ax.transData
+                tproj = mtransforms.Affine2D().rotate(proj_theta).translate(px, py) + ax.transData
                 proj_rect.set_transform(tproj)
                 ax.add_patch(proj_rect)
 
@@ -812,6 +818,15 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             for agent in self.agents
         }
 
+        # Prepare per-agent remaining action time map (seconds)
+        action_time_remaining = {
+            agent: (
+                max(0, int(self.busy_state[agent].get("remaining_ticks", 0))) * DELTA_T
+                if agent in self.busy_state else 0.0
+            )
+            for agent in self.agents
+        }
+
         # Delegate info panel rendering to game
         self.game.render_info_panel(
             ax_info=ax_info,
@@ -819,7 +834,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             actions=actions,
             rewards=rewards,
             num_moves=self.num_moves,
-            agent_times=agent_times
+            agent_times=agent_times,
+            action_time_remaining=action_time_remaining,
         )
     
     def close(self) -> None:
