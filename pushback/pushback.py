@@ -1769,14 +1769,14 @@ class PushBackGame(VexGame):
 
             return float(np.clip(max_probability, 0.0, 1.0))
 
-        def _visibility_style(color: str, visibility_probability: float, min_alpha: float = 0.35) -> tuple:
+        def _visibility_style(color: str, visibility_probability: float, min_alpha: float = 0.45) -> tuple:
             probability = float(np.clip(visibility_probability, 0.0, 1.0))
             rgb = np.array(mcolors.to_rgb(color), dtype=float)
             hue, lightness, saturation = colorsys.rgb_to_hls(rgb[0], rgb[1], rgb[2])
-            adjusted_saturation = saturation * (0.35 + 0.65 * probability)
+            adjusted_saturation = saturation * (0.60 + 0.40 * probability)
             adjusted_rgb = np.array(colorsys.hls_to_rgb(hue, lightness, adjusted_saturation), dtype=float)
-            gray = np.array([0.62, 0.62, 0.62], dtype=float)
-            blend_strength = (1.0 - probability) * 0.35
+            gray = np.array([0.74, 0.74, 0.74], dtype=float)
+            blend_strength = (1.0 - probability) * 0.18
             output_rgb = np.clip(adjusted_rgb * (1.0 - blend_strength) + gray * blend_strength, 0.0, 1.0)
             alpha = min_alpha + (1.0 - min_alpha) * probability
             return output_rgb, float(np.clip(alpha, 0.0, 1.0))
@@ -1921,7 +1921,7 @@ class PushBackGame(VexGame):
                     edge_width = 2
 
                 block_probability = _point_visibility_probability(np.array([block["position"][0], block["position"][1]]))
-                face_style, block_alpha = _visibility_style(fill_color, block_probability)
+                face_style, block_alpha = _visibility_style(fill_color, block_probability, min_alpha=0.55)
                 edge_style, _ = _visibility_style(edge_color, block_probability)
                 
                 hexagon = patches.RegularPolygon(
@@ -1945,14 +1945,14 @@ class PushBackGame(VexGame):
                 inner_radius = (seg_idx / num_segments) * fov_radius
                 outer_radius = ((seg_idx + 1) / num_segments) * fov_radius
                 mid_radius = 0.5 * (inner_radius + outer_radius)
-                visibility_probability = float(np.clip(self._visibility_probability(mid_radius), 0.0, 1.0))
-                if visibility_probability <= 0.001:
+                radial_alpha = 0.25 * max(0.0, 1.0 - (mid_radius / fov_radius))
+                if radial_alpha <= 0.001:
                     continue
                 fov_wedge = patches.Wedge(
                     (x, y), outer_radius, fov_start_angle, fov_end_angle,
                     width=(outer_radius - inner_radius),
                     facecolor='yellow',
-                    alpha=visibility_probability,
+                    alpha=radial_alpha,
                     edgecolor='none',
                     linewidth=0.0
                 )

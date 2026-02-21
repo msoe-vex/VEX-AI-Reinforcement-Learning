@@ -671,7 +671,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         field_half = self.game.field_size_inches / 2
         ax.set_xlim(-field_half, field_half)
         ax.set_ylim(-field_half, field_half)
-        ax.set_facecolor('#cccccc')
+        ax.set_facecolor('white')
         ax.set_aspect('equal')
         
         ax_info.set_xlim(0, 1)
@@ -679,7 +679,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         ax_info.axis('off')
         
         # Draw auto line
-        ax.plot([-field_half, field_half], [0, 0], color='white', linewidth=2)
+        ax.plot([-field_half, field_half], [0, 0], color='#d0d0d0', linewidth=2)
         
         # Render game-specific elements
         self.game.render_game_elements(ax)
