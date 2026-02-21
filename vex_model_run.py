@@ -9,6 +9,8 @@ class VexModelRunner:
     def __init__(self, model_path: str, game: VexGame):
         self.model_path: str = model_path
         self.game: VexGame = game
+        if hasattr(self.game, "deterministic"):
+            self.game.deterministic = True
         self.robot = game.robots[0]  # Use first (only) robot
         self.model: torch.jit.ScriptModule = None
                 

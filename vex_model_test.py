@@ -62,7 +62,7 @@ def load_agent_models(model_dir, agents, device):
     
     return models
 
-def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=True):
+def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=True, deterministic=True):
     """
     Loads trained models and runs one or more simulations in the VEX environment.
 
@@ -72,6 +72,7 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
         output_dir (str): Output directory for renders.
         iterations (int): Number of episodes to run.
         export_gif (bool): Whether to render frames and export GIF(s).
+        deterministic (bool): Whether to run deterministic environment mechanics.
     """
     if not os.path.exists(model_dir):
         print(f"Error: Model directory not found at {model_dir}")
@@ -94,14 +95,19 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
             print(f"Warning: Could not read enable_communication from metadata: {e}")
 
     # Initialize the game/environment with matching communication configuration
-    game = PushBackGame.get_game(game_name, enable_communication=enable_communication)
+    game = PushBackGame.get_game(
+        game_name,
+        enable_communication=enable_communication,
+        deterministic=deterministic,
+    )
     
     env = VexMultiAgentEnv(
         game=game,
         render_mode="all", 
         output_directory=output_dir, 
         randomize=True,
-        enable_communication=enable_communication
+        enable_communication=enable_communication,
+        deterministic=deterministic,
     )
     
     # Load models for each agent
@@ -289,6 +295,12 @@ if __name__ == "__main__":
         default=True,
         help="Whether to render each step and export GIF output (use --no-export-gif to disable)"
     )
+    parser.add_argument(
+        "--deterministic",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable deterministic environment mechanics (use --no-deterministic for stochastic outcomes)"
+    )
     
     args = parser.parse_args()
     
@@ -314,5 +326,6 @@ if __name__ == "__main__":
         game_name,
         args.output_dir,
         iterations=args.iterations,
-        export_gif=args.export_gif
+        export_gif=args.export_gif,
+        deterministic=args.deterministic,
     )

@@ -62,12 +62,18 @@ def env_creator(config=None):
     """Create environment instance for RLlib registration."""
     config = config or {}
     enable_communication = config.get("enable_communication", True)
-    game = PushBackGame.get_game(config.get("game", "vexai_skills"), enable_communication=enable_communication)
+    deterministic = config.get("deterministic", True)
+    game = PushBackGame.get_game(
+        config.get("game", "vexai_skills"),
+        enable_communication=enable_communication,
+        deterministic=deterministic,
+    )
     return VexMultiAgentEnv(
         game=game,
         render_mode=None,
         randomize=config.get("randomize", True),
         enable_communication=enable_communication,
+        deterministic=deterministic,
     )
 
 
@@ -115,6 +121,7 @@ def apply_training_metadata_overrides(args, metadata):
         "randomize": "randomize",
         "num_iters": "num_iters",
         "enable_communication": "enable_communication",
+        "deterministic": "deterministic",
     }
 
     for metadata_key, arg_name in metadata_to_arg.items():
@@ -167,6 +174,10 @@ if __name__ == "__main__":
                         help='Enable or disable agent communication (use --no-enable-communication to explicitly disable)')
     parser.add_argument('--no-enable-communication', dest='enable_communication', action='store_false',
                         help='Disable agent communication (shorthand)')
+    parser.add_argument('--deterministic', type=str2bool, nargs='?', const=True, default=True,
+                        help='Enable deterministic environment mechanics (set false for stochastic outcomes)')
+    parser.add_argument('--no-deterministic', dest='deterministic', action='store_false',
+                        help='Disable deterministic environment mechanics (shorthand)')
 
     args = parser.parse_args()
 
@@ -199,7 +210,12 @@ if __name__ == "__main__":
     register_env("VEX_Multi_Agent_Env", env_creator)
 
     # Create a temporary instance to retrieve observation and action spaces for a sample agent.
-    temp_env = env_creator({"game": args.game, "randomize": args.randomize, "enable_communication": args.enable_communication})
+    temp_env = env_creator({
+        "game": args.game,
+        "randomize": args.randomize,
+        "enable_communication": args.enable_communication,
+        "deterministic": args.deterministic,
+    })
 
     # Get observation and action spaces for module spec
     sample_agent = temp_env.possible_agents[0]
@@ -273,7 +289,12 @@ if __name__ == "__main__":
         )
         .environment(
             env="VEX_Multi_Agent_Env",
-            env_config={"randomize": args.randomize, "game": args.game, "enable_communication": args.enable_communication}
+            env_config={
+                "randomize": args.randomize,
+                "game": args.game,
+                "enable_communication": args.enable_communication,
+                "deterministic": args.deterministic,
+            }
         )
         .framework("torch")  # change to "tf" for TensorFlow
         .resources(
@@ -348,6 +369,7 @@ if __name__ == "__main__":
         "source_experiment_directory": restore_experiment_directory,
         "restored_checkpoint_path": restore_path,
         "enable_communication": args.enable_communication,
+        "deterministic": args.deterministic,
         "start_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()),
     }
     metadata_path = os.path.join(experiment_dir, "training_metadata.json")

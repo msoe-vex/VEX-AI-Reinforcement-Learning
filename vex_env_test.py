@@ -42,10 +42,16 @@ def main():
         default="vex_env_test",
         help="Output directory for renders"
     )
+    parser.add_argument(
+        "--deterministic",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable deterministic environment mechanics (use --no-deterministic for stochastic outcomes)"
+    )
     args = parser.parse_args()
     
     # Create game instance using factory method
-    game = PushBackGame.get_game(args.game)
+    game = PushBackGame.get_game(args.game, deterministic=args.deterministic)
     
     # Determine render mode
     render_mode = None if args.no_render else "all"
@@ -60,6 +66,7 @@ def main():
         render_mode=render_mode,
         output_directory=args.output_dir,
         randomize=False,
+        deterministic=args.deterministic,
     )
     
     # Reset environment

@@ -23,6 +23,8 @@ while [[ "$#" -gt 0 ]]; do
         --game) GAME="$2"; shift 2 ;;
         --enable-communication) ENABLE_COMMUNICATION="$2"; shift 2 ;;
         --no-enable-communication) ENABLE_COMMUNICATION="False"; shift ;;
+        --deterministic) DETERMINISTIC="$2"; shift 2 ;;
+        --no-deterministic) DETERMINISTIC="False"; shift ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
 done
@@ -42,6 +44,13 @@ else
     RAND_FLAG="--no-randomize"
 fi
 
+# Normalize DETERMINISTIC (accept True/False/1/0/etc.) and convert to a flag
+if [[ "${DETERMINISTIC:-True}" =~ ^([Tt][Rr][Uu][Ee]|1)$ ]]; then
+    DETERMINISTIC_FLAG="--deterministic"
+else
+    DETERMINISTIC_FLAG="--no-deterministic"
+fi
+
 python vex_model_training.py \
     --num-iters ${NUM_ITERS:-10} \
     --cpus-per-task $SLURM_CPUS_PER_TASK \
@@ -58,4 +67,5 @@ python vex_model_training.py \
     --experiment-path ${EXPERIMENT_PATH:-""} \
     --verbose ${VERBOSE:-1} \
     --game ${GAME:-vexai_skills} \
-    ${COMM_FLAG}
+    ${COMM_FLAG} \
+    ${DETERMINISTIC_FLAG}

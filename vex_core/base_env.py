@@ -44,6 +44,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         output_directory: str = "",
         randomize: bool = True,
         enable_communication: bool = False,
+        deterministic: bool = True,
     ):
         """
         Initialize the VEX environment.
@@ -54,11 +55,15 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             output_directory: Directory for saving renders
             randomize: Whether to randomize initial positions
             enable_communication: Whether to enable agent-to-agent communication
+            deterministic: Whether environment/game stochastic mechanics are disabled
         """
         super().__init__()
         
         self.game = game
         self.enable_communication = enable_communication
+        self.deterministic = deterministic
+        if hasattr(self.game, "deterministic"):
+            self.game.deterministic = deterministic
             
         self.render_mode = render_mode
         self.output_directory = output_directory
