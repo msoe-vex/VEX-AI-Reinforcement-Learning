@@ -66,12 +66,13 @@ class VexGame(ABC):
     should create its own game instance.
     """
     
-    def __init__(self, robots: list[Robot] = None):
+    def __init__(self, robots: list[Robot] = None, enable_communication: bool = False):
         """Initialize with robot configurations."""
         from path_planner import PathPlanner  # Lazy import to avoid circular dependency
         self.robots = robots or []
         self._robot_map = {r.name: r for r in self.robots}
         self.path_planner = PathPlanner()
+        self.enable_communication = enable_communication
         self.state: Dict = None  # Game state, initialized by get_initial_state()
     
     @property
@@ -151,15 +152,30 @@ class VexGame(ABC):
         pass
     
     @abstractmethod
-    def get_observation(self, agent: str) -> np.ndarray:
+    def get_observation(self, agent: str, game_time: float = 0.0) -> np.ndarray:
         """
         Build the observation vector for an agent.
         
         Args:
             agent: Agent name
+            game_time: Current game time for the agent
             
         Returns:
             Observation array for the agent
+        """
+        pass
+
+    @abstractmethod
+    def is_agent_terminated(self, agent: str, game_time: float = 0.0) -> bool:
+        """
+        Check if an agent has terminated (game-specific logic).
+        
+        Args:
+            agent: Agent name
+            game_time: Current game time for the agent
+            
+        Returns:
+            True if the agent is terminated and should stop acting
         """
         pass
     
@@ -287,12 +303,13 @@ class VexGame(ABC):
         pass
 
     @abstractmethod
-    def is_agent_terminated(self, agent: str) -> bool:
+    def is_agent_terminated(self, agent: str, game_time: float = 0.0) -> bool:
         """
         Check if an agent has terminated (game-specific logic).
         
         Args:
             agent: Agent name
+            game_time: Current game time for the agent
             
         Returns:
             True if the agent is terminated and should stop acting
@@ -343,7 +360,8 @@ class VexGame(ABC):
         agents: List[str] = None,
         actions: Optional[Dict] = None,
         rewards: Optional[Dict] = None,
-        num_moves: int = 0
+        num_moves: int = 0,
+        agent_times: Optional[Dict[str, float]] = None
     ) -> None:
         """
         Render game-specific info panel.
@@ -354,6 +372,7 @@ class VexGame(ABC):
             actions: Dict of actions taken (or None)
             rewards: Dict of rewards received (or None)
             num_moves: Current step number
+            agent_times: Dict mapping agent names to current game time
         """
         pass
     
@@ -402,3 +421,71 @@ class VexGame(ABC):
         (e.g., goal managers).
         """
         pass
+    
+    def check_robot_collision(self, agent: str) -> bool:
+        """
+        Check if an agent has collided with another robot.
+        
+        Override this to implement custom collision detection logic.
+        
+        Args:
+            agent: Agent name to check for collisions
+            
+        Returns:
+            True if agent is colliding with another robot, False otherwise
+        """
+        if not self.state or "agents" not in self.state:
+            return False
+        
+        agent_state = self.state["agents"].get(agent)
+        if not agent_state:
+            return False
+        
+        # Prefer a projection (when present) — fall back to actual `position`.
+        agent_pos = agent_state.get("projected_position", agent_state.get("position"))
+        if agent_pos is None:
+            return False
+        
+        agent_robot = self.get_robot_for_agent(agent)
+        if not agent_robot:
+            return False
+        
+        # Use robot size as collision radius
+        agent_size = agent_robot.size.value / 2.0  # Convert to radius
+        
+        # Check against all other agents (use their projected_position when available)
+        for other_agent, other_state in self.state["agents"].items():
+            if other_agent == agent:
+                continue
+            
+            other_pos = other_state.get("projected_position", other_state.get("position"))
+            if other_pos is None:
+                continue
+            
+            other_robot = self.get_robot_for_agent(other_agent)
+            if not other_robot:
+                continue
+            
+            other_size = other_robot.size.value / 2.0  # Convert to radius
+            
+            # Calculate distance between robot projections (or positions)
+            distance = np.linalg.norm(agent_pos - other_pos)
+            
+            # Collision if distance is less than sum of radii
+            min_distance = agent_size + other_size
+            
+            if distance < min_distance:
+                return True
+        
+        return False
+    
+    def get_collision_penalty(self) -> float:
+        """
+        Get the collision penalty value.
+        
+        Override this to customize the penalty for collisions.
+        
+        Returns:
+            Penalty value (default: 5.0)
+        """
+        return 1.0

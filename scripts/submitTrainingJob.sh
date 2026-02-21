@@ -2,7 +2,7 @@
 #SBATCH --job-name=vex_ai_reinforcement_learning    # Job name
 #SBATCH --output=job_results/job_%j/output.txt      # Output file (%j will be replaced with the job ID)
 #SBATCH --error=job_results/job_%j/error.txt        # Error file (%j will be replaced with the job ID)
-#SBATCH --time=0-12:0                                # Time limit (DD-HH:MM)
+#SBATCH --time=0-24:0                                # Time limit (DD-HH:MM)
 #SBATCH --partition=teaching --gpus=0               # Partition to submit to. `teaching` (for the T4 GPUs) is default on Rosie, but it's still being specified here
 #SBATCH --cpus-per-task=8 --tasks=1                # Number of CPU cores to use
 
@@ -14,15 +14,32 @@ while [[ "$#" -gt 0 ]]; do
         --learning-rate) LR_I="$2"; shift 2 ;;
         --discount-factor) DISCOUNT_I="$2"; shift 2 ;;
         --randomize) RANDOMIZE="$2"; shift 2 ;;
+        --no-randomize) RANDOMIZE="False"; shift ;;
         --num-iters) NUM_ITERS="$2"; shift 2 ;;
         --algorithm) ALGORITHM="$2"; shift 2 ;;
         --verbose) VERBOSE="$2"; shift 2 ;;
         --game) GAME="$2"; shift 2 ;;
+        --enable-communication) ENABLE_COMMUNICATION="$2"; shift 2 ;;
+        --no-enable-communication) ENABLE_COMMUNICATION="False"; shift ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
 done
 
 # Run your code here
+# Normalize ENABLE_COMMUNICATION (accept True/False/1/0/etc.) and convert to a flag
+if [[ "${ENABLE_COMMUNICATION:-True}" =~ ^([Tt][Rr][Uu][Ee]|1)$ ]]; then
+    COMM_FLAG="--enable-communication"
+else
+    COMM_FLAG="--no-enable-communication"
+fi
+
+# Normalize RANDOMIZE (accept True/False/1/0/etc.) and convert to a flag
+if [[ "${RANDOMIZE:-True}" =~ ^([Tt][Rr][Uu][Ee]|1)$ ]]; then
+    RAND_FLAG="--randomize"
+else
+    RAND_FLAG="--no-randomize"
+fi
+
 python vex_model_training.py \
     --num-iters ${NUM_ITERS:-10} \
     --cpus-per-task $SLURM_CPUS_PER_TASK \
@@ -30,10 +47,11 @@ python vex_model_training.py \
     --learning-rate ${LR_I:-0.0005} \
     --discount-factor ${DISCOUNT_I:-0.99} \
     --job-id $SLURM_JOB_ID \
-    --randomize ${RANDOMIZE:-True} \
+    ${RAND_FLAG} \
     --num-gpus $SLURM_GPUS \
     --partition $SLURM_JOB_PARTITION \
     --algorithm ${ALGORITHM:-PPO} \
     --checkpoint-path ${CHECKPOINT_PATH:-""} \
     --verbose ${VERBOSE:-1} \
-    --game ${GAME:-vexai_skills}
+    --game ${GAME:-vexai_skills} \
+    ${COMM_FLAG}

@@ -42,6 +42,8 @@ class VexModelRunner:
         Uses stochastic sampling (Categorical distribution) to match training behavior.
         During training, RLlib samples from the action distribution rather than
         taking the argmax, so we replicate that here.
+        
+        Handles both communication-enabled and communication-disabled models.
 
         Args:
             observation: The current observation for the agent.
@@ -54,7 +56,14 @@ class VexModelRunner:
         obs_tensor = torch.from_numpy(obs_np).unsqueeze(0).to(self.device)
 
         with torch.no_grad():
-            action_logits = self.model(obs_tensor)
+            model_output = self.model(obs_tensor)
+        
+        # Handle both Discrete (no communication) and Tuple (with communication) outputs
+        # If communication is enabled, output is [ActionLogits, MessageMean, MessageLogStd]
+        # If disabled, output is just ActionLogits
+        # The number of action logits determines the action dim
+        action_dim = self.game.action_space(self.game.possible_agents[0]).n if hasattr(self.game.action_space(self.game.possible_agents[0]), 'n') else model_output.shape[1]
+        action_logits = model_output[:, :action_dim]
         
         # Use stochastic sampling like RLlib does during training
         # The model outputs logits; convert to probabilities and sample

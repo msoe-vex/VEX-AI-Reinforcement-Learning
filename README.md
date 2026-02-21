@@ -4,11 +4,11 @@ This project involves training and running reinforcement learning agents in a cu
 
 ## Setup
 
-Use Python 3.12
+Create and activate the conda environment:
 
 ```bash
-python -m venv myenv
-myenv\Scripts\activate
+conda create -n vexai python=3.12
+conda activate vexai
 pip install -r requirements.txt
 ```
 
@@ -23,45 +23,61 @@ pip install -r requirements.txt
 - **Advanced Randomization**: Full-field block scatter (-70" to +70") for robust training.
 - **Standardized Scoring**: Unified `Dict[str, int]` scoring interface for all modes.
 
-## General Workflow
+## General Workflow (ROSIE)
+
+All commands use SLURM to run on the MSOE computing cluster (ROSIE).
 
 1. **Test the Environment**
 
    Run the environment to check generation and physics. You can select the game mode via CLI:
 
    ```bash
-   # Default: vex_ai_competition
-   python vex_env_test.py --mode vex_ai_competition --steps 100
+   # Default: vexai_skills
+   srun python vex_env_test.py --game vexai_skills --steps 100
    
-   # Other modes: vex_u_competition, vex_u_skills, vex_ai_skills
-   python vex_env_test.py --mode vexu_skills
+   # Other game modes: vexu_comp, vexu_skills, vexai_comp
+   srun python vex_env_test.py --game vexu_skills --steps 100 --no-render
    ```
    - Runs a random policy simulation.
-   - Saves GIFs to `vex_env_test/steps`.
+   - Saves GIFs to `vex_env_test/` directory by default.
 
 2. **Train the Model**
 
-   Train a PPO agent using RLlib. The script automatically compiles the best checkpoint to TorchScript after training.
+   Submit a training job to SLURM. Results will be saved to `job_results/job_#####/` where `#####` is the SLURM job ID.
 
    ```bash
-   python vex_model_training.py --num-iters 100 --learning-rate 0.0003 --algorithm PPO
+   # Basic training with default parameters
+   sbatch scripts/submitTrainingJob.sh --num-iters 100 --learning-rate 0.0003
+   
+   # Custom game variant and settings
+   sbatch scripts/submitTrainingJob.sh --game vexu_skills --num-iters 50 --entropy 0.02
+   
+   # Training with checkpoint resumption
+   sbatch scripts/submitTrainingJob.sh --checkpoint-path job_results/job_220065/PPO_2026-01-29_00-36-09/PPO_VEX_Multi_Agent_Env_6a53c_00000_0_2026-01-29_00-36-09/checkpoint_000050
    ```
+   - Check job status: `squeue -u $USER`
+   - View output: `cat job_results/job_#####/output.txt`
+   - View errors: `cat job_results/job_#####/error.txt`
 
 3. **Compile a Checkpoint (Manual)**
 
-   If you need to recompile a specific checkpoint:
+   If you need to recompile a specific checkpoint to TorchScript:
 
    ```bash
-   python vex_model_compile.py --checkpoint-path /path/to/checkpoint_000005
+   srun python vex_model_compile.py --checkpoint-path job_results/job_220065/PPO_2026-01-29_00-36-09/PPO_VEX_Multi_Agent_Env_6a53c_00000_0_2026-01-29_00-36-09/checkpoint_000050 --output-path job_results/job_220065/PPO_2026-01-29_00-36-09/
    ```
 
 4. **Run a Trained Model**
 
-   Visualize a trained policy:
+   Visualize a trained policy from a compiled checkpoint:
 
    ```bash
-   python vex_model_test.py --model-path /path/to/policy.pt
+   srun python vex_model_test.py --model-dir job_results/job_220065/PPO_2026-01-29_00-36-09/ --output-dir vex_model_test
+   
+   # Specify game variant if metadata not found
+   srun python vex_model_test.py --model-dir /path/to/models --game vexai_skills
    ```
+   - Saves rendered GIFs to `vex_model_test/` directory by default.
 
 ---
 
@@ -71,53 +87,112 @@ pip install -r requirements.txt
 
 Environment definition and random simulation runner.
 
-| Argument         | Type    | Default              | Description                                      |
-|-------------------|---------|----------------------|--------------------------------------------------|
-| `--mode`         | str     | `vex_ai_competition` | Game variant to run.                             |
-| `--steps`        | int     | 100                  | Number of simulation steps.                      |
-| `--render_mode`  | str     | `rgb_array`          | Rendering mode.                                  |
+| Argument         | Type    | Default         | Description                                      |
+|-------------------|---------|-----------------|--------------------------------------------------|
+| `--game`         | str     | `vexai_skills`  | Game variant to test (vexai_skills, vexu_skills, vexai_comp, vexu_comp) |
+| `--steps`        | int     | 100             | Number of simulation steps.                      |
+| `--no-render`    | flag    | False           | Disable rendering and GIF creation.              |
+| `--output-dir`   | str     | `vex_env_test`  | Output directory for renders and GIFs.           |
 
 ### vex_model_training.py
 
-RLlib training script.
+RLlib training script (submit via SLURM using `sbatch scripts/submitTrainingJob.sh`).
 
-| Argument           | Type    | Default   | Description                                                                 |
-|---------------------|---------|-----------|-----------------------------------------------------------------------------|
-| `--learning-rate`   | float   | 0.0005    | Learning rate for optimizer                                                 |
-| `--discount-factor` | float   | 0.99      | Discount factor gamma                                                       |
-| `--entropy`         | float   | 0.01      | Entropy coefficient                                                         |
-| `--num-iters`       | int     | 1         | Number of training iterations                                               |
-| `--randomize`       | bool    | True      | Enable full-field block randomization                                       |
-| `--model-path`      | str     | ""        | Path to load a pre-trained model (for transfer learning)                    |
+| Argument           | Type    | Default      | Description                                                                 |
+|---------------------|---------|--------------|-----------------------------------------------------------------------------|
+| `--num-iters`       | int     | 1            | Number of training iterations                                               |
+| `--learning-rate`   | float   | 0.0005       | Learning rate for optimizer                                                 |
+| `--discount-factor` | float   | 0.99         | Discount factor (gamma)                                                     |
+| `--entropy`         | float   | 0.05         | Entropy coefficient for exploration                                         |
+| `--cpus-per-task`   | int     | 1            | Number of CPU cores to use per task                                         |
+| `--game`            | str     | `vexai_skills` | Game variant to train (vexai_skills, vexu_skills, vexai_comp, vexu_comp)   |
+| `--randomize`       | bool    | True         | Enable full-field block randomization                                       |
+| `--num-gpus`        | int     | 0            | Number of GPUs to use (auto-set by SLURM script)                            |
+| `--checkpoint-path` | str     | ""           | Path to checkpoint for resuming training                                    |
+| `--verbose`         | int     | 1            | Verbosity level (0=silent, 1=default, 2=verbose)                            |
+| `--job-id`          | str     | auto         | SLURM Job ID (auto-set by SLURM script)                                     |
+
+Training results are saved to `job_results/job_#####/` where `#####` is the SLURM job ID.
 
 ### vex_model_compile.py
 
-Compile RLlib checkpont to TorchScript.
+Compile RLlib checkpoint to TorchScript (run via `srun`).
 
-| Argument           | Type    | Required | Description                                                                 |
-|---------------------|---------|----------|-----------------------------------------------------------------------------|
-| `--checkpoint-path` | str     | Yes      | Path to the RLlib checkpoint directory                                      |
-| `--output-path`     | str     | No       | Output directory for `.pt` file                                             |
+| Argument           | Type    | Default         | Description                                                                 |
+|---------------------|---------|-----------------|-----------------------------------------------------------------------------|
+| `--checkpoint-path` | str     | Required        | Path to the RLlib checkpoint directory                                      |
+| `--output-path`     | str     | checkpoint dir  | Output directory for `.pt` files                                            |
+| `--game`            | str     | `vexai_skills`  | Game variant (vexai_skills, vexu_skills, vexai_comp, vexu_comp)             |
 
 ### vex_model_test.py
 
-Run simulation using a TorchScript model.
+Run simulation using trained TorchScript models (run via `srun`).
 
-| Argument         | Type    | Required | Description                                               |
-|-------------------|---------|----------|-----------------------------------------------------------|
-| `--model-path`    | str     | Yes      | Path to the trained TorchScript model (`.pt` file)        |
+| Argument         | Type    | Default         | Description                                               |
+|-------------------|---------|-----------------|-----------------------------------------------------------|
+| `--model-dir`    | str     | Required        | Path to directory containing `.pt` model files            |
+| `--game`         | str     | auto-detect     | Game variant (auto-detected from training_metadata.json if available) |
+| `--output-dir`   | str     | `vex_model_test` | Output directory for rendered GIFs                        |
 
 ---
 
-### SLURM Submission (submitTrainingJob.sh)
+## SLURM Job Management (ROSIE)
 
-Wrapper script for submitting `vex_model_training.py` jobs to SLURM (e.g., on ROSIE). Arguments passed to this script are forwarded to the python script.
+### Submitting Training Jobs
+
+Training jobs must be submitted through SLURM using the provided wrapper script:
 
 ```bash
-sbatch submitTrainingJob.sh --num-iters 1000 --learning-rate 0.0001
+sbatch scripts/submitTrainingJob.sh [OPTIONS]
 ```
 
-### SLURM Job Management
+The script will:
+- Submit the training job to the `teaching` partition
+- Save results to `job_results/job_#####/` (where `#####` is the job ID)
+- Create separate `output.txt` and `error.txt` files for logging
+- Allocate 8 CPU cores by default
 
-View jobs: `squeue -u $USER`
-Cancel job: `scancel <JOB_ID>`
+Example submissions:
+
+```bash
+# Basic training
+sbatch scripts/submitTrainingJob.sh --num-iters 100
+
+# Advanced settings
+sbatch scripts/submitTrainingJob.sh \
+  --game vexu_skills \
+  --num-iters 200 \
+  --learning-rate 0.0001 \
+  --entropy 0.02
+
+# Resume from checkpoint
+sbatch scripts/submitTrainingJob.sh \
+  --checkpoint-path job_results/job_220065/PPO_2026-01-29_00-36-09/PPO_VEX_Multi_Agent_Env_6a53c_00000_0_2026-01-29_00-36-09/checkpoint_000050
+```
+
+### Monitoring Jobs
+
+```bash
+# View all your jobs
+squeue -u $USER
+
+# View specific job details
+scontrol show job <JOB_ID>
+
+# View job output (while running or after completion)
+cat job_results/job_<JOB_ID>/output.txt
+
+# View job errors
+cat job_results/job_<JOB_ID>/error.txt
+
+# Cancel a job
+scancel <JOB_ID>
+```
+
+### Available Game Variants
+
+All scripts support the following game modes via the `--game` argument:
+- `vexai_skills` (default): VEX AI Skills - Cooperative red and blue robots working for red score
+- `vexu_skills`: VEX U Skills - Two cooperative red robots
+- `vexai_comp`: VEX AI Competition - Fully autonomous with special scoring rules
+- `vexu_comp`: VEX U Competition - Team-based with 24" and 15" robots

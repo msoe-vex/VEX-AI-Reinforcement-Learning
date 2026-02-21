@@ -18,6 +18,8 @@ from .base_game import VexGame, Robot, RobotSize, Team
 
 from typing import Optional
 
+DELTA_T = 0.1  # Discrete time step in seconds
+
 
 class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
     """
@@ -41,6 +43,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         render_mode: Optional[str] = None,
         output_directory: str = "",
         randomize: bool = True,
+        enable_communication: bool = False,
     ):
         """
         Initialize the VEX environment.
@@ -50,10 +53,12 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             render_mode: 'human' for display, 'rgb_array' or 'all' to save frames
             output_directory: Directory for saving renders
             randomize: Whether to randomize initial positions
+            enable_communication: Whether to enable agent-to-agent communication
         """
         super().__init__()
         
         self.game = game
+        self.enable_communication = enable_communication
             
         self.render_mode = render_mode
         self.output_directory = output_directory
@@ -83,6 +88,17 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self.score = 0
         self.agent_movements: Dict[str, Optional[Tuple[np.ndarray, np.ndarray]]] = {}
         
+        # Busy state for discrete time steps
+        # Maps agent -> {
+        #   "start_pos": np.array, "target_pos": np.array,
+        #   "target_orient": np.array,
+        #   "total_ticks": int, "remaining_ticks": int
+        # }
+        self.busy_state: Dict[str, Dict] = {}
+        
+        # Environment-managed agent states (Time, etc.)
+        self.env_agent_states: Dict[str, Dict] = {}
+        
         # Path planner (optional, set up by subclass or game)
         self.path_planner = None
         self._setup_path_planner()
@@ -91,6 +107,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         """Set up path planner if available."""
         try:
             from path_planner import PathPlanner
+            
             field_size = self.game.field_size_inches
             
             self.path_planner = PathPlanner(
@@ -132,8 +149,13 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         # Compute initial score
         self.score = self.game.compute_score()
         
+        # Initialize env state
+        self.env_agent_states = {
+            agent: {"time": 0.0} for agent in self.agents
+        }
+        
         observations = {
-            agent: self.game.get_observation(agent)
+            agent: self.game.get_observation(agent, game_time=0.0)
             for agent in self.agents
         }
         infos = {agent: {} for agent in self.agents}
@@ -142,135 +164,379 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
     
     def step(
         self, 
-        actions: Dict[str, int]
+        actions: Dict[str, Any]
     ) -> Tuple[Dict, Dict, Dict, Dict, Dict]:
-        """Execute one environment step."""
-        if not actions:
+        """
+        Execute one environment step (discrete tick).
+        Advances time by DELTA_T. Handles busy states and interpolation.
+        Handles Tuple Actions (Control, Message).
+        """
+        if not actions and not self.agents:
             self.agents = []
             return {}, {}, {"__all__": True}, {"__all__": True}, {}
         
         self.num_moves += 1
         
+        # DEBUG
+        if self.environment_state is None:
+            print("CRITICAL: self.environment_state is None in step()!")
+        
         # Keep all agents in self.agents until all are terminated
         active_agents = list(self.agents)
         
-        # Check which agents are terminated
-        terminated_agents = {
-            agent for agent in active_agents
-            if self.game.is_agent_terminated(agent)
-        }
-        
-        # If all agents are terminated, end the episode
-        if len(terminated_agents) == len(active_agents):
-            terminations = {agent: True for agent in active_agents}
-            terminations["__all__"] = True
-            truncations = {agent: False for agent in active_agents}
-            truncations["__all__"] = False
-            observations = {
-                agent: self.game.get_observation(agent)
-                for agent in active_agents
-            }
-            rewards = {agent: 0.0 for agent in active_agents}
-            infos = {agent: {} for agent in active_agents}
-            return observations, rewards, terminations, truncations, infos
         
         rewards = {agent: 0.0 for agent in active_agents}
+        terminations = {agent: False for agent in active_agents}
+        truncations = {agent: False for agent in active_agents}
+        infos = {agent: {} for agent in active_agents}
         
-        # Get current minimum game time for action synchronization (only from non-terminated agents)
-        non_terminated_agents = [a for a in active_agents if a not in terminated_agents]
-        if non_terminated_agents:
-            min_game_time = min(
-                self.environment_state["agents"][agent]["gameTime"]
-                for agent in non_terminated_agents
-            )
-        else:
-            min_game_time = 0
-        
-        total_time = self.game.total_time
-        
+        # 1. Handle Busy Agents (Interpolation)
+        for agent in active_agents:
+            if agent in self.busy_state:
+                busy_info = self.busy_state[agent]
+                busy_info["remaining_ticks"] -= 1
+                
+                agent_state = self.environment_state["agents"][agent]
+                
+                if busy_info["remaining_ticks"] <= 0:
+                    # Action complete - snap to target
+                    agent_state["position"] = busy_info["target_pos"].copy()
+                    agent_state["orientation"] = busy_info["target_orient"].copy()
+                    del self.busy_state[agent]
+                    infos[agent]["action_completed"] = True
+                    # Apply any pending events scheduled for this agent's action
+                    if hasattr(self.game, "apply_pending_events"):
+                        try:
+                            self.game.apply_pending_events(agent)
+                        except Exception:
+                            pass
+                else:
+                    # Interpolate
+                    total = busy_info["total_ticks"]
+                    rem = busy_info["remaining_ticks"]
+                    # Calculate progress (0.0 to 1.0)
+                    alpha = (total - rem) / total
+                    
+                    start_pos = busy_info["start_pos"]
+                    target_pos = busy_info["target_pos"]
+                    
+                    # Linear Int: P = P0 + (P1 - P0) * alpha
+                    current_pos = start_pos + (target_pos - start_pos) * alpha
+                    self.game._update_held_blocks(agent, current_pos + 5)
+                    agent_state["position"] = current_pos
+                    
+                    # Orientation: Point in direction of movement
+                    diff = target_pos - start_pos
+                    dist = np.linalg.norm(diff)
+                    if dist > 0.1: # Only if moving significantly
+                        heading = np.arctan2(diff[1], diff[0])
+                        agent_state["orientation"] = np.array([heading])
+            
+                if agent in self.busy_state:
+                     infos[agent]["action_skipped"] = True
+
+        # 2. Process Actions for Non-Busy Agents
         for agent, action in actions.items():
             if agent not in active_agents:
                 continue
+            
+            # Skip if terminated or busy
+            if terminations[agent]:
+                infos[agent]["action_skipped"] = True
+                continue
+            
+            if agent in self.busy_state:
+                continue # Already handled above
                 
             agent_state = self.environment_state["agents"][agent]
+            infos[agent]["action_skipped"] = False
             
-            # Skip terminated agents
-            if agent in terminated_agents:
-                agent_state["action_skipped"] = True
-                continue
-            
-            # Skip agent if their time is ahead
-            if agent_state["gameTime"] > min_game_time:
-                agent_state["action_skipped"] = True
-                continue
-            
-            agent_state["action_skipped"] = False
-            
-            # Store initial position for path tracking
-            initial_pos = agent_state["position"].copy()
+            # Capture state BEFORE action execution
+            start_pos = agent_state["position"].copy()
+            start_orient = agent_state["orientation"].copy()
             
             # Get scores before action
             initial_scores = self.game.compute_score()
             
-            # Execute action through game
-            action_int = int(action.value if hasattr(action, 'value') else action)
+            # Parsing Action Tuple (Control, Message)
+            action_val = action
+            emitted_msg = None
+            
+            # Check if action is sequence (list/tuple/ndarray with len > 1)
+            # RLlib Tuple action typically comes as tuple or list
+            if isinstance(action, (tuple, list)) and len(action) >= 2:
+                # [Control (int), Message (array)]
+                action_val = action[0]
+                emitted_msg = action[1]
+            elif isinstance(action, np.ndarray) and action.ndim > 0 and action.size > 1:
+                # Potentially flat array? But standard PPO Output for Tuple is complex.
+                # Assuming simple environment interaction script passes tuple.
+                pass
+                
+            # Execute physical action
+            action_int = int(action_val.value if hasattr(action_val, 'value') else action_val)
+            # Record executed action in the game state so the UI "Current:" row
+            # only changes when an actual action was performed.
+            agent_state["current_action"] = action_int
             duration, penalty = self.game.execute_action(
                 agent, action_int
             )
             
-            agent_state["gameTime"] += duration
+            # Store Emitted Message (if any) - validate length and dtype
+            if emitted_msg is not None:
+                arr = np.array(emitted_msg, dtype=np.float32).ravel()
+                # Pad or truncate to length 8 to avoid downstream broadcasting errors
+                if arr.size != 8:
+                    if arr.size < 8:
+                        padded = np.zeros(8, dtype=np.float32)
+                        if arr.size > 0:
+                            padded[: arr.size] = arr
+                        arr = padded
+                    else:
+                        arr = arr[:8].astype(np.float32)
+                agent_state["emitted_message"] = arr
+            else:
+                agent_state["emitted_message"] = np.zeros(8, dtype=np.float32)
+
+            # Capture state AFTER action execution (Target)
+            target_pos = agent_state["position"].copy()
+            target_orient = agent_state["orientation"].copy()
             
-            # Calculate reward via game (allows variant overrides)
-            new_scores = self.game.compute_score()
-            reward = self.game.compute_reward(agent, initial_scores, new_scores, penalty)
+            # Prepare Busy State
+            ticks = int(max(1, duration / DELTA_T)) 
             
-            rewards[agent] = reward
-            
-            # Track movement for rendering
-            final_pos = agent_state["position"]
-            if not np.array_equal(initial_pos, final_pos):
-                self.agent_movements[agent] = (initial_pos.copy(), final_pos.copy())
+            if ticks > 0:
+                # Revert visible state to start
+                agent_state["position"] = start_pos
+                agent_state["orientation"] = start_orient
+                
+                self.busy_state[agent] = {
+                    "start_pos": start_pos,
+                    "target_pos": target_pos,
+                    "target_orient": target_orient,
+                    "total_ticks": ticks,
+                    "remaining_ticks": ticks
+                }
+
+                # Update movement trail
+                if not np.array_equal(start_pos, target_pos):
+                    self.agent_movements[agent] = (start_pos.copy(), target_pos.copy())
             else:
                 self.agent_movements[agent] = None
-        
-        # Update total score (stored as property)
+            
+            # Rewards
+            new_scores = self.game.compute_score()
+            reward = self.game.compute_reward(agent, initial_scores, new_scores, penalty)
+            rewards[agent] = reward
+            
+            # Update accumulated duration in ENV STATE
+            if agent in self.env_agent_states:
+                self.env_agent_states[agent]["time"] += duration
+
+        # 3a. Projection-based collision check (prevent collisions using next-step projections)
+        # Compute projected next-step positions for all agents and immediately
+        # terminate any agents whose projections would collide.
+        try:
+            self._resolve_projected_collisions(active_agents, infos)
+        except Exception:
+            # Fail-safe: do not break the step if projection logic errors
+            pass
+
+        # Apply projected-collision penalties (environment-level)
+        for agent in active_agents:
+            if infos.get(agent, {}).get("action_terminated_early", False):
+                # Subtract a collision penalty from the agent's reward so it matches
+                # game-level collision semantics. compute_reward already subtracts
+                # penalties returned by execute_action; here we apply the env-level
+                # projected collision penalty using the same value as the game.
+                try:
+                    penalty_value = float(self.game.get_collision_penalty())
+                except Exception:
+                    penalty_value = 0.0
+                rewards[agent] = rewards.get(agent, 0.0) - penalty_value
+
+        # 3. Message Aggregation (Update Received Messages for NEXT step)
+        self._update_messages(active_agents)
+
+        # Update total score
         self.score = self.game.compute_score()
         
-        # Check terminations AFTER actions to see which agents just terminated
-        new_terminations = {
-            agent: self.game.is_agent_terminated(agent)
+        # Check terminations
+        # Check terminations
+        terminations = {}
+        agents_to_remove = set()
+        for agent in active_agents:
+             current_time = self.env_agent_states[agent]["time"] if agent in self.env_agent_states else 0.0
+             term = self.game.is_agent_terminated(agent, game_time=current_time)
+             terminations[agent] = term
+             if term:
+                 agents_to_remove.add(agent)
+                 
+        # Remove from self.agents
+        for agent in agents_to_remove:
+            if agent in self.agents:
+                self.agents.remove(agent)
+        
+        terminations["__all__"] = len(self.agents) == 0
+        truncations = {agent: False for agent in active_agents}
+        truncations["__all__"] = False
+        
+        # Observations
+        observations = {
+            agent: self.game.get_observation(
+                agent,
+                game_time=self.env_agent_states[agent]["time"] if agent in self.env_agent_states else 0.0
+            )
             for agent in active_agents
         }
         
-        # Determine which agents were newly terminated this step
-        newly_terminated = set()
+        # Only return rewards/infos for agents receiving observations?
+        # PettingZoo standard is return all.
+        
+        return observations, rewards, terminations, truncations, infos
+
+    def _update_messages(self, active_agents: List[str]) -> None:
+        """
+        Aggregate messages from neighbors for each agent.
+        Updates agent_state["received_messages"].
+        """
+        COMM_RADIUS = 72.0  # Approx half-field
+        
+        # Pre-fetch positions and messages
+        positions = {}
+        messages = {}
+        
+        # Safety check for None state (fixing test issues just in case)
+        if self.environment_state is None:
+             return
+             
         for agent in active_agents:
-            if agent not in terminated_agents and new_terminations[agent]:
-                newly_terminated.add(agent)
-        
-        # Only return observations/rewards/infos for non-terminated or newly terminated
-        agents_to_return = [a for a in active_agents if a not in terminated_agents or a in newly_terminated]
-        
-        terminations = {agent: new_terminations[agent] for agent in agents_to_return}
-        terminations["__all__"] = all(new_terminations.values())
-        
-        truncations = {agent: False for agent in agents_to_return}
-        truncations["__all__"] = False
-        
-        # Return observations only for agents that should receive them
-        observations = {
-            agent: self.game.get_observation(agent)
-            for agent in agents_to_return
-        }
-        
-        # Only return rewards/infos for agents receiving observations
-        filtered_rewards = {agent: rewards.get(agent, 0.0) for agent in agents_to_return}
-        infos = {agent: {
-            "action_skipped": self.environment_state["agents"][agent].get("action_skipped", False)
-        } for agent in agents_to_return}
-        
-        return observations, filtered_rewards, terminations, truncations, infos
+            st = self.environment_state["agents"][agent]
+            positions[agent] = st["position"]
+            # Normalize emitted_message to an 8-dim float32 vector (robustness against malformed state)
+            m = st.get("emitted_message", None)
+            if m is None:
+                messages[agent] = np.zeros(8, dtype=np.float32)
+            else:
+                m_arr = np.array(m, dtype=np.float32).ravel()
+                if m_arr.size != 8:
+                    if m_arr.size < 8:
+                        padded = np.zeros(8, dtype=np.float32)
+                        if m_arr.size > 0:
+                            padded[: m_arr.size] = m_arr
+                        m_arr = padded
+                    else:
+                        m_arr = m_arr[:8]
+                messages[agent] = m_arr
+
+        for agent in active_agents:
+            my_pos = positions[agent]
+            received_sum = np.zeros(8, dtype=np.float32)
+            count = 0
+            
+            for other in active_agents:
+                if agent == other:
+                    continue
+                
+                other_pos = positions[other]
+                dist = np.linalg.norm(my_pos - other_pos)
+                
+                if dist <= COMM_RADIUS:
+                    received_sum += messages[other]
+                    count += 1
+            
+            # Average
+            if count > 0:
+                received_sum /= count
+                
+            self.environment_state["agents"][agent]["received_messages"] = received_sum
+
     
+
+    def _project_agent_next_position(self, agent: str) -> np.ndarray:
+        """
+        Project the position this agent is trying to reach on the next step.
+
+        - If the agent is busy (has a queued target), return its `target_pos`.
+        - Otherwise return its current `position` (projection within robot).
+
+        This projection is used for collision checks that operate on planned
+        next-step positions instead of the robot's current footprint.
+        """
+        if self.environment_state is None:
+            raise RuntimeError("Environment state is not initialized")
+
+        agent_state = self.environment_state["agents"].get(agent)
+        if agent_state is None:
+            raise KeyError(f"Unknown agent: {agent}")
+
+        busy = self.busy_state.get(agent)
+        if busy is not None:
+            proj = busy["target_pos"].copy()
+        else:
+            proj = agent_state["position"].copy()
+
+        agent_state["projected_position"] = proj
+        return proj
+
+    def _resolve_projected_collisions(self, active_agents: list, infos: Dict[str, Dict]) -> None:
+        """
+        Project all agents' intended next-step positions and force immediate
+        termination of any agents whose projections collide.
+
+        - Agents with `busy_state` use `busy_state["target_pos"]` as projection.
+        - Stationary agents project to their current center (within robot).
+        - If two projections overlap (distance < sum of radii) both agents are
+          forced to terminate their current action immediately (busy_state cleared)
+          and `infos[agent]["action_terminated_early"] = True` is set.
+        """
+        # Build projected positions
+        projections: Dict[str, np.ndarray] = {}
+        for agent in active_agents:
+            try:
+                projections[agent] = self._project_agent_next_position(agent)
+            except Exception:
+                projections[agent] = self.environment_state["agents"][agent]["position"].copy()
+
+        # Pairwise collision check on projected positions
+        colliding_pairs: set[tuple[str, str]] = set()
+        agents_list = list(active_agents)
+        for i in range(len(agents_list)):
+            a = agents_list[i]
+            pa = projections[a]
+            ra = (self.game.get_robot_for_agent(a).size.value / 2.0) if self.game.get_robot_for_agent(a) else 9.0
+            for j in range(i + 1, len(agents_list)):
+                b = agents_list[j]
+                pb = projections[b]
+                rb = (self.game.get_robot_for_agent(b).size.value / 2.0) if self.game.get_robot_for_agent(b) else 9.0
+                if float(np.linalg.norm(pa - pb)) < (ra + rb):
+                    colliding_pairs.add((a, b))
+
+        # Enforce immediate termination for any agent involved in a projected collision
+        impacted: set[str] = set()
+        for a, b in colliding_pairs:
+            impacted.add(a)
+            impacted.add(b)
+
+        for agent in impacted:
+            # Cancel busy action (if any) so robot will not continue moving
+            if agent in self.busy_state:
+                try:
+                    del self.busy_state[agent]
+                except KeyError:
+                    pass
+                self.agent_movements[agent] = None
+                infos.setdefault(agent, {})["action_terminated_early"] = True
+            else:
+                # Not busy but projection conflicts with someone else
+                infos.setdefault(agent, {})["projection_conflict"] = True
+
+            # Mark flag on state for tests/logging
+            try:
+                self.environment_state["agents"][agent]["projected_collision"] = True
+            except Exception:
+                pass
+
     def is_valid_action(
         self, 
         action: int, 
@@ -403,6 +669,20 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 agent
             )
             
+            # Draw projected position (if available) as a dashed outline rectangle
+            proj = st.get("projected_position", None)
+            if proj is not None:
+                px, py = float(proj[0]), float(proj[1])
+                proj_rect = patches.Rectangle(
+                    (-robot_len/2, -robot_wid/2),
+                    robot_len, robot_wid,
+                    edgecolor='yellow', facecolor='none',
+                    linestyle='--', linewidth=1.2, alpha=0.8, zorder=2
+                )
+                tproj = mtransforms.Affine2D().rotate(theta).translate(px, py) + ax.transData
+                proj_rect.set_transform(tproj)
+                ax.add_patch(proj_rect)
+
             # Draw robot rectangle
             robot_rect = patches.Rectangle(
                 (-robot_len/2, -robot_wid/2),
@@ -428,13 +708,20 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                    color='white', fontweight='bold', zorder=11,
                    bbox=dict(boxstyle='circle,pad=0.2', facecolor='black', alpha=0.8))
         
-        # Delegate info panel rendering to game (allows game-specific customization)
+        # Prepare agent times map
+        agent_times = {
+            agent: self.env_agent_states[agent]["time"] if agent in self.env_agent_states else 0.0
+            for agent in self.agents
+        }
+
+        # Delegate info panel rendering to game
         self.game.render_info_panel(
             ax_info=ax_info,
             agents=self.agents,
             actions=actions,
             rewards=rewards,
-            num_moves=self.num_moves
+            num_moves=self.num_moves,
+            agent_times=agent_times
         )
     
     def close(self) -> None:
