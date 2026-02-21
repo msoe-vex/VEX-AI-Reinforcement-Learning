@@ -1198,10 +1198,20 @@ class PushBackGame(VexGame):
         """Turn robot to face center."""
 
         direction = np.array([0.0, 0.0]) - agent_state["position"]
-        target_angle = np.arctan2(direction[1], direction[0])
+        target_camera_angle = np.arctan2(direction[1], direction[0])
+        camera_offset = float(agent_state.get("camera_rotation_offset", 0.0))
 
-        # If already facing center, give a small penalty
-        if abs(target_angle - agent_state["orientation"][0]) < 1e-4:
+        current_body_angle = float(agent_state["orientation"][0])
+        current_camera_angle = current_body_angle + camera_offset
+        target_body_angle = target_camera_angle - camera_offset
+
+        angle_error = np.arctan2(
+            np.sin(target_camera_angle - current_camera_angle),
+            np.cos(target_camera_angle - current_camera_angle),
+        )
+
+        # If camera is already facing center, give a small penalty
+        if abs(angle_error) < 1e-4:
             return DEFAULT_DURATION, DEFAULT_PENALTY
         
         # Schedule pending event to apply when action completes
@@ -1209,7 +1219,7 @@ class PushBackGame(VexGame):
         pending.append({
             "type": "turn_toward_center",
             "agent": agent_state["agent_name"],
-            "target_angle": target_angle,
+            "target_angle": target_body_angle,
         })
         self.state["pending_events"] = pending
         
@@ -1778,7 +1788,10 @@ class PushBackGame(VexGame):
             actions.append("DRIVE;24;30")
 
         elif action == Actions.TURN_TOWARD_CENTER.value:
-            actions.append("TURN_TO_POINT;(0.0,0.0);40")
+            target_camera_angle = np.arctan2(-robot_pos[1], -robot_pos[0])
+            camera_offset = float(getattr(robot, "camera_rotation_offset", 0.0))
+            target_body_angle_deg = np.degrees(target_camera_angle - camera_offset)
+            actions.append(f"TURN_TO;{target_body_angle_deg:.1f};40")
 
         elif action == Actions.IDLE.value:
             actions.append("WAIT;0.5")
