@@ -1090,17 +1090,7 @@ class PushBackGame(VexGame):
                 data={
                     "agent": agent_state["agent_name"],
                     "block_idx": target_idx,
-                    "pickup_success": True,
                 },
-                probability=0.75 if self._is_stochastic() else 1.0,
-                on_failure=ActionEvent(
-                    type="pickup_block",
-                    data={
-                        "agent": agent_state["agent_name"],
-                        "block_idx": target_idx,
-                        "pickup_success": False,
-                    },
-                ),
             )
             
             steps, _ = self._build_move_action_plan(
@@ -1197,15 +1187,9 @@ class PushBackGame(VexGame):
                             "goal_type": goal_type,
                             "block_idx": block_idx,
                             "scoring_side": scoring_side,
+                            "is_friendly": True,
+                            "scoring_entry": scoring_entry.copy(),
                         },
-                        probability=0.75 if self._is_stochastic() else 1.0,
-                        on_failure=ActionEvent(
-                            type="eject_block",
-                            data={
-                                "block_idx": block_idx,
-                                "goal_center": scoring_entry.copy(),
-                            },
-                        ),
                     ))
                 else:
                     # Wrong color block - always eject
@@ -1515,19 +1499,27 @@ class PushBackGame(VexGame):
                 for idx in block_indices:
                     if 0 <= idx < len(self.state["blocks"]):
                         b = self.state["blocks"][idx]
-                        # Per-block stochasticity is handled by the env
-                        # via ActionEvent probability — here, since clear_loader
-                        # is a single event, we still do per-block rolls internally
-                        success = (not self._is_stochastic()) or (np.random.random() >= 0.25)
-                        if success:
+                        if not self._is_stochastic():
+                            outcome = "success"
+                        else:
+                            roll = np.random.random()
+                            if roll < 0.65:
+                                outcome = "success"
+                            elif roll < 0.75:
+                                outcome = "ground"
+                            else:
+                                outcome = "stays"
+                        
+                        if outcome == "success":
                             b["status"] = BlockStatus.HELD
                             b["held_by"] = agent
                             b["position"] = agent_state["position"].copy()
                             success_count += 1
-                        else:
+                        elif outcome == "ground":
                             b["status"] = BlockStatus.ON_FIELD
                             b["held_by"] = None
                             b["position"] = self._random_point_within_radius(loader_center)
+                        # else outcome == "stays", so do nothing and the block stays in the loader
 
                 agent_state["held_blocks"] += success_count
                 if agent_state["held_blocks"] > MAX_HELD_BLOCKS:
@@ -1535,7 +1527,9 @@ class PushBackGame(VexGame):
             
             elif event.type == "pickup_block":
                 block_idx = event.data.get("block_idx", -1)
-                pickup_success = bool(event.data.get("pickup_success", block_idx >= 0))
+                # Stochastic pickup check (90% success if stochastic)
+                pickup_success = (not self._is_stochastic()) or (np.random.random() < 0.90)
+                
                 if pickup_success and block_idx >= 0 and 0 <= block_idx < len(self.state["blocks"]):
                     agent_state["held_blocks"] += 1
                     if agent_state["held_blocks"] > MAX_HELD_BLOCKS:
@@ -1551,7 +1545,10 @@ class PushBackGame(VexGame):
                 block_idx = event.data.get("block_idx")
                 scoring_side = event.data.get("scoring_side")
                 
-                if 0 <= block_idx < len(self.state["blocks"]):
+                # Stochastic scoring check (90% success if stochastic)
+                score_success = (not self._is_stochastic()) or (np.random.random() < 0.90)
+                
+                if score_success and 0 <= block_idx < len(self.state["blocks"]):
                     target_status = BlockStatus.get_status_for_goal(goal_type)
                     b = self.state["blocks"][block_idx]
                     
@@ -1578,6 +1575,17 @@ class PushBackGame(VexGame):
                     agent_state["goals_added"][goal_idx] += 1
                     
                     # Decrement held blocks
+                    agent_state["held_blocks"] = max(0, agent_state["held_blocks"] - 1)
+                elif not score_success and 0 <= block_idx < len(self.state["blocks"]):
+                    # Eject block on failure
+                    scoring_entry = event.data.get("scoring_entry")
+                    if scoring_entry is not None:
+                        b = self.state["blocks"][block_idx]
+                        b["status"] = BlockStatus.ON_FIELD
+                        b["held_by"] = None
+                        b["position"] = self._clamp_position_to_field(scoring_entry)
+                    
+                    # Decrement held blocks since it left the robot
                     agent_state["held_blocks"] = max(0, agent_state["held_blocks"] - 1)
             
             elif event.type == "eject_block":
@@ -1647,37 +1655,18 @@ class PushBackGame(VexGame):
                     else:
                         held_blue += 1
             
-            # Info panel text
-            action_text = "---"
-            if actions and agent in actions:
-                if st.get("action_skipped", False):
-                    action_text = "--"
-                else:
-                    try:
-                        raw_action = actions[agent]
-                        # If action is a tuple/list/ndarray (action, message), display only the discrete action
-                        if isinstance(raw_action, (list, tuple, np.ndarray)):
-                            candidate = raw_action[0] if len(raw_action) > 0 else raw_action
-                        elif isinstance(raw_action, dict) and "action" in raw_action:
-                            candidate = raw_action["action"]
-                        else:
-                            candidate = raw_action
-                        action_text = self.action_to_name(int(candidate))
-                    except Exception:
-                        action_text = str(actions[agent])
-            
-            reward_text = ""
-            if rewards and agent in rewards:
-                reward_text = f" (R: {rewards[agent]:.2f})"
-            
             ax_info.text(0.05, info_y, f"Robot {i} ({team}):",
                         fontsize=9, color=robot_color, fontweight='bold', va='top')
             info_y -= 0.05
-            ax_info.text(0.1, info_y, f"{action_text}{reward_text}", fontsize=8, va='top')
+
+            # Persistent last action name + reward (stored on agent state)
+            last_name = st.get("last_action_name", "---")
+            last_reward = st.get("last_action_reward", None)
+            reward_str = f" (R: {last_reward:.2f})" if last_reward is not None else ""
+            ax_info.text(0.1, info_y, f"Last: {last_name}{reward_str}", fontsize=8, va='top')
             info_y -= 0.03
 
-            # Persistent display of the last executed action (only changes when
-            # the env actually executes a new action for this robot)
+            # Current action being executed (from agent state)
             current_val = st.get("current_action", None)
             try:
                 current_text = self.action_to_name(int(current_val)) if current_val is not None else "---"

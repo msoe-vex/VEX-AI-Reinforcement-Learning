@@ -233,8 +233,7 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
 
             next_observations, step_rewards, terminations, truncations, infos = env.step(actions_to_take)
 
-            if export_gif:
-                env.render(actions=actions_to_take, rewards=step_rewards)
+            # Rendering is handled internally by env.step() during fast-forward
 
             observations = next_observations
 

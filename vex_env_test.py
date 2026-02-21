@@ -88,7 +88,7 @@ def main():
     step_count = 0
     
     while not done and step_count < args.steps:
-        # Random actions for testing
+        # Random actions only for free (non-busy) agents
         actions = {agent: env.action_space(agent).sample() for agent in env.agents}
         
         step_count += 1
@@ -96,28 +96,14 @@ def main():
         
         observations, rewards, terminations, truncations, infos = env.step(actions)
         for agent, action in actions.items():
-            # Handle Tuple action (Discrete + Message)
             if isinstance(action, tuple):
                 action_int = action[0]
             else:
                 action_int = action
-
-            action_name = Actions(action_int).name if \
-                agent in infos and \
-                infos[agent].get("action_skipped", False) == False else "--"
-            print(f"  {agent}: {action_name}")
+            action_name = Actions(action_int).name
+            reward_str = f" (r={rewards.get(agent, 0.0):.2f})" if rewards.get(agent, 0.0) != 0.0 else ""
+            print(f"  {agent}: {action_name}{reward_str}")
         done = terminations.get("__all__", False) or truncations.get("__all__", False)
-        
-        if render_mode:
-            # Convert actions to names for rendering
-            named_actions = {}
-            for agent, a in actions.items():
-                if isinstance(a, tuple):
-                    val = a[0]
-                else:
-                    val = a
-                named_actions[agent] = Actions(val).name
-            env.render(actions=named_actions, rewards=rewards)
     
     print(f"\nSimulation complete after {step_count} steps.")
     print(f"Final score: {env.score}")

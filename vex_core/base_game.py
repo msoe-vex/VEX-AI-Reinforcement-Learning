@@ -57,16 +57,12 @@ class Robot:
 
 @dataclass
 class ActionEvent:
-    """A single game-state change that may happen when a step completes.
+    """A single game-state change that occurs when an action completes.
     
-    When probability < 1.0 and the environment is stochastic, a random roll
-    determines whether this event succeeds. On failure, on_failure is applied
-    instead (if provided).
+    All stochasticity should be handled by the game logic inside `apply_events`.
     """
     type: str
     data: Dict = field(default_factory=dict)
-    probability: float = 1.0
-    on_failure: Optional['ActionEvent'] = None
 
 
 @dataclass
