@@ -138,46 +138,32 @@ if __name__ == "__main__":
     # Suppress gymnasium precision/space warnings (RLlib internal env creation)
     warnings.filterwarnings("ignore", module="gymnasium")
 
-    def str2bool(v):
-        if isinstance(v, bool):
-            return v
-        if isinstance(v, str) and v.lower() in ('yes', 'true', 't', 'y', '1'):
-            return True
-        if isinstance(v, str) and v.lower() in ('no', 'false', 'f', 'n', '0'):
-            return False
-        raise argparse.ArgumentTypeError('Boolean value expected (true/false).')
+
     
     # Get parameters from command line arguments
     parser = argparse.ArgumentParser(description="Train multiple agents concurrently.")
     parser.add_argument('--learning-rate', type=float, default=0.0005, help='Learning rate')  # Default: 0.0005
-    parser.add_argument('--learning-rate-final', type=float, default=None,
+    parser.add_argument('--learning-rate-final', type=float, default=0.00005,
                         help='Final learning rate for linear schedule (if not set, learning rate is constant)')
-    parser.add_argument('--discount-factor', type=float, default=0.99, help='Discount factor')  # Default: 0.99
+    parser.add_argument('--discount-factor', type=float, default=0.98, help='Discount factor')  # Default: 0.98
     parser.add_argument('--entropy', type=float, default=0.05, help='Entropy coefficient')  # Default: 0.05
-    parser.add_argument('--entropy-final', type=float, default=None,
+    parser.add_argument('--entropy-final', type=float, default=0.005,
                         help='Final entropy coefficient for linear schedule (if not set, entropy is constant)')
-    parser.add_argument('--num-iters', type=int, default=1, help='Number of training iterations')  # Default: 1
+    parser.add_argument('--num-iters', type=int, default=10, help='Number of training iterations')  # Default: 10
     parser.add_argument('--cpus-per-task', type=int, default=1, help='Number of CPUs per task')  # Default: 1
     parser.add_argument('--job-id', type=str, default="", help='SLURM job ID')  # Job ID for logging
-    parser.add_argument('--model-path', type=str, default="", help='Path to save/load the model')
-    parser.add_argument('--randomize', type=str2bool, nargs='?', const=True, default=True,
+    parser.add_argument('--randomize', action=argparse.BooleanOptionalAction, default=True,
                         help='Enable or disable environment randomization (use --no-randomize to explicitly disable)')
-    parser.add_argument('--no-randomize', dest='randomize', action='store_false',
-                        help='Disable environment randomization (shorthand)')
     parser.add_argument('--num-gpus', type=int, default=0, help='Number of GPUs to use')
     parser.add_argument('--partition', type=str, default="teaching", help='SLURM partition to use')
     parser.add_argument('--algorithm', type=str, default="PPO", help='Algorithm to use for training')
     parser.add_argument('--experiment-path', type=str, default="", help='Path to an existing experiment directory to restore from')
     parser.add_argument('--verbose', type=int, default=1, help='Verbosity mode: 0 = silent, 1 = default, 2 = verbose')
     parser.add_argument('--game', type=str, default="vexai_skills", help='Game variant to train')
-    parser.add_argument('--enable-communication', type=str2bool, nargs='?', const=True, default=True,
-                        help='Enable or disable agent communication (use --no-enable-communication to explicitly disable)')
-    parser.add_argument('--no-enable-communication', dest='enable_communication', action='store_false',
-                        help='Disable agent communication (shorthand)')
-    parser.add_argument('--deterministic', type=str2bool, nargs='?', const=True, default=True,
-                        help='Enable deterministic environment mechanics (set false for stochastic outcomes)')
-    parser.add_argument('--no-deterministic', dest='deterministic', action='store_false',
-                        help='Disable deterministic environment mechanics (shorthand)')
+    parser.add_argument('--communication', action=argparse.BooleanOptionalAction, default=True,
+                        help='Enable or disable agent communication (use --no-communication to explicitly disable)')
+    parser.add_argument('--deterministic', action=argparse.BooleanOptionalAction, default=True,
+                        help='Enable deterministic environment mechanics (use --no-deterministic for stochastic outcomes)')
 
     args = parser.parse_args()
 
@@ -213,7 +199,7 @@ if __name__ == "__main__":
     temp_env = env_creator({
         "game": args.game,
         "randomize": args.randomize,
-        "enable_communication": args.enable_communication,
+        "enable_communication": args.communication,
         "deterministic": args.deterministic,
     })
 
@@ -292,7 +278,7 @@ if __name__ == "__main__":
             env_config={
                 "randomize": args.randomize,
                 "game": args.game,
-                "enable_communication": args.enable_communication,
+                "enable_communication": args.communication,
                 "deterministic": args.deterministic,
             }
         )
@@ -319,7 +305,7 @@ if __name__ == "__main__":
                 module_class=VexCustomPPO,  # Use custom model with clean architecture
                 observation_space=obs_space,
                 action_space=act_space,
-                model_config={"enable_communication": args.enable_communication}  # Model architecture defined in vex_custom_model.py
+                model_config={"enable_communication": args.communication}  # Model architecture defined in vex_custom_model.py
             )
         )
         .fault_tolerance(
@@ -368,7 +354,7 @@ if __name__ == "__main__":
         "schedule_hold_timesteps": hold_timesteps,
         "source_experiment_directory": restore_experiment_directory,
         "restored_checkpoint_path": restore_path,
-        "enable_communication": args.enable_communication,
+        "enable_communication": args.communication,
         "deterministic": args.deterministic,
         "start_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()),
     }
