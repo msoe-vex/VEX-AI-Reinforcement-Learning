@@ -14,7 +14,7 @@ from pettingzoo import ParallelEnv
 from ray.rllib.env import MultiAgentEnv
 from typing import Dict, List, Tuple, Optional, Any
 
-from .base_game import VexGame, Robot, RobotSize, Team
+from .base_game import VexGame, Robot, RobotSize, Team, ActionEvent, ActionStep
 
 from typing import Optional
 
@@ -203,6 +203,26 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 
                 agent_state = self.environment_state["agents"][agent]
                 
+                # Check if any segment just completed — apply its events
+                total = busy_info["total_ticks"]
+                rem = busy_info["remaining_ticks"]
+                elapsed = total - rem
+                plan = busy_info.get("plan", [])
+                
+                # Apply events for any segments that just completed this tick
+                completed_segments = busy_info.get("completed_segments", set())
+                for seg_idx, seg in enumerate(plan):
+                    if seg_idx not in completed_segments and elapsed >= seg["tick_end"]:
+                        completed_segments.add(seg_idx)
+                        seg_events = seg.get("events", [])
+                        if seg_events:
+                            resolved_events = self._resolve_event_probabilities(seg_events)
+                            try:
+                                self.game.apply_events(agent, resolved_events)
+                            except Exception:
+                                pass
+                busy_info["completed_segments"] = completed_segments
+                
                 if busy_info["remaining_ticks"] <= 0:
                     # Action complete - snap to target
                     agent_state["position"] = busy_info["target_pos"].copy()
@@ -215,19 +235,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                             pass
                     del self.busy_state[agent]
                     infos[agent]["action_completed"] = True
-                    # Apply any pending events scheduled for this agent's action
-                    if hasattr(self.game, "apply_pending_events"):
-                        try:
-                            self.game.apply_pending_events(agent)
-                        except Exception:
-                            pass
                 else:
                     # Interpolate using a potentially multi-segment plan
-                    total = busy_info["total_ticks"]
-                    rem = busy_info["remaining_ticks"]
-                    elapsed = total - rem
-                    plan = busy_info.get("plan", [])
-
                     current_pos = busy_info["start_pos"].copy()
                     current_orient = busy_info["start_orient"].copy()
 
@@ -270,6 +279,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                      infos[agent]["action_skipped"] = True
 
         # 2. Process Actions for Non-Busy Agents
+        newly_actioned = set()  # Track agents that started actions this step
         for agent, action in actions.items():
             if agent not in active_agents:
                 continue
@@ -314,7 +324,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             agent_state["current_action"] = action_int
             # Provide current synchronized match time to game action logic.
             agent_state["game_time"] = self.env_agent_states.get(agent, {}).get("time", 0.0)
-            duration, penalty = self.game.execute_action(
+            action_steps, penalty = self.game.execute_action(
                 agent, action_int
             )
             
@@ -334,43 +344,18 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             else:
                 agent_state["emitted_message"] = np.zeros(8, dtype=np.float32)
 
-            # Capture state AFTER action execution (Target)
-            target_pos = agent_state["position"].copy()
-            target_orient = agent_state["orientation"].copy()
-
-            # Build interpolation plan:
-            # 1) consume action-authored plan, if provided by game.execute_action()
-            # 2) otherwise use generic game hook fallback
-            raw_plan = None
-            if hasattr(self.game, "consume_last_interpolation_plan"):
-                try:
-                    raw_plan = self.game.consume_last_interpolation_plan(agent)
-                except Exception:
-                    raw_plan = None
-
-            if raw_plan is None:
-                raw_plan = self.game.get_interpolation_plan(
-                    agent=agent,
-                    action=action_int,
-                    start_pos=start_pos,
-                    start_orient=start_orient,
-                    target_pos=target_pos,
-                    target_orient=target_orient,
-                    duration=duration,
-                )
-
-            # Normalize plan into tick-based segments
+            # Build tick-based interpolation plan from ActionStep list
             plan = []
             cursor_pos = start_pos.copy()
             cursor_orient = start_orient.copy()
             tick_cursor = 0
-            for seg in raw_plan or []:
-                seg_duration = float(max(0.0, seg.get("duration", 0.0)))
+            for step in action_steps:
+                seg_duration = float(max(0.0, step.duration))
                 if seg_duration <= 0.0:
                     continue
                 seg_ticks = max(1, int(np.ceil(seg_duration / DELTA_T)))
-                end_pos = np.array(seg.get("target_pos", cursor_pos), dtype=np.float32).copy()
-                end_orient = np.array(seg.get("target_orient", cursor_orient), dtype=np.float32).copy()
+                end_pos = np.array(step.target_pos, dtype=np.float32).copy()
+                end_orient = np.array(step.target_orient, dtype=np.float32).copy()
 
                 plan.append({
                     "start_pos": cursor_pos.copy(),
@@ -379,6 +364,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                     "end_orient": end_orient,
                     "tick_start": tick_cursor,
                     "tick_end": tick_cursor + seg_ticks,
+                    "events": step.events,  # ActionEvent list for this segment
                 })
 
                 tick_cursor += seg_ticks
@@ -387,14 +373,15 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
 
             # Fallback to single segment if plan is empty
             if not plan:
-                seg_ticks = max(1, int(np.ceil(max(0.0, duration) / DELTA_T)))
+                seg_ticks = 1
                 plan = [{
                     "start_pos": start_pos.copy(),
-                    "end_pos": target_pos.copy(),
+                    "end_pos": start_pos.copy(),
                     "start_orient": start_orient.copy(),
-                    "end_orient": target_orient.copy(),
+                    "end_orient": start_orient.copy(),
                     "tick_start": 0,
                     "tick_end": seg_ticks,
+                    "events": [],
                 }]
                 tick_cursor = seg_ticks
 
@@ -404,10 +391,6 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             final_target_orient = plan[-1]["end_orient"].copy()
             
             if ticks > 0:
-                # Revert visible state to start
-                agent_state["position"] = start_pos
-                agent_state["orientation"] = start_orient
-                
                 self.busy_state[agent] = {
                     "start_pos": start_pos,
                     "start_orient": start_orient,
@@ -415,8 +398,10 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                     "target_orient": final_target_orient,
                     "plan": plan,
                     "total_ticks": ticks,
-                    "remaining_ticks": ticks
+                    "remaining_ticks": ticks,
+                    "completed_segments": set(),
                 }
+                newly_actioned.add(agent)
 
                 # Update movement trail
                 if not np.array_equal(start_pos, final_target_pos):
@@ -433,7 +418,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         # Compute projected next-step positions for all agents and immediately
         # terminate any agents whose projections would collide.
         try:
-            self._resolve_projected_collisions(active_agents, infos)
+            self._resolve_projected_collisions(active_agents, infos, newly_actioned)
         except Exception:
             # Fail-safe: do not break the step if projection logic errors
             pass
@@ -554,8 +539,30 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 
             self.environment_state["agents"][agent]["received_messages"] = received_sum
 
-    
+    def _resolve_event_probabilities(self, events: List[ActionEvent]) -> List[ActionEvent]:
+        """Resolve stochastic probabilities for a list of ActionEvents.
+        
+        For each event, if deterministic mode is on, the event always succeeds.
+        If stochastic, rolls against the event's probability field. On failure,
+        the on_failure event is used instead (if provided).
+        
+        Returns:
+            List of resolved ActionEvents (successes + failure alternatives)
+        """
+        resolved = []
+        for event in events:
+            if self.deterministic or event.probability >= 1.0:
+                # Deterministic: always succeed
+                resolved.append(event)
+            else:
+                # Stochastic: roll the dice
+                if np.random.random() < event.probability:
+                    resolved.append(event)
+                elif event.on_failure is not None:
+                    resolved.append(event.on_failure)
+        return resolved
 
+    
     def _project_agent_next_position(self, agent: str) -> np.ndarray:
         """
         Project the position this agent is trying to reach on the next step.
@@ -582,17 +589,24 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         agent_state["projected_position"] = proj
         return proj
 
-    def _resolve_projected_collisions(self, active_agents: list, infos: Dict[str, Dict]) -> None:
+    def _resolve_projected_collisions(self, active_agents: list, infos: Dict[str, Dict],
+                                       newly_actioned: set = None) -> None:
         """
-        Project all agents' intended next-step positions and force immediate
-        termination of any agents whose projections collide.
+        Project all agents' intended next-step positions and cancel any
+        NEWLY STARTED actions whose projections would collide with other agents.
+
+        Only agents in `newly_actioned` (those that started a new action this
+        step) will have their action cancelled. Agents already mid-action from
+        a previous step continue uninterrupted.
 
         - Agents with `busy_state` use `busy_state["target_pos"]` as projection.
         - Stationary agents project to their current center (within robot).
-        - If two projections overlap (distance < sum of radii) both agents are
-          forced to terminate their current action immediately (busy_state cleared)
-          and `infos[agent]["action_terminated_early"] = True` is set.
+        - If two projections overlap (distance < sum of radii) any agent in
+          `newly_actioned` is forced to cancel its current action.
         """
+        if newly_actioned is None:
+            newly_actioned = set()
+
         # Build projected positions
         projections: Dict[str, np.ndarray] = {}
         for agent in active_agents:
@@ -615,14 +629,16 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 if float(np.linalg.norm(pa - pb)) < (ra + rb):
                     colliding_pairs.add((a, b))
 
-        # Enforce immediate termination for any agent involved in a projected collision
+        # Only cancel agents that JUST started a new action this step
         impacted: set[str] = set()
         for a, b in colliding_pairs:
-            impacted.add(a)
-            impacted.add(b)
+            if a in newly_actioned:
+                impacted.add(a)
+            if b in newly_actioned:
+                impacted.add(b)
 
         for agent in impacted:
-            # Cancel busy action (if any) so robot will not continue moving
+            # Cancel the newly-started action so robot will not collide
             if agent in self.busy_state:
                 try:
                     del self.busy_state[agent]
@@ -869,7 +885,16 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         import imageio.v2 as imageio
 
         for filename in files:
-            images.append(imageio.imread(os.path.join(steps_dir, filename)))
+            img = imageio.imread(os.path.join(steps_dir, filename))
+            # Flatten alpha channel onto white background for GIF compatibility
+            # (GIF only supports 1-bit transparency; semi-transparent pixels get clipped)
+            if img.ndim == 3 and img.shape[2] == 4:
+                alpha = img[:, :, 3:4].astype(np.float32) / 255.0
+                rgb = img[:, :, :3].astype(np.float32)
+                white = np.full_like(rgb, 255.0)
+                composited = (rgb * alpha + white * (1.0 - alpha)).astype(np.uint8)
+                img = composited
+            images.append(img)
         
         if images:
             imageio.mimsave(
