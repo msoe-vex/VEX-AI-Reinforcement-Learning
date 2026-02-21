@@ -578,6 +578,13 @@ class PushBackGame(VexGame):
     @property
     def fallback_action(self) -> int:
         return Actions.IDLE.value
+        
+    def get_action_name(self, action: int) -> str:
+        """Get the human-readable string name for an action index."""
+        try:
+            return Actions(action).name
+        except Exception:
+            return str(action)
     
     # =========================================================================
     # VexGame State Management
@@ -1030,7 +1037,7 @@ class PushBackGame(VexGame):
         # Check if already at max capacity
         if agent_state["held_blocks"] >= MAX_HELD_BLOCKS:
             return [ActionStep(
-                duration=DEFAULT_DURATION,
+                duration=0.1,
                 target_pos=start_pos.copy(),
                 target_orient=start_orient.copy(),
             )], DEFAULT_PENALTY
@@ -1106,7 +1113,7 @@ class PushBackGame(VexGame):
             # No block found
             penalty = DEFAULT_PENALTY
             steps = [ActionStep(
-                duration=DEFAULT_DURATION,
+                duration=0.1,
                 target_pos=start_pos.copy(),
                 target_orient=start_orient.copy(),
             )]
@@ -1124,7 +1131,7 @@ class PushBackGame(VexGame):
         
         if agent_state["held_blocks"] <= 0:
             return [ActionStep(
-                duration=DEFAULT_DURATION,
+                duration=0.1,
                 target_pos=start_pos.copy(),
                 target_orient=start_orient.copy(),
             )], DEFAULT_PENALTY
@@ -1245,7 +1252,7 @@ class PushBackGame(VexGame):
         # Check if this loader has already been cleared by this agent
         if agent_state["loaders_taken"][loader_idx] >= 1:
             return [ActionStep(
-                duration=DEFAULT_DURATION,
+                duration=0.1,
                 target_pos=start_pos.copy(),
                 target_orient=start_orient.copy(),
             )], DEFAULT_PENALTY
@@ -1297,7 +1304,6 @@ class PushBackGame(VexGame):
         team = agent_state["team"]
         park_zone = PARK_ZONES[team]
 
-        penalty = 0.0
         start_pos = agent_state["position"].copy()
         start_orient = agent_state["orientation"].copy()
 
@@ -1306,20 +1312,20 @@ class PushBackGame(VexGame):
         time_remaining = float(self.total_time - current_time)
         if time_remaining > 15.0:
             return [ActionStep(
-                duration=DEFAULT_DURATION,
+                duration=0.1,
                 target_pos=start_pos.copy(),
                 target_orient=start_orient.copy(),
-            )], penalty + DEFAULT_PENALTY
+            )], DEFAULT_PENALTY
 
         # Only one robot can park per team
         for other_agent, other_state in self.state["agents"].items():
             if other_agent != agent_state["agent_name"]:
                 if other_state["team"] == team and other_state.get("parked", False):
                     return [ActionStep(
-                        duration=DEFAULT_DURATION,
+                        duration=0.1,
                         target_pos=start_pos.copy(),
                         target_orient=start_orient.copy(),
-                    )], penalty + DEFAULT_PENALTY
+                    )], DEFAULT_PENALTY
         
         final_orient = np.array([np.random.choice([np.pi/2, -np.pi/2])], dtype=np.float32)
         
@@ -1340,7 +1346,7 @@ class PushBackGame(VexGame):
             post_action_events=[park_event],
         )
 
-        return steps, penalty
+        return steps, 0.0
     
     def _action_turn_toward_center(
         self, agent_state: Dict
@@ -1365,7 +1371,7 @@ class PushBackGame(VexGame):
         # If camera is already facing center, give a small penalty
         if abs(angle_error) < 1e-4:
             return [ActionStep(
-                duration=DEFAULT_DURATION,
+                duration=0.1,
                 target_pos=start_pos.copy(),
                 target_orient=start_orient.copy(),
             )], DEFAULT_PENALTY

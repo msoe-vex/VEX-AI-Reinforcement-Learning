@@ -51,7 +51,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         
         Args:
             game: VexGame instance defining game-specific mechanics (with robots)
-            render_mode: 'human' for display, 'rgb_array' or 'all' to save frames
+            render_mode: 'image' (render + print), 'terminal' (print only), or 'none' (silent)
             output_directory: Directory for saving renders
             randomize: Whether to randomize initial positions
             enable_communication: Whether to enable agent-to-agent communication
@@ -141,6 +141,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         """Reset the environment to initial state."""
         self.agents = self.possible_agents[:]
         self.num_moves = 0
+        self._step_calls = 0  # Counter for external step() calls
         self.agent_movements = {agent: None for agent in self.possible_agents}
         self.busy_state = {}
         self._deferred_rewards = {}
@@ -459,8 +460,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self._advance_time_and_messages()
         self.score = self.game.compute_score()
 
-        if self.render_mode:
-            self.render()
+        self.render(action_dict=actions, rewards=rewards, infos=infos)
 
         # ──────────────────────────────────────────────────────────────
         # 5. Fast-forward while ALL agents are busy
@@ -484,8 +484,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             self._advance_time_and_messages()
             self.score = self.game.compute_score()
 
-            if self.render_mode:
-                self.render()
+            self.render(rewards=rewards, infos=infos)
 
             # Check terminations during fast-forward
             _, ff_remove = self._check_terminations()
@@ -526,6 +525,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             )
             for agent in all_agents
         }
+        
+        self._step_calls += 1
         
         return observations, rewards, terminations, truncations, infos
 
@@ -688,11 +689,33 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
     
     def render(
         self, 
-        actions: Optional[Dict] = None, 
-        rewards: Optional[Dict] = None
+        action_dict: Optional[Dict] = None, 
+        rewards: Optional[Dict] = None,
+        infos: Optional[Dict] = None
     ) -> None:
-        """Render the current environment state."""
-        if self.render_mode is None:
+        """Render the current environment state to an image and/or terminal."""
+        # Centralized console output logic
+        if self.render_mode in ["terminal", "image"]:
+            print(f"\nStep {self.num_moves}: Time {self.num_moves * DELTA_T:.1f}s | Scores: {self.score}")
+            if action_dict is not None and len(action_dict) > 0:
+                for agent, action in action_dict.items():
+                    if isinstance(action, (tuple, list, np.ndarray)):
+                        action_val = action[0]
+                    else:
+                        action_val = action
+                    
+                    action_name = self.game.get_action_name(int(action_val))
+                    print(f"  {agent}: STARTED {action_name}")
+            
+            if infos is not None and rewards is not None:
+                for agent, info in infos.items():
+                    if info.get("action_completed", False):
+                        reward = rewards.get(agent, 0.0)
+                        action_name = self.environment_state["agents"][agent].get("last_action_name", "--")
+                        reward_str = f"  (r={reward:.2f})" if reward != 0.0 else ""
+                        print(f"  {agent}: COMPLETED {action_name}{reward_str}")
+
+        if self.render_mode != "image":
             return
         
         # Import matplotlib only when rendering
@@ -725,7 +748,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self._render_paths(ax)
         
         # Draw robots and info panel
-        self._render_robots_and_info(ax, ax_info, actions, rewards)
+        self._render_robots_and_info(ax, ax_info, action_dict, rewards)
         
         # Title
         ax.set_title("VEX Environment", fontsize=14, fontweight='bold')

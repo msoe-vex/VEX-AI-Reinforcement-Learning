@@ -32,15 +32,22 @@ def main():
         help="Number of steps to run"
     )
     parser.add_argument(
-        "--no-render",
-        action="store_true",
-        help="Disable rendering"
+        "--render-mode",
+        type=str,
+        choices=["terminal", "image", "none"],
+        default="image",
+        help="Rendering mode: 'image' (saves frames & GIF), 'terminal' (prints text only), 'none' (silent)"
     )
     parser.add_argument(
         "--output-dir",
         type=str,
         default="vex_env_test",
         help="Output directory for renders"
+    )
+    parser.add_argument(
+        "--no-randomize",
+        action="store_true",
+        help="Disable randomization of initial agent positions and orientations"
     )
     parser.add_argument(
         "--deterministic",
@@ -53,9 +60,6 @@ def main():
     # Create game instance using factory method
     game = PushBackGame.get_game(args.game, deterministic=args.deterministic)
     
-    # Determine render mode
-    render_mode = None if args.no_render else "all"
-    
     print(f"Testing VEX Push Back environment...")
     print(f"Game: {args.game}")
     print(f"Game class: {game.__class__.__name__}")
@@ -63,25 +67,26 @@ def main():
     # Create environment
     env = VexMultiAgentEnv(
         game=game,
-        render_mode=render_mode,
+        render_mode=args.render_mode if args.render_mode != "none" else None,
         output_directory=args.output_dir,
-        randomize=False,
+        randomize=not args.no_randomize,
         deterministic=args.deterministic,
     )
     
     # Reset environment
     observations, infos = env.reset()
     
-    if render_mode:
+    if args.render_mode == "image":
         env.clearStepsDirectory()
     
     print(f"Agents: {env.agents}")
     print(f"Time limit: {game.total_time}s")
     print()
     
-    # Render initial state
-    if render_mode:
+    # Initial state logging
+    if args.render_mode in ["image", "terminal"]:
         print("Step 0: Initial positions")
+    if args.render_mode == "image":
         env.render()
     
     done = False
@@ -92,23 +97,14 @@ def main():
         actions = {agent: env.action_space(agent).sample() for agent in env.agents}
         
         step_count += 1
-        print(f"\nStep {step_count}:")
-        
         observations, rewards, terminations, truncations, infos = env.step(actions)
-        for agent, action in actions.items():
-            if isinstance(action, tuple):
-                action_int = action[0]
-            else:
-                action_int = action
-            action_name = Actions(action_int).name
-            reward_str = f" (r={rewards.get(agent, 0.0):.2f})" if rewards.get(agent, 0.0) != 0.0 else ""
-            print(f"  {agent}: {action_name}{reward_str}")
         done = terminations.get("__all__", False) or truncations.get("__all__", False)
     
-    print(f"\nSimulation complete after {step_count} steps.")
-    print(f"Final score: {env.score}")
+    if args.render_mode in ["image", "terminal"]:
+        print(f"\nSimulation complete after {step_count} steps.")
+        print(f"Final score: {env.score}")
     
-    if render_mode:
+    if args.render_mode == "image":
         env.createGIF()
         print(f"GIF saved to {args.output_dir}/simulation.gif")
 

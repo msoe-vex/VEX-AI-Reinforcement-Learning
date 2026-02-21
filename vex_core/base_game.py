@@ -243,6 +243,19 @@ class VexGame(ABC):
         pass
     
     @abstractmethod
+    def get_action_name(self, action: int) -> str:
+        """
+        Get the human-readable string name for an action index.
+        
+        Args:
+            action: Action integer index
+            
+        Returns:
+            String name of the action
+        """
+        pass
+    
+    @abstractmethod
     def update_tracker(self, agent: str, action: int) -> None:
         """
         Update agent tracker fields based on action.
