@@ -104,6 +104,10 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         
         # Communication delay buffer: {agent: [(delivery_tick, message_vector), ...]}
         self._message_buffer: Dict[str, list] = {agent: [] for agent in self.possible_agents}
+        # Last delivered message cache per sender (persists until replaced)
+        self._last_delivered_messages: Dict[str, Optional[np.ndarray]] = {
+            agent: None for agent in self.possible_agents
+        }
         
         # Environment-managed agent states (Time, etc.)
         self.env_agent_states: Dict[str, Dict] = {}
@@ -151,6 +155,9 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self._deferred_rewards = {}
         self.projected_positions = {}
         self._message_buffer = {agent: [] for agent in self.possible_agents}
+        self._last_delivered_messages = {
+            agent: None for agent in self.possible_agents
+        }
         
         # Reset game-specific state
         self.game.reset()
@@ -610,8 +617,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             current_tick = int(self.env_agent_states.get(agent, {}).get("tick", 0))
             break
 
-        # Collect the latest delivered message per sender
-        delivered: Dict[str, np.ndarray] = {}
+        # Update last-delivered cache per sender using newly ready packets
         for agent in active_agents:
             buf = self._message_buffer.get(agent, [])
             # Find all messages ready to deliver
@@ -620,8 +626,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             self._message_buffer[agent] = [(t, m) for t, m in buf if t > current_tick]
             if ready:
                 # Use the most recent delivered message
-                delivered[agent] = ready[-1]
-            # If no message ready, agent has no delivered message this tick
+                self._last_delivered_messages[agent] = np.array(ready[-1], dtype=np.float32).ravel()[:8]
 
         for agent in active_agents:
             received_sum = np.zeros(8, dtype=np.float32)
@@ -631,8 +636,14 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 if agent == other:
                     continue
                 
-                if other in delivered:
-                    received_sum += delivered[other]
+                other_msg = self._last_delivered_messages.get(other)
+                if other_msg is not None and other_msg.size > 0:
+                    if other_msg.size != 8:
+                        msg = np.zeros(8, dtype=np.float32)
+                        msg[: min(8, other_msg.size)] = other_msg[:8]
+                    else:
+                        msg = other_msg
+                    received_sum += msg
                     count += 1
             
             # Average
@@ -749,12 +760,30 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 
                 if has_started:
                     for agent, action in action_dict.items():
+                        msg_str = ""
                         if isinstance(action, (tuple, list, np.ndarray)):
                             action_val = action[0]
+                            if isinstance(action, (tuple, list)) and len(action) >= 2:
+                                msg = np.array(action[1], dtype=np.float32).ravel()
+                                if msg.size > 0:
+                                    if msg.size < 8:
+                                        padded = np.zeros(8, dtype=np.float32)
+                                        padded[: msg.size] = msg
+                                        msg = padded
+                                    elif msg.size > 8:
+                                        msg = msg[:8]
+                                    msg_fmt = np.array2string(
+                                        msg,
+                                        precision=2,
+                                        separator=', ',
+                                        suppress_small=True,
+                                        floatmode='fixed',
+                                    )
+                                    msg_str = f" | msg={msg_fmt}"
                         else:
                             action_val = action
                         action_name = self.game.get_action_name(int(action_val))
-                        print(f"  {agent}: STARTED {action_name}")
+                        print(f"  {agent}: STARTED {action_name}{msg_str}")
                 
                 if has_completed:
                     for agent, info in infos.items():
