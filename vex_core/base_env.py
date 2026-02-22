@@ -455,7 +455,10 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                     penalty_value = 0.0
                 stored = self._deferred_rewards.pop(agent, None)
                 rewards[agent] = -penalty_value
-                self.environment_state["agents"][agent]["last_action_name"] = stored.get("action_name", "--") if stored else "COLLISION"
+                action_name = stored.get("action_name", "--") if stored else "COLLISION"
+                infos[agent]["action_completed"] = True
+                infos[agent]["aborted"] = True
+                self.environment_state["agents"][agent]["last_action_name"] = action_name
                 self.environment_state["agents"][agent]["last_action_reward"] = -penalty_value
                 if agent not in self.agents:
                     self.agents.append(agent)
@@ -545,8 +548,6 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         truncations_out["__all__"] = False
         
         self._step_calls += 1
-        
-        self.render(action_dict=actions, rewards=rewards_out, infos=infos_out)
         
         return observations, rewards_out, terminations_out, truncations_out, infos_out
 
@@ -716,24 +717,32 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         """Render the current environment state to an image and/or terminal."""
         # Centralized console output logic
         if self.render_mode in ["terminal", "image"]:
-            print(f"\nStep {self.num_moves}: Time {self.num_moves * DELTA_T:.1f}s | Scores: {self.score}")
-            if action_dict is not None and len(action_dict) > 0:
-                for agent, action in action_dict.items():
-                    if isinstance(action, (tuple, list, np.ndarray)):
-                        action_val = action[0]
-                    else:
-                        action_val = action
-                    
-                    action_name = self.game.get_action_name(int(action_val))
-                    print(f"  {agent}: STARTED {action_name}")
+            has_started = action_dict is not None and len(action_dict) > 0
+            has_completed = infos is not None and any(i.get("action_completed", False) for i in infos.values())
             
-            if infos is not None and rewards is not None:
-                for agent, info in infos.items():
-                    if info.get("action_completed", False):
-                        reward = rewards.get(agent, 0.0)
-                        action_name = self.environment_state["agents"][agent].get("last_action_name", "--")
-                        reward_str = f"  (r={reward:.2f})" if reward != 0.0 else ""
-                        print(f"  {agent}: COMPLETED {action_name}{reward_str}")
+            if has_started or has_completed:
+                print(f"\nStep {self.num_moves}: Time {self.num_moves * DELTA_T:.1f}s | Scores: {self.score}")
+                
+                if has_started:
+                    for agent, action in action_dict.items():
+                        if isinstance(action, (tuple, list, np.ndarray)):
+                            action_val = action[0]
+                        else:
+                            action_val = action
+                        action_name = self.game.get_action_name(int(action_val))
+                        print(f"  {agent}: STARTED {action_name}")
+                
+                if has_completed:
+                    for agent, info in infos.items():
+                        if info.get("action_completed", False):
+                            reward = rewards.get(agent, 0.0)
+                            action_name = self.environment_state["agents"][agent].get("last_action_name", "--")
+                            reward_str = f"  (r={reward:.2f})" if reward != 0.0 else ""
+                            
+                            if info.get("aborted", False):
+                                print(f"  {agent}: ABORTED {action_name}{reward_str} (Collision)")
+                            else:
+                                print(f"  {agent}: COMPLETED {action_name}{reward_str}")
 
         if self.render_mode != "image":
             return
