@@ -776,16 +776,16 @@ class PushBackGame(VexGame):
         return (ObsIndex.TOTAL,)
     
     def action_space(self, agent: str) -> spaces.Space:
-        """Get action space for an agent based on communication setting."""
-        if self.enable_communication:
-            # With communication: Tuple of (Discrete Action, Continuous Message)
-            return spaces.Tuple((
-                spaces.Discrete(self.num_actions),
-                spaces.Box(low=-1.0, high=1.0, shape=(8,), dtype=np.float32)
-            ))
-        else:
-            # Without communication: Just discrete action
-            return spaces.Discrete(self.num_actions)
+        """Get action space for an agent.
+
+        Action space shape is intentionally fixed regardless of communication mode.
+        When communication is disabled, the environment ignores the provided
+        message and writes zeros into emitted/received message channels.
+        """
+        return spaces.Tuple((
+            spaces.Discrete(self.num_actions),
+            spaces.Box(low=-1.0, high=1.0, shape=(8,), dtype=np.float32)
+        ))
 
     @staticmethod
     def get_action_space_shape() -> Tuple[int]:

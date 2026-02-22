@@ -350,8 +350,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 0.0,
             )
             
-            # Store emitted message
-            if emitted_msg is not None:
+            # Store emitted message (or force zeros when communication is disabled)
+            if self.enable_communication and emitted_msg is not None:
                 arr = np.array(emitted_msg, dtype=np.float32).ravel()
                 if arr.size != 8:
                     if arr.size < 8:
