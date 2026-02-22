@@ -493,6 +493,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                     rewards[agent] = reward
                     self.environment_state["agents"][agent]["last_action_name"] = stored.get("action_name", "--")
                     self.environment_state["agents"][agent]["last_action_reward"] = reward
+                self.environment_state["agents"][agent]["current_action"] = None
                 infos[agent]["action_completed"] = True
                 if agent not in self.agents:
                     self.agents.append(agent)
@@ -517,6 +518,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                         rewards[agent] = reward
                         self.environment_state["agents"][agent]["last_action_name"] = stored.get("action_name", "--")
                         self.environment_state["agents"][agent]["last_action_reward"] = reward
+                    self.environment_state["agents"][agent]["current_action"] = None
                     infos[agent]["action_completed"] = True
                     if agent not in self.agents:
                         self.agents.append(agent)
