@@ -77,7 +77,7 @@ def main():
     observations, infos = env.reset()
     
     if args.render_mode == "image":
-        env.clearStepsDirectory()
+        env.clearTicksDirectory()
     
     print(f"Agents: {env.agents}")
     print(f"Time limit: {game.total_time}s")
@@ -101,7 +101,10 @@ def main():
         done = terminations.get("__all__", False) or truncations.get("__all__", False)
     
     if args.render_mode in ["image", "terminal"]:
-        print(f"\nSimulation complete after {step_count} steps.")
+        print(
+            f"\nSimulation complete after {step_count} steps "
+            f"(env steps: {env.num_steps}, internal ticks: {env.num_ticks})."
+        )
         print(f"Final score: {env.score}")
     
     if args.render_mode == "image":

@@ -141,7 +141,7 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
         observations, infos = env.reset()
 
         if export_gif:
-            env.clearStepsDirectory()
+            env.clearTicksDirectory()
             env.render()  # Initial render
 
         done = False
@@ -239,7 +239,11 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
             all_truncated = truncations.get("__all__", False)
             done = all_terminated or all_truncated
 
-        print(f"Simulation iteration {iteration} ended after {step_count} steps. Final score: {env.score}")
+        print(
+            f"Simulation iteration {iteration} ended after {step_count} steps "
+            f"(env steps: {env.num_steps}, internal ticks: {env.num_ticks}). "
+            f"Final score: {env.score}"
+        )
 
         if isinstance(env.score, dict):
             for team_name, score in env.score.items():

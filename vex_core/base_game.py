@@ -404,7 +404,7 @@ class VexGame(ABC):
         agents: List[str] = None,
         actions: Optional[Dict] = None,
         rewards: Optional[Dict] = None,
-        num_moves: int = 0,
+        num_steps: int = 0,
         agent_times: Optional[Dict[str, float]] = None,
         action_time_remaining: Optional[Dict[str, float]] = None,
     ) -> None:
@@ -416,7 +416,7 @@ class VexGame(ABC):
             agents: List of active agent names
             actions: Dict of actions taken (or None)
             rewards: Dict of rewards received (or None)
-            num_moves: Current step number
+            num_steps: Current environment step number
             agent_times: Dict mapping agent names to current game time
             action_time_remaining: Dict mapping agent names to remaining time
                 (seconds) in the currently executing action

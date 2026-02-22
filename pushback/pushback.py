@@ -1638,7 +1638,7 @@ class PushBackGame(VexGame):
         agents: List[str] = None,
         actions: Optional[Dict] = None,
         rewards: Optional[Dict] = None,
-        num_moves: int = 0,
+        num_steps: int = 0,
         agent_times: Optional[Dict[str, float]] = None,
         action_time_remaining: Optional[Dict[str, float]] = None,
     ) -> None:
@@ -1736,7 +1736,7 @@ class PushBackGame(VexGame):
                         fontsize=9, va='top', color='blue', fontweight='bold')
             info_y -= 0.04
         info_y -= 0.01
-        ax_info.text(0.05, info_y, f"Step: {num_moves}", fontsize=8, va='top')
+        ax_info.text(0.05, info_y, f"Step: {num_steps}", fontsize=8, va='top')
     
     # =========================================================================
     # Rendering

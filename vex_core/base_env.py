@@ -87,7 +87,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         # Environment state
         self.agents: List[str] = []
         self.environment_state: Dict = {}
-        self.num_moves = 0
+        self.num_ticks = 0  # Internal tick counter
         self.score = 0
         self.agent_movements: Dict[str, Optional[Tuple[np.ndarray, np.ndarray]]] = {}
         
@@ -139,9 +139,9 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, Dict]]:
         """Reset the environment to initial state."""
         self.agents = self.possible_agents[:]
-        self.num_moves = 0
+        self.num_ticks = 0
         self._terminated_agents = set()
-        self._step_calls = 0  # Counter for external step() calls
+        self.num_steps = 0  # Counter for external environment steps
         self.agent_movements = {agent: None for agent in self.possible_agents}
         self.busy_state = {}
         self._deferred_rewards = {}
@@ -299,7 +299,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             self.agents = []
             return {}, {}, {"__all__": True}, {"__all__": True}, {}
         
-        self.num_moves += 1
+        self.num_ticks += 1
         
         if self.environment_state is None:
             print("CRITICAL: self.environment_state is None in step()!")
@@ -506,7 +506,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         # 4. Fast-forward while ALL agents are busy
         # ──────────────────────────────────────────────────────────────
         while (not self.agents) and any(a in self.busy_state for a in all_agents):
-            self.num_moves += 1
+            self.num_ticks += 1
 
             tick_results = self._tick_busy_agents()
             for agent, did_complete in tick_results.items():
@@ -578,7 +578,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         terminations_out["__all__"] = all_done
         truncations_out["__all__"] = False
         
-        self._step_calls += 1
+        self.num_steps += 1
         
         return observations, rewards_out, terminations_out, truncations_out, infos_out
 
@@ -733,7 +733,11 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             has_completed = infos is not None and any(i.get("action_completed", False) for i in infos.values())
             
             if has_started or has_completed:
-                print(f"\nStep {self.num_moves}: Time {self.num_moves * DELTA_T:.1f}s | Scores: {self.score}")
+                current_step = self.num_steps + 1
+                print(
+                    f"\nStep {current_step} | Tick {self.num_ticks}: "
+                    f"Time {self.num_ticks * DELTA_T:.1f}s | Scores: {self.score}"
+                )
                 
                 if has_started:
                     for agent, action in action_dict.items():
@@ -795,9 +799,9 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         if self.render_mode == "human":
             plt.show()
         else:
-            os.makedirs(os.path.join(self.output_directory, "steps"), exist_ok=True)
+            os.makedirs(os.path.join(self.output_directory, "ticks"), exist_ok=True)
             plt.savefig(
-                os.path.join(self.output_directory, "steps", f"step_{self.num_moves}.png"),
+                os.path.join(self.output_directory, "ticks", f"tick_{self.num_ticks}.png"),
                 dpi=100
             )
             plt.close()
@@ -936,7 +940,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             agents=self.possible_agents,
             actions=actions,
             rewards=rewards,
-            num_moves=self.num_moves,
+            num_steps=self.num_steps + 1,
             agent_times=agent_times,
             action_time_remaining=action_time_remaining,
         )
@@ -945,29 +949,29 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         """Clean up resources."""
         pass
     
-    def clearStepsDirectory(self) -> None:
-        """Clear the steps directory for new renders."""
-        steps_dir = os.path.join(self.output_directory, "steps")
-        if os.path.exists(steps_dir):
-            for filename in os.listdir(steps_dir):
-                os.remove(os.path.join(steps_dir, filename))
+    def clearTicksDirectory(self) -> None:
+        """Clear the ticks directory for new renders."""
+        ticks_dir = os.path.join(self.output_directory, "ticks")
+        if os.path.exists(ticks_dir):
+            for filename in os.listdir(ticks_dir):
+                os.remove(os.path.join(ticks_dir, filename))
     
     def createGIF(self) -> None:
-        """Create a GIF from rendered steps."""
-        steps_dir = os.path.join(self.output_directory, "steps")
-        if not os.path.exists(steps_dir):
+        """Create a GIF from rendered ticks."""
+        ticks_dir = os.path.join(self.output_directory, "ticks")
+        if not os.path.exists(ticks_dir):
             return
         
         images = []
         files = sorted(
-            os.listdir(steps_dir),
+            os.listdir(ticks_dir),
             key=lambda x: int(x.split('_')[1].split('.')[0])
         )
 
         import imageio.v2 as imageio
 
         for filename in files:
-            img = imageio.imread(os.path.join(steps_dir, filename))
+            img = imageio.imread(os.path.join(ticks_dir, filename))
             # Flatten alpha channel onto white background for GIF compatibility
             # (GIF only supports 1-bit transparency; semi-transparent pixels get clipped)
             if img.ndim == 3 and img.shape[2] == 4:
@@ -984,3 +988,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 images,
                 fps=10
             )
+
+    def clearStepsDirectory(self) -> None:
+        """Backward-compatible alias for clearTicksDirectory()."""
+        self.clearTicksDirectory()
