@@ -99,7 +99,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         #   "total_ticks": int, "remaining_ticks": int
         # }
         self.busy_state: Dict[str, Dict] = {}
-        self._deferred_rewards: Dict[str, Dict] = {}  # {agent: {penalty, action_name, accumulated_reward}}
+        self._deferred_rewards: Dict[str, Dict] = {}
+        self._agent_penalty_totals: Dict[str, float] = {agent: 0.0 for agent in self.possible_agents}
         self.projected_positions: Dict[str, np.ndarray] = {}
         
         # Communication delay buffer: {agent: [(delivery_tick, message_vector), ...]}
@@ -153,6 +154,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self.agent_movements = {agent: None for agent in self.possible_agents}
         self.busy_state = {}
         self._deferred_rewards = {}
+        self._agent_penalty_totals = {agent: 0.0 for agent in self.possible_agents}
         self.projected_positions = {}
         self._message_buffer = {agent: [] for agent in self.possible_agents}
         self._last_delivered_messages = {
@@ -214,9 +216,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                         except Exception:
                             pass
                         score_after = self.game.compute_score()
-                        if agent in self._deferred_rewards:
-                            delta = self.game.compute_reward(agent, score_before, score_after, 0.0)
-                            self._deferred_rewards[agent]["accumulated_reward"] += delta
+                        self._add_event_delta_for_agent(agent, score_before, score_after)
             busy_info["completed_segments"] = completed_segments
 
             if busy_info["remaining_ticks"] <= 0:
@@ -273,6 +273,106 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         """Get agent-local game time in seconds from integer ticks."""
         ticks = int(self.env_agent_states.get(agent, {}).get("tick", 0))
         return ticks * DELTA_T
+
+    def _get_total_score_value(self) -> float:
+        """Return scalar sum of all team scores."""
+        score = self.game.compute_score()
+        return float(sum(float(v) for v in score.values()))
+
+    def _get_team_and_opp_scores(self, team: str) -> Tuple[float, float]:
+        """Return current (team_score, opponent_score) for a given team."""
+        scores = self.game.compute_score()
+        team_score = float(scores.get(team, 0.0))
+        opp_score = float(sum(float(v) for key, v in scores.items() if key != team))
+        return team_score, opp_score
+
+    def _get_team_penalty_total(self, team: str, exclude_agent: Optional[str] = None) -> float:
+        """Return cumulative penalties accrued by a team."""
+        total = 0.0
+        for agent in self.possible_agents:
+            try:
+                if exclude_agent is not None and agent == exclude_agent:
+                    continue
+                if self.game.get_team_for_agent(agent) == team:
+                    total += float(self._agent_penalty_totals.get(agent, 0.0))
+            except Exception:
+                continue
+        return float(total)
+
+    def _add_agent_penalty(self, agent: str, penalty: float) -> None:
+        """Accumulate penalty totals for team-penalty accounting."""
+        self._agent_penalty_totals[agent] = (
+            float(self._agent_penalty_totals.get(agent, 0.0)) + float(penalty)
+        )
+
+    def _start_deferred_reward(self, agent: str, action_name: str, penalty: float) -> None:
+        """Initialize deferred reward tracking for a newly started action."""
+        team = self.game.get_team_for_agent(agent)
+        team_score_start, opp_score_start = self._get_team_and_opp_scores(team)
+        self._deferred_rewards[agent] = {
+            "penalty": float(penalty),
+            "action_name": action_name,
+            "team": team,
+            "team_score_start": team_score_start,
+            "opp_score_start": opp_score_start,
+            "team_penalty_baseline": self._get_team_penalty_total(team, exclude_agent=agent),
+            "individual_team_delta": 0.0,
+            "individual_opp_delta": 0.0,
+        }
+        self._add_agent_penalty(agent, penalty)
+
+    def _add_event_delta_for_agent(self, agent: str, score_before: Dict[str, int], score_after: Dict[str, int]) -> None:
+        """Accumulate score delta caused by an agent's own completed segment events."""
+        stored = self._deferred_rewards.get(agent)
+        if stored is None:
+            return
+        team = self.game.get_team_for_agent(agent)
+        before_team = float(score_before.get(team, 0))
+        after_team = float(score_after.get(team, 0))
+        before_opp = float(sum(float(v) for key, v in score_before.items() if key != team))
+        after_opp = float(sum(float(v) for key, v in score_after.items() if key != team))
+        stored["individual_team_delta"] = float(stored.get("individual_team_delta", 0.0)) + (after_team - before_team)
+        stored["individual_opp_delta"] = float(stored.get("individual_opp_delta", 0.0)) + (after_opp - before_opp)
+
+    def _complete_deferred_reward(self, agent: str) -> Optional[Tuple[float, str]]:
+        """Finalize deferred reward for an agent and remove its tracker entry."""
+        stored = self._deferred_rewards.pop(agent, None)
+        if stored is None:
+            return None
+
+        team = stored.get("team")
+        team_now, opp_now = self._get_team_and_opp_scores(team)
+        team_delta = team_now - float(stored.get("team_score_start", 0.0))
+        opp_delta = opp_now - float(stored.get("opp_score_start", 0.0))
+        individual_team_delta = float(stored.get("individual_team_delta", 0.0))
+        individual_opp_delta = float(stored.get("individual_opp_delta", 0.0))
+        individual_delta = individual_team_delta - individual_opp_delta
+        individual_penalty = float(stored.get("penalty", 0.0))
+        team_penalty = self._get_team_penalty_total(team, exclude_agent=agent) - float(stored.get("team_penalty_baseline", 0.0))
+
+        reward = self.game.combine_reward_components(
+            agent=agent,
+            team_delta=team_delta,
+            opp_delta=opp_delta,
+            individual_delta=individual_delta,
+            individual_penalty=individual_penalty,
+            team_penalty=team_penalty,
+        )
+        return reward, str(stored.get("action_name", "--"))
+
+    def _mark_action_completed(self, agent: str, rewards: Dict[str, float], infos: Dict[str, Dict]) -> None:
+        """Apply shared completion updates for an agent finishing an action."""
+        finalized = self._complete_deferred_reward(agent)
+        if finalized is not None:
+            reward, action_name = finalized
+            rewards[agent] = reward
+            self.environment_state["agents"][agent]["last_action_name"] = action_name
+            self.environment_state["agents"][agent]["last_action_reward"] = reward
+
+        self.environment_state["agents"][agent]["current_action"] = None
+        infos[agent]["action_completed"] = True
+        if agent not in self.agents:
+            self.agents.append(agent)
 
     def _check_terminations(self) -> Tuple[Dict[str, bool], set]:
         """Check if any agents should be terminated."""
@@ -340,7 +440,6 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             
             start_pos = agent_state["position"].copy()
             start_orient = agent_state["orientation"].copy()
-            score_before_action = self.game.compute_score()
             # Parse action tuple (Control, Message)
             action_val = action
             emitted_msg = None
@@ -354,13 +453,6 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             agent_state["current_action"] = action_int
             agent_state["game_time"] = self._get_agent_time(agent)
             action_steps, penalty = self.game.execute_action(agent, action_int)
-            score_after_start = self.game.compute_score()
-            immediate_action_reward = self.game.compute_reward(
-                agent,
-                score_before_action,
-                score_after_start,
-                0.0,
-            )
             
             # Store emitted message (or force zeros when communication is disabled)
             if self.enable_communication and emitted_msg is not None:
@@ -444,11 +536,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 action_name = self.game.action_to_name(action_int)
             except Exception:
                 action_name = str(action_int)
-            self._deferred_rewards[agent] = {
-                "penalty": penalty,
-                "action_name": action_name,
-                "accumulated_reward": immediate_action_reward,
-            }
+            self._start_deferred_reward(agent, action_name, penalty)
 
             # Agent is now busy — remove from self.agents
             if agent in self.agents:
@@ -495,6 +583,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             stored = self._deferred_rewards.get(agent)
             if stored is not None:
                 stored["penalty"] = float(stored.get("penalty", 0.0)) + penalty_value
+                self._add_agent_penalty(agent, penalty_value)
 
         # ──────────────────────────────────────────────────────────────
         # 3. Advance time + messages for this tick
@@ -502,16 +591,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         tick_results = self._tick_busy_agents()
         for agent, did_complete in tick_results.items():
             if did_complete:
-                stored = self._deferred_rewards.pop(agent, None)
-                if stored is not None:
-                    reward = stored.get("accumulated_reward", 0.0) - stored.get("penalty", 0.0)
-                    rewards[agent] = reward
-                    self.environment_state["agents"][agent]["last_action_name"] = stored.get("action_name", "--")
-                    self.environment_state["agents"][agent]["last_action_reward"] = reward
-                self.environment_state["agents"][agent]["current_action"] = None
-                infos[agent]["action_completed"] = True
-                if agent not in self.agents:
-                    self.agents.append(agent)
+                self._mark_action_completed(agent, rewards, infos)
 
         self._advance_time_and_messages()
         self.score = self.game.compute_score()
@@ -527,16 +607,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             tick_results = self._tick_busy_agents()
             for agent, did_complete in tick_results.items():
                 if did_complete:
-                    stored = self._deferred_rewards.pop(agent, None)
-                    if stored is not None:
-                        reward = stored.get("accumulated_reward", 0.0) - stored.get("penalty", 0.0)
-                        rewards[agent] = reward
-                        self.environment_state["agents"][agent]["last_action_name"] = stored.get("action_name", "--")
-                        self.environment_state["agents"][agent]["last_action_reward"] = reward
-                    self.environment_state["agents"][agent]["current_action"] = None
-                    infos[agent]["action_completed"] = True
-                    if agent not in self.agents:
-                        self.agents.append(agent)
+                    self._mark_action_completed(agent, rewards, infos)
 
             self._advance_time_and_messages()
             self.score = self.game.compute_score()

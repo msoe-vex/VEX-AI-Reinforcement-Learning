@@ -608,14 +608,14 @@ class PushBackGame(VexGame):
                 "camera_rotation_offset": float(getattr(robot, "camera_rotation_offset", 0.0)),
                 "team": robot.team.value,
                 "robot_size": robot.size.value,
-                "held_blocks": 0,
-                "parked": False,
+                "inferred_held_blocks": 0,
+                "inferred_parked": False,
                 # "gameTime": REMOVED - Managed by Enviroment
                 "active": True,
                 "agent_name": robot.name,
-            "current_action": None,
-                "goals_added": [0, 0, 0, 0],  # [LONG_1, LONG_2, CENTER_UPPER, CENTER_LOWER]
-                "loaders_taken": [0, 0, 0, 0],  # [TL, TR, BL, BR]
+                "current_action": None,
+                "inferred_goals_added": [0, 0, 0, 0],
+                "inferred_loaders_taken": [0, 0, 0, 0],
             }
         
         # Get blocks
@@ -626,7 +626,7 @@ class PushBackGame(VexGame):
             if block.get("held_by"):
                 agent_name = block["held_by"]
                 if agent_name in agents_dict:
-                    agents_dict[agent_name]["held_blocks"] += 1
+                    agents_dict[agent_name]["inferred_held_blocks"] += 1
         
         self.state = {
             "agents": agents_dict,
@@ -653,22 +653,12 @@ class PushBackGame(VexGame):
         
         # 2. (Teammate info removed — available only via communication)
         
-        # 3. Held blocks by color - count from actual blocks
-        agent_name = agent_state["agent_name"]
-        held_friendly = 0
-        held_opponent = 0
-        my_team = agent_state["team"]
-        for block in self.state["blocks"]:
-            if block["status"] == BlockStatus.HELD and block.get("held_by") == agent_name:
-                if block.get("team") == my_team:
-                    held_friendly += 1
-                else:
-                    held_opponent += 1
-        obs_parts.append(float(held_friendly))
-        obs_parts.append(float(held_opponent))
+        # 3. Held blocks by color from inferred tracker
+        obs_parts.append(float(agent_state.get("inferred_held_blocks", 0)))
+        obs_parts.append(0.0)
         
-        # 4. Self parked status (1)
-        obs_parts.append(1.0 if agent_state["parked"] else 0.0)
+        # 4. Self parked status (1) from inferred tracker
+        obs_parts.append(1.0 if agent_state.get("inferred_parked", False) else 0.0)
         
         # 5. Time remaining (1)
         obs_parts.append(float(self.total_time - game_time))
@@ -681,6 +671,7 @@ class PushBackGame(VexGame):
         opponent_blocks = []
         
         robot_pos = agent_state["position"]
+        my_team = agent_state["team"]
         camera_offset = float(agent_state.get("camera_rotation_offset", 0.0))
         camera_theta = float(agent_state["orientation"][0]) + camera_offset
         
@@ -732,11 +723,11 @@ class PushBackGame(VexGame):
             o_positions.extend([-999.0, -999.0])
         obs_parts.extend(o_positions)
         
-        # 7. Blocks added to each goal BY THIS AGENT (4)
-        obs_parts.extend([float(x) for x in agent_state["goals_added"]])
+        # 7. Blocks added to each goal BY THIS AGENT (4) from inferred tracker
+        obs_parts.extend([float(x) for x in agent_state.get("inferred_goals_added", [0, 0, 0, 0])])
         
-        # 8. Loaders cleared by this agent (4) - 0 or 1 each
-        obs_parts.extend([float(min(x, 1)) for x in agent_state["loaders_taken"]])
+        # 8. Loaders cleared by this agent (4) - 0 or 1 each from inferred tracker
+        obs_parts.extend([float(min(x, 1)) for x in agent_state.get("inferred_loaders_taken", [0, 0, 0, 0])])
         
         # 9. Received messages (8 dims)
         # Read from agent_state["received_messages"] if present, else zeros
@@ -817,7 +808,7 @@ class PushBackGame(VexGame):
         
         # Any active non-park action unparks the robot
         if action not in (Actions.IDLE.value, Actions.PARK.value):
-            agent_state["parked"] = False
+            agent_state["inferred_parked"] = False
         
         # Default values
         penalty = 0.0
@@ -872,19 +863,75 @@ class PushBackGame(VexGame):
                 target_orient=start_orient.copy(),
             )]
         
-        # Update tracker (for training, this keeps tracker in sync with simulation)
-        self.update_tracker(agent, action)
-
         return steps, penalty
     
     def update_tracker(self, agent: str, action: int) -> None:
         """Update agent state field based on action.
         
-        Called by execute_action() in training and directly by run_action() in inference.
-        Note: Game-state updates are now embedded as ActionEvents in ActionSteps and applied by apply_events().
-        This method is kept for compatibility but most updates are now handled via pending events.
+        Called by apply_events() in training and directly by run_action() in inference.
+        This updates an INFERRED tracker used for inference-time observation patching.
+        It intentionally does not rely on sensor-confirmed held-block counts.
         """
         agent_state = self.state["agents"][agent]
+
+        # Ensure inferred keys exist
+        if "inferred_held_blocks" not in agent_state:
+            agent_state["inferred_held_blocks"] = 0
+        if "inferred_parked" not in agent_state:
+            agent_state["inferred_parked"] = False
+        if "inferred_goals_added" not in agent_state:
+            agent_state["inferred_goals_added"] = [0, 0, 0, 0]
+        if "inferred_loaders_taken" not in agent_state:
+            agent_state["inferred_loaders_taken"] = [0, 0, 0, 0]
+
+        try:
+            action_enum = Actions(int(action))
+        except Exception:
+            return
+
+        if action_enum not in (Actions.IDLE, Actions.PARK):
+            agent_state["inferred_parked"] = False
+
+        if action_enum == Actions.PICK_UP_BLOCK:
+            # No direct held-block sensor: assume pickup succeeded and increment by 1.
+            agent_state["inferred_held_blocks"] = min(
+                MAX_HELD_BLOCKS,
+                int(agent_state.get("inferred_held_blocks", 0)) + 1,
+            )
+            return
+
+        if action_enum in (
+            Actions.TAKE_FROM_LOADER_TL,
+            Actions.TAKE_FROM_LOADER_TR,
+            Actions.TAKE_FROM_LOADER_BL,
+            Actions.TAKE_FROM_LOADER_BR,
+        ):
+            loader_idx = int(action_enum.value - Actions.TAKE_FROM_LOADER_TL.value)
+            inferred_loaders = list(agent_state.get("inferred_loaders_taken", [0, 0, 0, 0]))
+            if 0 <= loader_idx < len(inferred_loaders):
+                inferred_loaders[loader_idx] = 1
+            agent_state["inferred_loaders_taken"] = inferred_loaders
+            # Per requirement: do not update inferred held-block count from loader clear.
+            return
+
+        scoring_map = {
+            Actions.SCORE_IN_LONG_GOAL_1: 0,
+            Actions.SCORE_IN_LONG_GOAL_2: 1,
+            Actions.SCORE_IN_CENTER_UPPER: 2,
+            Actions.SCORE_IN_CENTER_LOWER: 3,
+        }
+        if action_enum in scoring_map:
+            inferred_goals = list(agent_state.get("inferred_goals_added", [0, 0, 0, 0]))
+            goal_idx = scoring_map[action_enum]
+            inferred_held = max(0, int(agent_state.get("inferred_held_blocks", 0)))
+            inferred_goals[goal_idx] = int(inferred_goals[goal_idx]) + inferred_held
+            agent_state["inferred_goals_added"] = inferred_goals
+            # Assumed model: scoring action transfers all currently held blocks.
+            agent_state["inferred_held_blocks"] = 0
+            return
+
+        if action_enum == Actions.PARK:
+            agent_state["inferred_parked"] = True
     
     def update_observation_from_tracker(self, agent: str, observation: np.ndarray) -> np.ndarray:
         """Update observation array with tracker fields from game state.
@@ -900,20 +947,21 @@ class PushBackGame(VexGame):
         """
         agent_state = self.state["agents"][agent]
         
-        # Held blocks (assumes all held blocks are friendly)
-        observation[ObsIndex.HELD_FRIENDLY] = float(agent_state.get("held_blocks", 0))
+        # Held blocks (assumed tracker; robot has no direct held-block sensor)
+        inferred_held = float(agent_state.get("inferred_held_blocks", 0))
+        observation[ObsIndex.HELD_FRIENDLY] = inferred_held
         observation[ObsIndex.HELD_OPPONENT] = 0.0
         
         # Parked status
-        observation[ObsIndex.PARKED] = 1.0 if agent_state.get("parked", False) else 0.0
+        observation[ObsIndex.PARKED] = 1.0 if agent_state.get("inferred_parked", False) else 0.0
         
         # Goals added by this agent (4 goals)
-        goals_added = agent_state.get("goals_added", [0, 0, 0, 0])
+        goals_added = agent_state.get("inferred_goals_added", [0, 0, 0, 0])
         for i, count in enumerate(goals_added):
             observation[ObsIndex.GOALS_ADDED_START + i] = float(count)
         
         # Loaders cleared by this agent (4 loaders)
-        loaders_taken = agent_state.get("loaders_taken", [0, 0, 0, 0])
+        loaders_taken = agent_state.get("inferred_loaders_taken", [0, 0, 0, 0])
         for i, taken in enumerate(loaders_taken):
             observation[ObsIndex.LOADERS_CLEARED_START + i] = float(taken)
         
@@ -1023,7 +1071,7 @@ class PushBackGame(VexGame):
     ) -> Tuple[List[ActionStep], float]:
         """Pick up nearest block in FOV.
         
-        The agent ALWAYS assumes it picked up a block (increments held_blocks).
+        The agent ALWAYS assumes it picked up a block (increments inferred_held_blocks).
         In reality, it picks up the nearest block of its team color if one exists in FOV.
         The agent does NOT know what color block it picked up.
         
@@ -1035,7 +1083,7 @@ class PushBackGame(VexGame):
         start_orient = agent_state["orientation"].copy()
         
         # Check if already at max capacity
-        if agent_state["held_blocks"] >= MAX_HELD_BLOCKS:
+        if agent_state.get("inferred_held_blocks", 0) >= MAX_HELD_BLOCKS:
             return [ActionStep(
                 duration=0.1,
                 target_pos=start_pos.copy(),
@@ -1129,7 +1177,7 @@ class PushBackGame(VexGame):
         start_pos = agent_state["position"].copy()
         start_orient = agent_state["orientation"].copy()
         
-        if agent_state["held_blocks"] <= 0:
+        if agent_state.get("inferred_held_blocks", 0) <= 0:
             return [ActionStep(
                 duration=0.1,
                 target_pos=start_pos.copy(),
@@ -1173,43 +1221,27 @@ class PushBackGame(VexGame):
                 robot_pos = np.array([-8.5 - offset * 0.707, -8.5 - offset * 0.707])
                 orientation = np.pi / 4
         
-        # Build per-block scoring events with stochastic probability
+        # Build one scoring event for all currently held blocks
         agent_name = agent_state["agent_name"]
-        robot_team = agent_state["team"]
-        goal_center = GOALS[goal_type].center
         # Eject blocks near the scoring entry, not the goal center
         scoring_entry = (
             goal.left_entry.copy() if scoring_side == "left" else goal.right_entry.copy()
         )
-        
-        score_events: List[ActionEvent] = []
-        for block_idx, block in enumerate(self.state["blocks"]):
-            if block["status"] == BlockStatus.HELD and block.get("held_by") == agent_name:
-                if block.get("team") == robot_team:
-                    # Friendly block: try to score, may fail stochastically
-                    score_events.append(ActionEvent(
-                        type="score_block",
-                        data={
-                            "agent": agent_name,
-                            "goal_type": goal_type,
-                            "block_idx": block_idx,
-                            "scoring_side": scoring_side,
-                            "is_friendly": True,
-                            "scoring_entry": scoring_entry.copy(),
-                        },
-                    ))
-                else:
-                    # Wrong color block - always eject
-                    score_events.append(ActionEvent(
-                        type="eject_block",
-                        data={
-                            "block_idx": block_idx,
-                            "goal_center": scoring_entry.copy(),
-                        },
-                    ))
-        
-        scored_count = sum(1 for e in score_events if e.type == "score_block")
-        post_duration = DEFAULT_DURATION * max(1, scored_count)
+
+        score_events: List[ActionEvent] = [
+            ActionEvent(
+                type="score_blocks",
+                data={
+                    "agent": agent_name,
+                    "goal_type": goal_type,
+                    "scoring_side": scoring_side,
+                    "scoring_entry": scoring_entry.copy(),
+                },
+            )
+        ]
+
+        assumed_held = max(1, int(agent_state.get("inferred_held_blocks", 0)))
+        post_duration = DEFAULT_DURATION * assumed_held
         
         steps, _ = self._build_move_action_plan(
             agent_name=agent_state["agent_name"],
@@ -1250,7 +1282,7 @@ class PushBackGame(VexGame):
         start_orient = agent_state["orientation"].copy()
         
         # Check if this loader has already been cleared by this agent
-        if agent_state["loaders_taken"][loader_idx] >= 1:
+        if agent_state.get("inferred_loaders_taken", [0, 0, 0, 0])[loader_idx] >= 1:
             return [ActionStep(
                 duration=0.1,
                 target_pos=start_pos.copy(),
@@ -1308,7 +1340,7 @@ class PushBackGame(VexGame):
         start_orient = agent_state["orientation"].copy()
 
         # Already parked: treat as invalid to prevent repeated park reward farming
-        if agent_state.get("parked", False):
+        if agent_state.get("inferred_parked", False):
             return [ActionStep(
                 duration=0.1,
                 target_pos=start_pos.copy(),
@@ -1328,7 +1360,7 @@ class PushBackGame(VexGame):
         # Only one robot can park per team
         for other_agent, other_state in self.state["agents"].items():
             if other_agent != agent_state["agent_name"]:
-                if other_state["team"] == team and other_state.get("parked", False):
+                if other_state["team"] == team and other_state.get("inferred_parked", False):
                     return [ActionStep(
                         duration=0.1,
                         target_pos=start_pos.copy(),
@@ -1495,6 +1527,34 @@ class PushBackGame(VexGame):
         agent_state = self.state["agents"].get(agent)
         if agent_state is None:
             return
+
+        # Keep inferred tracker updated in training path using simple assumed-action logic.
+        # This mirrors inference-time `update_tracker` usage but is driven by resolved events.
+        did_assume_pickup = False
+        did_assume_park = False
+        assumed_loaders: set[int] = set()
+        for event in events:
+            if event.type == "pickup_block" and not did_assume_pickup:
+                self.update_tracker(agent, Actions.PICK_UP_BLOCK.value)
+                did_assume_pickup = True
+            elif event.type == "clear_loader":
+                loader_idx = event.data.get("loader_idx")
+                if isinstance(loader_idx, int) and loader_idx not in assumed_loaders:
+                    self.update_tracker(agent, Actions.TAKE_FROM_LOADER_TL.value + loader_idx)
+                    assumed_loaders.add(loader_idx)
+            elif event.type == "score_blocks":
+                goal_type = event.data.get("goal_type")
+                if goal_type == GoalType.LONG_1:
+                    self.update_tracker(agent, Actions.SCORE_IN_LONG_GOAL_1.value)
+                elif goal_type == GoalType.LONG_2:
+                    self.update_tracker(agent, Actions.SCORE_IN_LONG_GOAL_2.value)
+                elif goal_type == GoalType.CENTER_UPPER:
+                    self.update_tracker(agent, Actions.SCORE_IN_CENTER_UPPER.value)
+                elif goal_type == GoalType.CENTER_LOWER:
+                    self.update_tracker(agent, Actions.SCORE_IN_CENTER_LOWER.value)
+            elif event.type == "park" and not did_assume_park:
+                self.update_tracker(agent, Actions.PARK.value)
+                did_assume_park = True
         
         for event in events:
             if event.type == "clear_loader":
@@ -1505,10 +1565,7 @@ class PushBackGame(VexGame):
                 if "loaders" in self.state and 0 <= loader_idx < len(self.state["loaders"]):
                     self.state["loaders"][loader_idx] = 0
 
-                # Update agent tracker
-                agent_state["loaders_taken"][loader_idx] = 1
                 loader_center = LOADERS[loader_idx].position
-                success_count = 0
 
                 for idx in block_indices:
                     if 0 <= idx < len(self.state["blocks"]):
@@ -1528,16 +1585,11 @@ class PushBackGame(VexGame):
                             b["status"] = BlockStatus.HELD
                             b["held_by"] = agent
                             b["position"] = agent_state["position"].copy()
-                            success_count += 1
                         elif outcome == "ground":
                             b["status"] = BlockStatus.ON_FIELD
                             b["held_by"] = None
                             b["position"] = self._random_point_within_radius(loader_center)
                         # else outcome == "stays", so do nothing and the block stays in the loader
-
-                agent_state["held_blocks"] += success_count
-                if agent_state["held_blocks"] > MAX_HELD_BLOCKS:
-                    agent_state["held_blocks"] = MAX_HELD_BLOCKS
             
             elif event.type == "pickup_block":
                 block_idx = event.data.get("block_idx", -1)
@@ -1545,82 +1597,68 @@ class PushBackGame(VexGame):
                 pickup_success = (not self._is_stochastic()) or (np.random.random() < 0.90)
                 
                 if pickup_success and block_idx >= 0 and 0 <= block_idx < len(self.state["blocks"]):
-                    agent_state["held_blocks"] += 1
-                    if agent_state["held_blocks"] > MAX_HELD_BLOCKS:
-                        agent_state["held_blocks"] = MAX_HELD_BLOCKS
-
                     b = self.state["blocks"][block_idx]
                     b["status"] = BlockStatus.HELD
                     b["held_by"] = agent
                     b["position"] = agent_state["position"].copy()
             
-            elif event.type == "score_block":
+            elif event.type == "score_blocks":
                 goal_type = event.data.get("goal_type")
-                block_idx = event.data.get("block_idx")
                 scoring_side = event.data.get("scoring_side")
-                
-                # Stochastic scoring check (90% success if stochastic)
-                score_success = (not self._is_stochastic()) or (np.random.random() < 0.90)
-                
-                if score_success and 0 <= block_idx < len(self.state["blocks"]):
-                    target_status = BlockStatus.get_status_for_goal(goal_type)
-                    b = self.state["blocks"][block_idx]
-                    
-                    goal = self.goal_manager.get_goal(goal_type)
-                    ejected_idx, _ = goal.add_block_from_nearest(block_idx, agent_state["position"])
-                    
-                    b["status"] = target_status
-                    b["held_by"] = None
-                    
-                    # Handle ejected block from goal overflow
-                    if ejected_idx is not None and 0 <= ejected_idx < len(self.state["blocks"]):
-                        eb = self.state["blocks"][ejected_idx]
-                        eb["status"] = BlockStatus.ON_FIELD
-                        eb["held_by"] = None
-                        eb["position"] = self._clamp_position_to_field(
-                            goal.right_entry.copy() if scoring_side == "left" else goal.left_entry.copy()
+                scoring_entry = event.data.get("scoring_entry")
+
+                if goal_type is None:
+                    continue
+
+                goal = self.goal_manager.get_goal(goal_type)
+                target_status = BlockStatus.get_status_for_goal(goal_type)
+                robot_team = agent_state.get("team")
+
+                held_indices = [
+                    i for i, block in enumerate(self.state["blocks"])
+                    if block["status"] == BlockStatus.HELD and block.get("held_by") == agent
+                ]
+
+                scored_any = False
+                for block_idx in held_indices:
+                    if not (0 <= block_idx < len(self.state["blocks"])):
+                        continue
+
+                    block = self.state["blocks"][block_idx]
+                    is_friendly = block.get("team") == robot_team
+
+                    if is_friendly:
+                        score_success = (not self._is_stochastic()) or (np.random.random() < 0.90)
+                        if score_success:
+                            ejected_idx, _ = goal.add_block_from_nearest(block_idx, agent_state["position"])
+                            block["status"] = target_status
+                            block["held_by"] = None
+                            scored_any = True
+
+                            if ejected_idx is not None and 0 <= ejected_idx < len(self.state["blocks"]):
+                                eb = self.state["blocks"][ejected_idx]
+                                eb["status"] = BlockStatus.ON_FIELD
+                                eb["held_by"] = None
+                                eb["position"] = self._clamp_position_to_field(
+                                    goal.right_entry.copy() if scoring_side == "left" else goal.left_entry.copy()
+                                )
+                        elif scoring_entry is not None:
+                            block["status"] = BlockStatus.ON_FIELD
+                            block["held_by"] = None
+                            block["position"] = self._clamp_position_to_field(scoring_entry)
+                    elif scoring_entry is not None:
+                        # Wrong-color held blocks are ejected near scoring entry.
+                        block["status"] = BlockStatus.ON_FIELD
+                        block["held_by"] = None
+                        block["position"] = self._clamp_position_to_field(
+                            self._random_point_within_radius(np.array(scoring_entry, dtype=np.float32), radius=6.0)
                         )
-                    
-                    # Update block positions in goal
+
+                if scored_any:
                     self._update_goal_block_positions(goal, target_status)
-                    
-                    # Track goals added
-                    goal_idx = [GoalType.LONG_1, GoalType.LONG_2, GoalType.CENTER_UPPER, GoalType.CENTER_LOWER].index(goal_type)
-                    agent_state["goals_added"][goal_idx] += 1
-                    
-                    # Decrement held blocks
-                    agent_state["held_blocks"] = max(0, agent_state["held_blocks"] - 1)
-                elif not score_success and 0 <= block_idx < len(self.state["blocks"]):
-                    # Eject block on failure
-                    scoring_entry = event.data.get("scoring_entry")
-                    if scoring_entry is not None:
-                        b = self.state["blocks"][block_idx]
-                        b["status"] = BlockStatus.ON_FIELD
-                        b["held_by"] = None
-                        b["position"] = self._clamp_position_to_field(scoring_entry)
-                    
-                    # Decrement held blocks since it left the robot
-                    agent_state["held_blocks"] = max(0, agent_state["held_blocks"] - 1)
-            
-            elif event.type == "eject_block":
-                block_idx = event.data.get("block_idx")
-                goal_center = event.data.get("goal_center")
-                if 0 <= block_idx < len(self.state["blocks"]):
-                    b = self.state["blocks"][block_idx]
-                    b["status"] = BlockStatus.ON_FIELD
-                    b["held_by"] = None
-                    if goal_center is not None:
-                        b["position"] = self._clamp_position_to_field(
-                            self._random_point_within_radius(goal_center)
-                        )
-                    else:
-                        b["position"] = self._clamp_position_to_field(agent_state["position"].copy())
-                    
-                    # Decrement held blocks
-                    agent_state["held_blocks"] = max(0, agent_state["held_blocks"] - 1)
             
             elif event.type == "park":
-                agent_state["parked"] = True
+                pass
             
             elif event.type == "turn_toward_center":
                 target_angle = event.data.get("target_angle", 0.0)

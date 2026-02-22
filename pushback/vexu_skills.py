@@ -31,6 +31,10 @@ class VexUSkillsGame(PushBackGame):
     @property
     def total_time(self) -> float:
         return 60.0
+
+    def get_team_for_agent(self, agent: str) -> str:
+        """Skills is cooperative: all agents contribute to shared red score."""
+        return "red"
     
     def compute_score(self) -> Dict[str, int]:
         """
@@ -100,20 +104,6 @@ class VexUSkillsGame(PushBackGame):
         score += parked_count * PARK_ROBOT
         
         return {"red": score}
-    
-    def compute_reward(
-        self, 
-        agent: str, 
-        initial_scores: Dict[str, int], 
-        new_scores: Dict[str, int],
-        penalty: float
-    ) -> float:
-        """
-        Skills mode: All robots are rewarded based on the red team score
-        improvement (cooperative, not competitive).
-        """
-        red_delta = new_scores.get("red", 0) - initial_scores.get("red", 0)
-        return red_delta - penalty
     
     def _get_initial_blocks(
         self, randomize: bool, seed: Optional[int]
