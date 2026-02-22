@@ -160,16 +160,18 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
             attention_logits = self.attention_unit(features)
             msg_mean = self.message_head(features)
             
+            # Gate message by attention (soft on/off for communication)
+            gate = torch.sigmoid(attention_logits)  # (B, 1)
+            msg_mean = msg_mean * gate               # (B, 8) * (B, 1) → broadcast
+            
             # Concat outputs for Tuple Distribution: [DiscreteLogits, BoxMean, BoxLogStd]
-            # DiscreteLogits: (Batch, N)
-            # BoxMean: (Batch, 8)
-            # BoxLogStd: (Batch, 8) - Expand parameter
             batch_size = features.shape[0]
             msg_log_std_exp = self.msg_log_std.expand(batch_size, -1)
             
             dist_inputs = torch.cat([intention_logits, msg_mean, msg_log_std_exp], dim=1)
             
             output["attention_logits"] = attention_logits
+            output["comm_gate"] = gate
             output["message"] = msg_mean
         else:
             # Communication disabled - only use action logits
@@ -195,14 +197,18 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
             attention_logits = self.attention_unit(features)
             msg_mean = self.message_head(features)
             
+            # Gate message by attention (soft on/off for communication)
+            gate = torch.sigmoid(attention_logits)  # (B, 1)
+            msg_mean = msg_mean * gate               # (B, 8) * (B, 1) → broadcast
+            
             # Concat outputs for Tuple Distribution: [DiscreteLogits, BoxMean, BoxLogStd]
             batch_size = features.shape[0]
             msg_log_std_exp = self.msg_log_std.expand(batch_size, -1)
             
             dist_inputs = torch.cat([intention_logits, msg_mean, msg_log_std_exp], dim=1)
             
-            # Also compute messages for the environment to use next step
             output["attention_logits"] = attention_logits
+            output["comm_gate"] = gate
             output["message"] = msg_mean
         else:
             # Communication disabled - only use action logits

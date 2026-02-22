@@ -17,6 +17,7 @@ from typing import Dict, List, Tuple, Optional, Any
 from .base_game import VexGame, Robot, RobotSize, Team, ActionEvent, ActionStep
 
 DELTA_T = 0.1  # Discrete time step in seconds
+COMM_DELAY_TICKS = 4  # Message delivery delay in ticks (~0.375s, half of 0.75s RTT)
 
 
 class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
@@ -101,6 +102,9 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self._deferred_rewards: Dict[str, Dict] = {}  # {agent: {penalty, action_name, accumulated_reward}}
         self.projected_positions: Dict[str, np.ndarray] = {}
         
+        # Communication delay buffer: {agent: [(delivery_tick, message_vector), ...]}
+        self._message_buffer: Dict[str, list] = {agent: [] for agent in self.possible_agents}
+        
         # Environment-managed agent states (Time, etc.)
         self.env_agent_states: Dict[str, Dict] = {}
         
@@ -146,6 +150,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self.busy_state = {}
         self._deferred_rewards = {}
         self.projected_positions = {}
+        self._message_buffer = {agent: [] for agent in self.possible_agents}
         
         # Reset game-specific state
         self.game.reset()
@@ -361,7 +366,10 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                         arr = padded
                     else:
                         arr = arr[:8].astype(np.float32)
-                agent_state["emitted_message"] = arr
+                # Queue message for delayed delivery instead of immediate emit
+                current_tick = int(self.env_agent_states.get(agent, {}).get("tick", 0))
+                self._message_buffer[agent].append((current_tick + COMM_DELAY_TICKS, arr))
+                agent_state["emitted_message"] = arr  # Store latest for debugging
             else:
                 agent_state["emitted_message"] = np.zeros(8, dtype=np.float32)
 
@@ -588,35 +596,32 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
     def _update_messages(self, active_agents: List[str]) -> None:
         """
         Aggregate messages from neighbors for each agent.
-        Updates agent_state["received_messages"].
+        Uses delayed delivery: only messages whose delivery tick has arrived
+        are consumed. Updates agent_state["received_messages"].
         """
         
-        # Pre-fetch positions and messages
-        positions = {}
-        messages = {}
-        
-        # Safety check for None state (fixing test issues just in case)
+        # Safety check for None state
         if self.environment_state is None:
              return
-             
+        
+        # Determine the current global tick (use first active agent's tick)
+        current_tick = 0
         for agent in active_agents:
-            st = self.environment_state["agents"][agent]
-            positions[agent] = st["position"]
-            # Normalize emitted_message to an 8-dim float32 vector (robustness against malformed state)
-            m = st.get("emitted_message", None)
-            if m is None:
-                messages[agent] = np.zeros(8, dtype=np.float32)
-            else:
-                m_arr = np.array(m, dtype=np.float32).ravel()
-                if m_arr.size != 8:
-                    if m_arr.size < 8:
-                        padded = np.zeros(8, dtype=np.float32)
-                        if m_arr.size > 0:
-                            padded[: m_arr.size] = m_arr
-                        m_arr = padded
-                    else:
-                        m_arr = m_arr[:8]
-                messages[agent] = m_arr
+            current_tick = int(self.env_agent_states.get(agent, {}).get("tick", 0))
+            break
+
+        # Collect the latest delivered message per sender
+        delivered: Dict[str, np.ndarray] = {}
+        for agent in active_agents:
+            buf = self._message_buffer.get(agent, [])
+            # Find all messages ready to deliver
+            ready = [msg for tick, msg in buf if tick <= current_tick]
+            # Keep only undelivered messages
+            self._message_buffer[agent] = [(t, m) for t, m in buf if t > current_tick]
+            if ready:
+                # Use the most recent delivered message
+                delivered[agent] = ready[-1]
+            # If no message ready, agent has no delivered message this tick
 
         for agent in active_agents:
             received_sum = np.zeros(8, dtype=np.float32)
@@ -626,8 +631,9 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 if agent == other:
                     continue
                 
-                received_sum += messages[other]
-                count += 1
+                if other in delivered:
+                    received_sum += delivered[other]
+                    count += 1
             
             # Average
             if count > 0:
