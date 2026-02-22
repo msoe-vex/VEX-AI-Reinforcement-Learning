@@ -37,9 +37,9 @@ class VexModelRunner:
             print(f"Error loading model: {e}")
             return
 
-    def get_prediction(self, observation: np.ndarray) -> int:
+    def get_prediction(self, observation: np.ndarray):
         """
-        Runs inference on the model to get the predicted action for the given observation.
+        Runs inference on the model to get the predicted action and message vector.
         
         Uses stochastic sampling (Categorical distribution) to match training behavior.
         During training, RLlib samples from the action distribution rather than
@@ -49,6 +49,9 @@ class VexModelRunner:
 
         Args:
             observation: The current observation for the agent.
+            
+        Returns:
+            Tuple of (action: int, message_vector: np.ndarray or None)
         """
         observation = np.nan_to_num(observation, nan=0.0, posinf=0.0, neginf=0.0)
         # Zero-Copy Tensor Creation: Use from_numpy() instead of tensor()
@@ -70,6 +73,13 @@ class VexModelRunner:
         else:
             action_dim = model_output.shape[1]
         action_logits = model_output[:, :action_dim]
+        
+        # Extract message vector (8 dims) if present after action logits
+        message_vector = None
+        remaining = model_output.shape[1] - action_dim
+        if remaining >= 8:
+            # Message mean is the first 8 values after action logits
+            message_vector = model_output[:, action_dim:action_dim + 8].cpu().numpy()[0]
         
         # Use stochastic sampling like RLlib does during training
         # The model outputs logits; convert to probabilities and sample
@@ -94,13 +104,13 @@ class VexModelRunner:
             if action is None:
                 action = self.game.fallback_action()
         
-        return action
+        return action, message_vector
 
     def get_inference(self, observation: np.ndarray):
         """Get action for the robot based on current observation.
         
         Returns:
-            Tuple of (high_level_action: int, split_actions: List[str])
+            Tuple of (high_level_action: int, split_actions: List[str], message_vector: np.ndarray or None)
         """
 
         observation = self.game.update_observation_from_tracker(
@@ -108,14 +118,14 @@ class VexModelRunner:
             observation=observation
         )
 
-        # Get action using current observation
+        # Get action and message vector using current observation
         # Observation uses tracker fields (held_blocks, loaders_taken, goals_added)
-        action = self.get_prediction(observation)
+        action, message_vector = self.get_prediction(observation)
         
         # Get split actions
         split_actions = self.game.split_action(action, observation, self.robot)
         
-        return action, split_actions  # Returns both action ID and low-level commands
+        return action, split_actions, message_vector
 
     def run_action(self, action):
         """Called after robot successfully completes an action.
