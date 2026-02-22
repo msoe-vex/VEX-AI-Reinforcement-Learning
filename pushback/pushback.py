@@ -303,7 +303,7 @@ class BlockStatus:
 class ObsIndex:
     """Observation vector indices for Push Back game.
     
-    Layout (80 total):
+    Layout (90 total):
     - 0-2: Self position (x, y) and orientation
     - 3-5: Teammate position and orientation
     - 6-7: Held blocks (friendly, opponent)
@@ -313,9 +313,10 @@ class ObsIndex:
     - 12-41: Friendly block positions (15 * 2)
     - 42-71: Opponent block positions (15 * 2)
     - 72-75: Goals added by this agent (4 goals)
-    - 72-75: Goals added by this agent (4 goals)
     - 76-79: Loaders cleared by this agent (4 loaders)
     - 80-87: Received messages (8 dims)
+    - 88: Is executing an action (1.0 = busy, 0.0 = idle)
+    - 89: Current action ID (normalized to [0, 1])
     """
     SELF_POS_X = 0
     SELF_POS_Y = 1
@@ -332,7 +333,9 @@ class ObsIndex:
     GOALS_ADDED_START = 72
     LOADERS_CLEARED_START = 76
     RECEIVED_MSG_START = 80
-    TOTAL = 88
+    IS_EXECUTING = 88
+    CURRENT_ACTION_ID = 89
+    TOTAL = 90
 
 
 # =============================================================================
@@ -744,6 +747,16 @@ class PushBackGame(VexGame):
             msgs = np.zeros(8, dtype=np.float32)
         obs_parts.extend([float(x) for x in msgs])
         
+        # 10. Is executing (1) - populated by base_env when agent is busy
+        obs_parts.append(1.0 if agent_state.get("is_executing", False) else 0.0)
+        
+        # 11. Current action ID (1) - normalized to [0, 1] range
+        current_action = agent_state.get("current_action", None)
+        if current_action is not None:
+            obs_parts.append(float(current_action) / max(1.0, float(len(Actions) - 1)))
+        else:
+            obs_parts.append(0.0)
+        
         return np.array(obs_parts, dtype=np.float32)
     
     def observation_space(self, agent: str) -> spaces.Space:
@@ -771,20 +784,25 @@ class PushBackGame(VexGame):
         # Goals added by this agent: 4 (Indices 72-75)
         # Loaders cleared by this agent: 4 (Indices 76-79)
         # Received messages: 8 (Indices 80-87)
-        # Total: 3 + 3 + 2 + 1 + 1 + 1 + 1 + 30 + 30 + 4 + 4 + 8 = 88
+        # Is executing: 1 (Index 88)
+        # Current action ID: 1 (Index 89)
+        # Total: 3 + 3 + 2 + 1 + 1 + 1 + 1 + 30 + 30 + 4 + 4 + 8 + 1 + 1 = 90
         
         return (ObsIndex.TOTAL,)
     
     def action_space(self, agent: str) -> spaces.Space:
         """Get action space for an agent.
 
-        Action space shape is intentionally fixed regardless of communication mode.
-        When communication is disabled, the environment ignores the provided
-        message and writes zeros into emitted/received message channels.
+        Action space: Tuple(Discrete(action), Box(message_8d), Box(beta_1d))
+        - Discrete: which action to take
+        - Box(8): communication message vector
+        - Box(1): termination signal β (option-critic)
+          When idle: ignored. When busy: σ(β) > 0.5 cancels current action.
         """
         return spaces.Tuple((
             spaces.Discrete(self.num_actions),
-            spaces.Box(low=-1.0, high=1.0, shape=(8,), dtype=np.float32)
+            spaces.Box(low=-1.0, high=1.0, shape=(8,), dtype=np.float32),
+            spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32),
         ))
 
     @staticmethod

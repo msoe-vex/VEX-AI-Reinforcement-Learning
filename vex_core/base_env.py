@@ -17,6 +17,8 @@ from typing import Dict, List, Tuple, Optional, Any
 from .base_game import VexGame, Robot, RobotSize, Team, ActionEvent, ActionStep
 
 DELTA_T = 0.1  # Discrete time step in seconds
+COMMUNICATION_RTT = 0.75  # Round-trip time for inter-agent communication (seconds)
+COMM_DELAY_TICKS = max(1, round(COMMUNICATION_RTT / 2 / DELTA_T))  # One-way delay in ticks (≈4)
 
 
 class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
@@ -101,6 +103,9 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self._deferred_rewards: Dict[str, Dict] = {}  # {agent: {penalty, action_name, accumulated_reward}}
         self.projected_positions: Dict[str, np.ndarray] = {}
         
+        # Communication delay buffer: agent → list of (delivery_tick, message_vector)
+        self._message_buffer: Dict[str, list] = {agent: [] for agent in self.possible_agents}
+        
         # Environment-managed agent states (Time, etc.)
         self.env_agent_states: Dict[str, Dict] = {}
         
@@ -146,6 +151,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self.busy_state = {}
         self._deferred_rewards = {}
         self.projected_positions = {}
+        self._message_buffer = {agent: [] for agent in self.possible_agents}
         
         # Reset game-specific state
         self.game.reset()
@@ -251,10 +257,25 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         return completed
 
     def _advance_time_and_messages(self):
-        """Advance game clock by one tick and update inter-agent messages."""
+        """Advance game clock by one tick and deliver buffered messages."""
         for agent in self.possible_agents:
             if agent in self.env_agent_states and agent not in self._terminated_agents:
                 self.env_agent_states[agent]["tick"] += 1
+        
+        # Flush communication buffer: deliver messages whose delay has elapsed
+        for agent in self.possible_agents:
+            buf = self._message_buffer.get(agent, [])
+            delivered = None
+            remaining = []
+            for delivery_tick, msg in buf:
+                if delivery_tick <= self.num_ticks:
+                    delivered = msg  # Latest delivered message wins
+                else:
+                    remaining.append((delivery_tick, msg))
+            self._message_buffer[agent] = remaining
+            if delivered is not None:
+                self.environment_state["agents"][agent]["emitted_message"] = delivered
+        
         self._update_messages(list(self.possible_agents))
 
     def _get_agent_time(self, agent: str) -> float:
@@ -279,19 +300,18 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         actions: Dict[str, Any]
     ) -> Tuple[Dict, Dict, Dict, Dict, Dict]:
         """
-        Execute one environment step.
+        Execute one environment tick (DELTA_T seconds).
 
-        Only agents that are NOT busy appear in self.agents.  RLlib/the caller
-        sends actions only for those agents.  After processing the new actions
-        (which make agents busy), we fast-forward through ticks until at
-        least one agent becomes free again.  Each internal tick renders a
-        frame and updates messages so communication is never lost.
+        All non-terminated agents appear in self.agents every tick.
+        For idle agents, the action is executed normally.
+        For busy agents, the termination signal β is checked:
+          - σ(β) > 0.5 → cancel current action, start the new one
+          - σ(β) ≤ 0.5 → continue current action, ignore new action
 
-        Rewards are computed AFTER the busy state completes (events have been
-        applied and scores have changed), giving correct score-based rewards.
+        Rewards are computed when actions complete (naturally or via cancellation).
         """
-        # Remove any previously terminated agents so we don't expect actions from them
-        for agent in self._terminated_agents:
+        # Remove any previously terminated agents
+        for agent in list(self._terminated_agents):
             if agent in self.agents:
                 self.agents.remove(agent)
                 
@@ -314,31 +334,88 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         infos = {agent: {} for agent in all_agents}
         
         # ──────────────────────────────────────────────────────────────
-        # 1. Process new actions for non-busy agents
+        # 1. Process actions: new actions for idle, β check for busy
         # ──────────────────────────────────────────────────────────────
         newly_actioned = set()
-        for agent, action in actions.items():
-            if agent not in all_agents:
+        for agent in all_agents:
+            action = actions.get(agent)
+            if action is None:
                 continue
-            if agent in self.busy_state:
-                continue
-
+            
             agent_state = self.environment_state["agents"][agent]
-            infos[agent]["action_skipped"] = False
+            is_busy = agent in self.busy_state
+            
+            # Parse action tuple: (action_val, message, beta)
+            action_val = action
+            emitted_msg = None
+            beta_raw = None
+            if isinstance(action, (tuple, list)):
+                if len(action) >= 3:
+                    action_val = action[0]
+                    emitted_msg = action[1]
+                    beta_raw = action[2]
+                elif len(action) >= 2:
+                    action_val = action[0]
+                    emitted_msg = action[1]
+            
+            # Buffer emitted message (delayed delivery)
+            if self.enable_communication and emitted_msg is not None:
+                arr = np.array(emitted_msg, dtype=np.float32).ravel()
+                if arr.size != 8:
+                    if arr.size < 8:
+                        padded = np.zeros(8, dtype=np.float32)
+                        if arr.size > 0:
+                            padded[: arr.size] = arr
+                        arr = padded
+                    else:
+                        arr = arr[:8].astype(np.float32)
+                delivery_tick = self.num_ticks + COMM_DELAY_TICKS
+                self._message_buffer[agent].append((delivery_tick, arr))
+            
+            if is_busy:
+                # ── Option-critic: check termination signal β ──
+                should_cancel = False
+                if beta_raw is not None:
+                    beta_val = float(np.array(beta_raw).ravel()[0]) if hasattr(beta_raw, '__len__') else float(beta_raw)
+                    # Apply sigmoid: σ(β) > 0.5 means cancel
+                    beta_prob = 1.0 / (1.0 + np.exp(-beta_val))
+                    should_cancel = beta_prob > 0.5
+                
+                if should_cancel:
+                    # Cancel current action: compute partial reward
+                    stored = self._deferred_rewards.pop(agent, None)
+                    if stored is not None:
+                        score_now = self.game.compute_score()
+                        # Partial reward based on any score changes during execution
+                        reward = stored.get("accumulated_reward", 0.0) - stored.get("penalty", 0.0)
+                        rewards[agent] = reward
+                        old_action_name = stored.get("action_name", "--")
+                        agent_state["last_action_name"] = old_action_name
+                        agent_state["last_action_reward"] = reward
+                        infos[agent]["action_cancelled"] = True
+                        infos[agent]["action_completed"] = True
+                    
+                    # Remove from busy state
+                    del self.busy_state[agent]
+                    agent_state["current_action"] = None
+                    agent_state["is_executing"] = False
+                    self.agent_movements[agent] = None
+                    
+                    # Fall through to execute the new action below
+                    is_busy = False
+                else:
+                    # Continue current action — mark as executing
+                    agent_state["is_executing"] = True
+                    infos[agent]["is_executing"] = True
+                    continue  # Skip to next agent
+            
+            # ── Execute new action (agent is idle or just cancelled) ──
+            action_int = int(action_val.value if hasattr(action_val, 'value') else action_val)
             
             start_pos = agent_state["position"].copy()
             start_orient = agent_state["orientation"].copy()
             score_before_action = self.game.compute_score()
-            # Parse action tuple (Control, Message)
-            action_val = action
-            emitted_msg = None
-            if isinstance(action, (tuple, list)) and len(action) >= 2:
-                action_val = action[0]
-                emitted_msg = action[1]
-            elif isinstance(action, np.ndarray) and action.ndim > 0 and action.size > 1:
-                pass
-                
-            action_int = int(action_val.value if hasattr(action_val, 'value') else action_val)
+            
             agent_state["current_action"] = action_int
             agent_state["game_time"] = self._get_agent_time(agent)
             action_steps, penalty = self.game.execute_action(agent, action_int)
@@ -350,21 +427,6 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 0.0,
             )
             
-            # Store emitted message (or force zeros when communication is disabled)
-            if self.enable_communication and emitted_msg is not None:
-                arr = np.array(emitted_msg, dtype=np.float32).ravel()
-                if arr.size != 8:
-                    if arr.size < 8:
-                        padded = np.zeros(8, dtype=np.float32)
-                        if arr.size > 0:
-                            padded[: arr.size] = arr
-                        arr = padded
-                    else:
-                        arr = arr[:8].astype(np.float32)
-                agent_state["emitted_message"] = arr
-            else:
-                agent_state["emitted_message"] = np.zeros(8, dtype=np.float32)
-
             # Build tick-based interpolation plan
             plan = []
             cursor_pos = start_pos.copy()
@@ -419,12 +481,14 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                     "completed_segments": set(),
                 }
                 newly_actioned.add(agent)
+                agent_state["is_executing"] = True
                 if not np.array_equal(start_pos, final_target_pos):
                     self.agent_movements[agent] = (start_pos.copy(), final_target_pos.copy())
             else:
                 self.agent_movements[agent] = None
+                agent_state["is_executing"] = False
 
-            # Store for deferred reward computation (include action name for info panel)
+            # Store for deferred reward computation
             try:
                 action_name = self.game.action_to_name(action_int)
             except Exception:
@@ -434,10 +498,6 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 "action_name": action_name,
                 "accumulated_reward": immediate_action_reward,
             }
-
-            # Agent is now busy — remove from self.agents
-            if agent in self.agents:
-                self.agents.remove(agent)
 
         # ──────────────────────────────────────────────────────────────
         # 2. Projected collision check (only newly started actions)
@@ -482,7 +542,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 stored["penalty"] = float(stored.get("penalty", 0.0)) + penalty_value
 
         # ──────────────────────────────────────────────────────────────
-        # 3. Advance time + messages for this tick
+        # 3. Tick busy agents + advance time
         # ──────────────────────────────────────────────────────────────
         tick_results = self._tick_busy_agents()
         for agent, did_complete in tick_results.items():
@@ -494,9 +554,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                     self.environment_state["agents"][agent]["last_action_name"] = stored.get("action_name", "--")
                     self.environment_state["agents"][agent]["last_action_reward"] = reward
                 self.environment_state["agents"][agent]["current_action"] = None
+                self.environment_state["agents"][agent]["is_executing"] = False
                 infos[agent]["action_completed"] = True
-                if agent not in self.agents:
-                    self.agents.append(agent)
 
         self._advance_time_and_messages()
         self.score = self.game.compute_score()
@@ -504,62 +563,23 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self.render(action_dict=actions, rewards=rewards, infos=infos)
 
         # ──────────────────────────────────────────────────────────────
-        # 4. Fast-forward while ALL agents are busy
-        # ──────────────────────────────────────────────────────────────
-        while (not self.agents) and any(a in self.busy_state for a in all_agents):
-            self.num_ticks += 1
-
-            tick_results = self._tick_busy_agents()
-            for agent, did_complete in tick_results.items():
-                if did_complete:
-                    stored = self._deferred_rewards.pop(agent, None)
-                    if stored is not None:
-                        reward = stored.get("accumulated_reward", 0.0) - stored.get("penalty", 0.0)
-                        rewards[agent] = reward
-                        self.environment_state["agents"][agent]["last_action_name"] = stored.get("action_name", "--")
-                        self.environment_state["agents"][agent]["last_action_reward"] = reward
-                    self.environment_state["agents"][agent]["current_action"] = None
-                    infos[agent]["action_completed"] = True
-                    if agent not in self.agents:
-                        self.agents.append(agent)
-
-            self._advance_time_and_messages()
-            self.score = self.game.compute_score()
-
-            self.render(rewards=rewards, infos=infos)
-
-            # Check terminations during fast-forward
-            _, ff_remove = self._check_terminations()
-            for agent in ff_remove:
-                if agent not in self._terminated_agents:
-                    self._terminated_agents.add(agent)
-                    # Add them to self.agents so RLlib sees their final terminating state
-                    if agent not in self.agents:
-                        self.agents.append(agent)
-                    if agent in self.busy_state:
-                        del self.busy_state[agent]
-            if all(
-                self.game.is_agent_terminated(
-                    a, game_time=self._get_agent_time(a)
-                )
-                for a in all_agents
-            ):
-                break
-
-        # ──────────────────────────────────────────────────────────────
-        # 5. Terminations and observations
+        # 4. Terminations and observations
         # ──────────────────────────────────────────────────────────────
         terminations, agents_to_remove = self._check_terminations()
         for agent in agents_to_remove:
             if agent not in self._terminated_agents:
                 self._terminated_agents.add(agent)
-                # Keep them in self.agents for one final return to RLlib
-                if agent not in self.agents:
-                    self.agents.append(agent)
                 if agent in self.busy_state:
                     del self.busy_state[agent]
         
-        # Build strictly filtered observation dicts only for returning agents
+        # All non-terminated agents are always in self.agents
+        self.agents = [a for a in all_agents if a not in self._terminated_agents]
+        # Also include newly terminated agents for one final return
+        for agent in agents_to_remove:
+            if agent not in self.agents:
+                self.agents.append(agent)
+        
+        # Build observation dicts for all returning agents
         observations = {
             agent: self.game.get_observation(
                 agent,
@@ -573,9 +593,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         truncations_out = {agent: False for agent in self.agents}
         infos_out = {agent: infos.get(agent, {}) for agent in self.agents}
         
-        # Game is over when all agents have terminated OR no free agents and no busy agents
-        all_done = (len(self._terminated_agents) == len(self.possible_agents)) or \
-                   (len(self.agents) == 0 and not any(a in self.busy_state for a in all_agents))
+        # Game is over when all agents have terminated
+        all_done = len(self._terminated_agents) == len(self.possible_agents)
 
         terminations_out["__all__"] = all_done
         truncations_out["__all__"] = False

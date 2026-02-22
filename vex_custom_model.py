@@ -64,12 +64,17 @@ def build_vex_model(obs_dim, action_dim, enable_communication=False):
     # 2. Value Head
     value_head = nn.Linear(prev_dim, 1)
     
-    # 3. Attention Unit (Should I communicate? / Communication Weight)
+    # 3. Termination Head (Option-Critic β)
+    # Output: 1 scalar (mean for Box(1)), trained via PPO policy gradient
+    termination_head = nn.Linear(prev_dim, 1)
+    termination_log_std = nn.Parameter(torch.zeros(1, 1))
+    
+    # 4. Attention Unit (Should I communicate? / Communication Weight)
     # Output: 1 scalar (logit)
     # Only create if communication is enabled
     if enable_communication:
         attention_unit = nn.Linear(prev_dim, 1)
-        # 4. Message Encoder (What to say)
+        # 5. Message Encoder (What to say)
         # Output: 8 dimensions (Mean of the logical message)
         message_encoder = nn.Linear(prev_dim, 8)
         # Message LogStd (Learnable parameter)
@@ -79,7 +84,7 @@ def build_vex_model(obs_dim, action_dim, enable_communication=False):
         message_encoder = None
         message_log_std = None
     
-    return encoder, intention_head, value_head, attention_unit, message_encoder, message_log_std
+    return encoder, intention_head, value_head, termination_head, termination_log_std, attention_unit, message_encoder, message_log_std
 
 
 
@@ -103,31 +108,26 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
         
         if isinstance(self.action_space, Discrete):
             action_dim = self.action_space.n
-            is_continuous = False
         elif isinstance(self.action_space, Box):
             action_dim = self.action_space.shape[0]
-            is_continuous = True
         elif isinstance(self.action_space, Tuple):
-            # Assumes structure: (Discrete(Action), Box(Message))
-            # We focus on the first part for the Intention Head (Action Logic)
-            # The message part is handled by the explicit Message Head
+            # Assumes structure: (Discrete(Action), Box(Message), Box(Beta))
             first_space = self.action_space[0]
             if isinstance(first_space, Discrete):
                 action_dim = first_space.n
-                is_continuous = False
             else:
                  raise ValueError(f"Unsupported first element in Tuple action space: {type(first_space)}")
         else:
             raise ValueError(f"Unsupported action space: {type(self.action_space)}")
         
-        # For continuous actions, double the output size (mean + log_std)
-        policy_output_dim = action_dim * 2 if is_continuous else action_dim
-        
         # Build the actual model using our simple function
-        self._encoder_net, self.pi, self.value_head, self.attention_unit, self.message_head, self.msg_log_std = build_vex_model(
+        (
+            self._encoder_net, self.pi, self.value_head,
+            self.termination_head, self.beta_log_std,
+            self.attention_unit, self.message_head, self.msg_log_std
+        ) = build_vex_model(
             obs_dim=obs_dim,
-            action_dim=action_dim if not isinstance(self.action_space, Tuple) else 
-                       (self.action_space[0].n if isinstance(self.action_space[0], Discrete) else 0),
+            action_dim=action_dim,
             enable_communication=enable_communication
         )
 
@@ -154,26 +154,30 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
         
         # Heads
         intention_logits = self.pi(features)
+        batch_size = features.shape[0]
+        
+        # Termination head (option-critic β) — always present
+        beta_mean = self.termination_head(features)  # (batch, 1)
+        beta_log_std_exp = self.beta_log_std.expand(batch_size, -1)  # (batch, 1)
         
         if self.attention_unit is not None and self.message_head is not None:
             # ATOC Outputs - Communication enabled
             attention_logits = self.attention_unit(features)
-            msg_mean = self.message_head(features)
+            attention_weight = torch.sigmoid(attention_logits)  # (batch, 1) ∈ [0, 1]
+            msg_mean_raw = self.message_head(features)
+            msg_mean = msg_mean_raw * attention_weight  # Gate message by attention
             
-            # Concat outputs for Tuple Distribution: [DiscreteLogits, BoxMean, BoxLogStd]
-            # DiscreteLogits: (Batch, N)
-            # BoxMean: (Batch, 8)
-            # BoxLogStd: (Batch, 8) - Expand parameter
-            batch_size = features.shape[0]
+            # Concat for Tuple Distribution: [DiscreteLogits, MsgMean(8), MsgLogStd(8), BetaMean(1), BetaLogStd(1)]
             msg_log_std_exp = self.msg_log_std.expand(batch_size, -1)
             
-            dist_inputs = torch.cat([intention_logits, msg_mean, msg_log_std_exp], dim=1)
+            dist_inputs = torch.cat([intention_logits, msg_mean, msg_log_std_exp, beta_mean, beta_log_std_exp], dim=1)
             
             output["attention_logits"] = attention_logits
+            output["attention_weight"] = attention_weight
             output["message"] = msg_mean
         else:
-            # Communication disabled - only use action logits
-            dist_inputs = intention_logits
+            # No communication — still include β
+            dist_inputs = torch.cat([intention_logits, beta_mean, beta_log_std_exp], dim=1)
         
         output[Columns.ACTION_DIST_INPUTS] = dist_inputs
         output[Columns.VF_PREDS] = self.value_head(features).squeeze(-1)
@@ -189,24 +193,27 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
         features = encoder_outs[ENCODER_OUT]
         
         intention_logits = self.pi(features)
+        batch_size = features.shape[0]
+        
+        # Termination head (option-critic β) — always present
+        beta_mean = self.termination_head(features)
+        beta_log_std_exp = self.beta_log_std.expand(batch_size, -1)
         
         if self.attention_unit is not None and self.message_head is not None:
             # ATOC Outputs - Communication enabled
             attention_logits = self.attention_unit(features)
-            msg_mean = self.message_head(features)
+            attention_weight = torch.sigmoid(attention_logits)
+            msg_mean_raw = self.message_head(features)
+            msg_mean = msg_mean_raw * attention_weight
             
-            # Concat outputs for Tuple Distribution: [DiscreteLogits, BoxMean, BoxLogStd]
-            batch_size = features.shape[0]
             msg_log_std_exp = self.msg_log_std.expand(batch_size, -1)
+            dist_inputs = torch.cat([intention_logits, msg_mean, msg_log_std_exp, beta_mean, beta_log_std_exp], dim=1)
             
-            dist_inputs = torch.cat([intention_logits, msg_mean, msg_log_std_exp], dim=1)
-            
-            # Also compute messages for the environment to use next step
             output["attention_logits"] = attention_logits
+            output["attention_weight"] = attention_weight
             output["message"] = msg_mean
         else:
-            # Communication disabled - only use action logits
-            dist_inputs = intention_logits
+            dist_inputs = torch.cat([intention_logits, beta_mean, beta_log_std_exp], dim=1)
         
         output[Columns.ACTION_DIST_INPUTS] = dist_inputs
         

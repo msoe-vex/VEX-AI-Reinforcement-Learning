@@ -315,7 +315,7 @@ if __name__ == "__main__":
             lr=lr_config_value,
             gamma=args.discount_factor,
             entropy_coeff=entropy_config_value,
-            train_batch_size_per_learner=train_batch_size_per_learner,  # 4x episode length (~600) to ensure episodes complete
+            train_batch_size_per_learner=train_batch_size_per_learner,  # ~4x episode length (~600 ticks) to ensure episodes complete
         )
         .callbacks(VexScoreCallback)  # Track team scores
         .debugging(log_level="ERROR")  # Reduce logging verbosity

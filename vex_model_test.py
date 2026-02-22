@@ -166,6 +166,11 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
 
                 obs_np = observations[agent_id]
                 obs_np_float = obs_np.astype(np.float32) if obs_np.dtype != np.float32 else obs_np
+                
+                # Check if agent is currently executing (busy)
+                # obs index 88 = IS_EXECUTING
+                is_executing = obs_np_float[88] > 0.5 if len(obs_np_float) > 88 else False
+                
                 obs_tensor = torch.from_numpy(obs_np_float).unsqueeze(0).to(device)
 
                 model = models[agent_id]
@@ -176,27 +181,35 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
                 if isinstance(action_space, spaces.Tuple):
                     num_actions = action_space[0].n
                     action_logits = model_output[:, :num_actions]
-                    message_params = model_output[:, num_actions:]
-
-                    if message_params.numel() == 0:
-                        if render_mode in ["terminal", "image"]:
-                            print(f"Warning: model for {agent_id} returned no message params (output shape={model_output.shape}). Using zero message vector.")
-                        message_mean = torch.zeros(1, 8, device=model_output.device)
+                    
+                    # Parse remaining outputs: msg_mean(8), msg_log_std(8), β_mean(1), β_log_std(1)
+                    remaining = model_output[:, num_actions:]
+                    
+                    # Extract message (first 8 values after action logits)
+                    if remaining.shape[1] >= 8:
+                        message_vector = remaining[:, :8].cpu().numpy()[0]
                     else:
-                        if message_params.shape[1] < 8:
-                            mm = torch.zeros(1, 8, device=model_output.device)
-                            mm[:, : message_params.shape[1]] = message_params[:, :8]
-                            message_mean = mm
-                        else:
-                            message_mean = message_params[:, :8]
-
-                    message_vector = message_mean.cpu().numpy()[0]
+                        message_vector = np.zeros(8, dtype=np.float32)
+                    
+                    # Extract β_mean (second-to-last value: after msg_mean(8) + msg_log_std(8))
+                    # Layout: [msg_mean(8), msg_log_std(8), β_mean(1), β_log_std(1)]
+                    if remaining.shape[1] >= 18:  # 8 + 8 + 1 + 1
+                        beta_mean = remaining[:, 16:17].cpu().numpy()[0]  # β_mean at index 16
+                    elif remaining.shape[1] >= 2:
+                        beta_mean = remaining[:, -2:-1].cpu().numpy()[0]  # Fallback: second-to-last
+                    else:
+                        beta_mean = np.array([0.0], dtype=np.float32)
                 else:
-                    # In case a communication-enabled model is loaded into a non-communication
-                    # action space, only keep the discrete action logits expected by env.
                     num_actions = action_space.n
                     action_logits = model_output[:, :num_actions]
-                    message_vector = None
+                    message_vector = np.zeros(8, dtype=np.float32)
+                    beta_mean = np.array([0.0], dtype=np.float32)
+
+                # For busy agents: use model's β directly, re-send last action
+                if is_executing:
+                    last_act = last_actions.get(agent_id, 0) or 0
+                    actions_to_take[agent_id] = (last_act, message_vector, beta_mean)
+                    continue
 
                 probs = torch.softmax(action_logits, dim=-1)
                 dist = torch.distributions.Categorical(probs)
@@ -217,7 +230,8 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
                     else:
                         action = env.game.fallback_action()
 
-                actions_to_take[agent_id] = (action, message_vector) if message_vector is not None else action
+                # Send 3-tuple: (action, message, β)
+                actions_to_take[agent_id] = (action, message_vector, beta_mean)
                 last_actions[agent_id] = action
 
             if not actions_to_take and env.agents:

@@ -94,27 +94,50 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
             pi_head = rl_module.pi
             message_head = getattr(rl_module, "message_head", None)
             msg_log_std = getattr(rl_module, "msg_log_std", None)
+            termination_head = getattr(rl_module, "termination_head", None)
+            beta_log_std = getattr(rl_module, "beta_log_std", None)
+            attention_unit = getattr(rl_module, "attention_unit", None)
 
             class CombinedHead(nn.Module):
-                """Wrapper that returns concatenated [logits, msg_mean, msg_log_std]
-                when the ATOC message head exists; otherwise returns logits only.
+                """Wrapper that returns concatenated distribution inputs matching training:
+                [action_logits, gated_msg_mean, msg_log_std, β_mean, β_log_std]
                 """
-                def __init__(self, pi, msg_head=None, msg_log_std=None):
+                def __init__(self, pi, msg_head=None, msg_log_std=None,
+                             term_head=None, beta_log_std=None, attn_unit=None):
                     super().__init__()
                     self.pi = pi
                     self.msg_head = msg_head
                     self.msg_log_std = msg_log_std
+                    self.term_head = term_head
+                    self.beta_log_std = beta_log_std
+                    self.attn_unit = attn_unit
 
                 def forward(self, feats):
                     logits = self.pi(feats)
-                    if (self.msg_head is None) or (self.msg_log_std is None):
-                        return logits
                     batch_size = feats.shape[0]
-                    msg_mean = self.msg_head(feats)
-                    msg_log_std_exp = self.msg_log_std.expand(batch_size, -1)
-                    return torch.cat([logits, msg_mean, msg_log_std_exp], dim=1)
+                    parts = [logits]
+                    
+                    # Message head with attention gate
+                    if (self.msg_head is not None) and (self.msg_log_std is not None):
+                        msg_mean = self.msg_head(feats)
+                        if self.attn_unit is not None:
+                            attention_weight = torch.sigmoid(self.attn_unit(feats))
+                            msg_mean = msg_mean * attention_weight
+                        msg_log_std_exp = self.msg_log_std.expand(batch_size, -1)
+                        parts.append(msg_mean)
+                        parts.append(msg_log_std_exp)
+                    
+                    # Termination head (β)
+                    if (self.term_head is not None) and (self.beta_log_std is not None):
+                        beta_mean = self.term_head(feats)
+                        beta_log_std_exp = self.beta_log_std.expand(batch_size, -1)
+                        parts.append(beta_mean)
+                        parts.append(beta_log_std_exp)
+                    
+                    return torch.cat(parts, dim=1)
 
-            clean_head = CombinedHead(pi_head, message_head, msg_log_std)
+            clean_head = CombinedHead(pi_head, message_head, msg_log_std,
+                                      termination_head, beta_log_std, attention_unit)
             
             # CRITICAL: Convert any numpy types to Python native types
             # This is necessary for torch.jit.script compatibility
