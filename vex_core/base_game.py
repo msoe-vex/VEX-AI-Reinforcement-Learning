@@ -55,6 +55,30 @@ class Robot:
             self.camera_rotation_offset = 0.0
 
 
+@dataclass
+class ActionEvent:
+    """A single game-state change that occurs when an action completes.
+    
+    All stochasticity should be handled by the game logic inside `apply_events`.
+    """
+    type: str
+    data: Dict = field(default_factory=dict)
+
+
+@dataclass
+class ActionStep:
+    """A single sub-step in an action's execution timeline.
+    
+    An action is composed of one or more ActionSteps executed sequentially.
+    Each step defines where the robot moves, how long it takes, and what
+    game-state changes (events) to apply when the step completes.
+    """
+    duration: float
+    target_pos: np.ndarray
+    target_orient: np.ndarray
+    events: List[ActionEvent] = field(default_factory=list)
+
+
 class VexGame(ABC):
     """
     Abstract base class for VEX game implementations.
@@ -74,7 +98,6 @@ class VexGame(ABC):
         self.path_planner = PathPlanner()
         self.enable_communication = enable_communication
         self.state: Dict = None  # Game state, initialized by get_initial_state()
-        self._last_interpolation_plan_by_agent: Dict[str, List[Dict[str, Any]]] = {}
     
     @property
     def agents(self) -> Dict:
@@ -199,16 +222,36 @@ class VexGame(ABC):
         self, 
         agent: str, 
         action: int
-    ) -> Tuple[float, float]:
+    ) -> Tuple[List[ActionStep], float]:
         """
         Execute an action for an agent.
+        
+        Returns a list of ActionSteps defining the action's timeline, and a
+        penalty value. The environment handles interpolation and applies each
+        step's events when the step's ticks are exhausted.
+        
+        IMPORTANT: This method should NOT mutate agent position/orientation.
+        Position changes are handled by the environment via interpolation.
         
         Args:
             agent: Agent name
             action: Action index
             
         Returns:
-            Tuple of (duration in seconds, penalty value)
+            Tuple of (list of ActionSteps, penalty value)
+        """
+        pass
+    
+    @abstractmethod
+    def get_action_name(self, action: int) -> str:
+        """
+        Get the human-readable string name for an action index.
+        
+        Args:
+            action: Action integer index
+            
+        Returns:
+            String name of the action
         """
         pass
     
@@ -361,7 +404,7 @@ class VexGame(ABC):
         agents: List[str] = None,
         actions: Optional[Dict] = None,
         rewards: Optional[Dict] = None,
-        num_moves: int = 0,
+        num_steps: int = 0,
         agent_times: Optional[Dict[str, float]] = None,
         action_time_remaining: Optional[Dict[str, float]] = None,
     ) -> None:
@@ -373,7 +416,7 @@ class VexGame(ABC):
             agents: List of active agent names
             actions: Dict of actions taken (or None)
             rewards: Dict of rewards received (or None)
-            num_moves: Current step number
+            num_steps: Current environment step number
             agent_times: Dict mapping agent names to current game time
             action_time_remaining: Dict mapping agent names to remaining time
                 (seconds) in the currently executing action
@@ -508,40 +551,19 @@ class VexGame(ABC):
         """
         pass
 
-    def get_interpolation_plan(
-        self,
-        agent: str,
-        action: int,
-        start_pos: np.ndarray,
-        start_orient: np.ndarray,
-        target_pos: np.ndarray,
-        target_orient: np.ndarray,
-        duration: float,
-    ) -> List[Dict[str, Any]]:
+    def apply_events(self, agent: str, events: List[ActionEvent]) -> None:
+        """Apply a list of ActionEvents for an agent.
+        
+        Called by the environment when a step's ticks are exhausted.
+        Probability resolution is handled by the environment before calling
+        this method — only events that succeeded (or their on_failure
+        alternatives) are passed here.
+        
+        Override this in game subclasses to implement game-specific event
+        processing logic.
+        
+        Args:
+            agent: Agent name
+            events: List of ActionEvents to apply (already resolved)
         """
-        Build a list of interpolation segments for an executed action.
-
-        Each segment dict should contain:
-        - "duration": seconds for this segment
-        - "target_pos": np.ndarray target position at segment end
-        - "target_orient": np.ndarray target orientation at segment end
-
-        Default behavior is a single segment from start -> target over `duration`.
-        Games can override to model wait/move/wait timing explicitly.
-        """
-        return [{
-            "duration": float(max(0.0, duration)),
-            "target_pos": target_pos.copy(),
-            "target_orient": target_orient.copy(),
-        }]
-
-    def set_last_interpolation_plan(self, agent: str, plan: Optional[List[Dict[str, Any]]]) -> None:
-        """Store the interpolation plan produced by the most recent action for an agent."""
-        if not plan:
-            self._last_interpolation_plan_by_agent.pop(agent, None)
-            return
-        self._last_interpolation_plan_by_agent[agent] = plan
-
-    def consume_last_interpolation_plan(self, agent: str) -> Optional[List[Dict[str, Any]]]:
-        """Get and clear the most recent action-authored interpolation plan for an agent."""
-        return self._last_interpolation_plan_by_agent.pop(agent, None)
+        pass

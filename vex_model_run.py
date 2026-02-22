@@ -60,11 +60,15 @@ class VexModelRunner:
         with torch.no_grad():
             model_output = self.model(obs_tensor)
         
-        # Handle both Discrete (no communication) and Tuple (with communication) outputs
-        # If communication is enabled, output is [ActionLogits, MessageMean, MessageLogStd]
-        # If disabled, output is just ActionLogits
-        # The number of action logits determines the action dim
-        action_dim = self.game.action_space(self.game.possible_agents[0]).n if hasattr(self.game.action_space(self.game.possible_agents[0]), 'n') else model_output.shape[1]
+        # Handle both Discrete and Tuple action spaces.
+        # Tuple structure is (Discrete(action), Box(message)).
+        action_space = self.game.action_space(self.game.possible_agents[0])
+        if hasattr(action_space, 'n'):
+            action_dim = action_space.n
+        elif hasattr(action_space, 'spaces') and len(action_space.spaces) > 0 and hasattr(action_space.spaces[0], 'n'):
+            action_dim = action_space.spaces[0].n
+        else:
+            action_dim = model_output.shape[1]
         action_logits = model_output[:, :action_dim]
         
         # Use stochastic sampling like RLlib does during training

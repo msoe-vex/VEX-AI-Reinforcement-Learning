@@ -62,7 +62,7 @@ def load_agent_models(model_dir, agents, device):
     
     return models
 
-def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=True, deterministic=True):
+def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=True, render_mode="image", deterministic=True):
     """
     Loads trained models and runs one or more simulations in the VEX environment.
 
@@ -72,6 +72,7 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
         output_dir (str): Output directory for renders.
         iterations (int): Number of episodes to run.
         export_gif (bool): Whether to render frames and export GIF(s).
+        render_mode (str): Mode for rendering: 'terminal', 'image', or 'none'.
         deterministic (bool): Whether to run deterministic environment mechanics.
     """
     if not os.path.exists(model_dir):
@@ -103,9 +104,9 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
     
     env = VexMultiAgentEnv(
         game=game,
-        render_mode="all", 
-        output_directory=output_dir, 
-        randomize=True,
+        render_mode=render_mode,
+        output_directory=output_dir,
+        randomize=False,
         enable_communication=enable_communication,
         deterministic=deterministic,
     )
@@ -140,7 +141,7 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
         observations, infos = env.reset()
 
         if export_gif:
-            env.clearStepsDirectory()
+            env.clearTicksDirectory()
             env.render()  # Initial render
 
         done = False
@@ -150,7 +151,7 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
         while not done:
             step_count += 1
             if not env.agents:
-                if export_gif:
+                if render_mode in ["terminal", "image"]:
                     print(f"Step {step_count}: All agents are done (env.agents is empty). Ending simulation.")
                 break
 
@@ -159,7 +160,7 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
 
             for agent_id in current_agents_in_step:
                 if agent_id not in observations:
-                    if export_gif:
+                    if render_mode in ["terminal", "image"]:
                         print(f"Warning: Agent {agent_id} is in env.agents but not in observations. Skipping.")
                     continue
 
@@ -178,7 +179,7 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
                     message_params = model_output[:, num_actions:]
 
                     if message_params.numel() == 0:
-                        if export_gif:
+                        if render_mode in ["terminal", "image"]:
                             print(f"Warning: model for {agent_id} returned no message params (output shape={model_output.shape}). Using zero message vector.")
                         message_mean = torch.zeros(1, 8, device=model_output.device)
                     else:
@@ -220,21 +221,17 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
                 last_actions[agent_id] = action
 
             if not actions_to_take and env.agents:
-                if export_gif:
+                if render_mode in ["terminal", "image"]:
                     print(f"Step {step_count}: env.agents is not empty, but no actions were generated. This might indicate all remaining agents are terminating. Ending simulation.")
 
             if not env.agents and not actions_to_take:
-                if export_gif:
+                if render_mode in ["terminal", "image"]:
                     print(f"Step {step_count}: No active agents to take actions. Ending simulation.")
                 break
 
-            if export_gif:
-                print(f"\nStep {step_count}: Scores: {env.score}")
-
             next_observations, step_rewards, terminations, truncations, infos = env.step(actions_to_take)
 
-            if export_gif:
-                env.render(actions=actions_to_take, rewards=step_rewards)
+            # Rendering is handled internally by env.step() during fast-forward
 
             observations = next_observations
 
@@ -242,7 +239,11 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
             all_truncated = truncations.get("__all__", False)
             done = all_terminated or all_truncated
 
-        print(f"Simulation iteration {iteration} ended after {step_count} steps. Final score: {env.score}")
+        print(
+            f"Simulation iteration {iteration} ended after {step_count} steps "
+            f"(env steps: {env.num_steps}, internal ticks: {env.num_ticks}). "
+            f"Final score: {env.score}"
+        )
 
         if isinstance(env.score, dict):
             for team_name, score in env.score.items():
@@ -290,10 +291,11 @@ if __name__ == "__main__":
         help="Number of simulation iterations to run"
     )
     parser.add_argument(
-        "--export-gif",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Whether to render each step and export GIF output (use --no-export-gif to disable)"
+        "--render-mode",
+        type=str,
+        choices=["terminal", "image", "none"],
+        default="image",
+        help="Rendering mode: 'image' (saves frames & GIF), 'terminal' (prints text only), 'none' (silent)"
     )
     parser.add_argument(
         "--deterministic",
@@ -326,6 +328,7 @@ if __name__ == "__main__":
         game_name,
         args.output_dir,
         iterations=args.iterations,
-        export_gif=args.export_gif,
+        export_gif = args.render_mode == "image",
+        render_mode = args.render_mode if args.render_mode != "none" else None,
         deterministic=args.deterministic,
     )
