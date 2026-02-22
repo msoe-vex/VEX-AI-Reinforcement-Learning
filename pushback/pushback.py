@@ -815,6 +815,10 @@ class PushBackGame(VexGame):
         start_pos = agent_state["position"].copy()
         start_orient = agent_state["orientation"].copy()
         
+        # Any active non-park action unparks the robot
+        if action not in (Actions.IDLE.value, Actions.PARK.value):
+            agent_state["parked"] = False
+        
         # Default values
         penalty = 0.0
         steps = [ActionStep(
@@ -867,10 +871,6 @@ class PushBackGame(VexGame):
                 target_pos=start_pos.copy(),
                 target_orient=start_orient.copy(),
             )]
-        
-        # Check for robot collision after action execution
-        if self.check_robot_collision(agent):
-            penalty += self.get_collision_penalty()
         
         # Update tracker (for training, this keeps tracker in sync with simulation)
         self.update_tracker(agent, action)
@@ -1306,6 +1306,14 @@ class PushBackGame(VexGame):
 
         start_pos = agent_state["position"].copy()
         start_orient = agent_state["orientation"].copy()
+
+        # Already parked: treat as invalid to prevent repeated park reward farming
+        if agent_state.get("parked", False):
+            return [ActionStep(
+                duration=0.1,
+                target_pos=start_pos.copy(),
+                target_orient=start_orient.copy(),
+            )], DEFAULT_PENALTY
 
         # Prevent parking early: only allow when 15 seconds or less remain.
         current_time = float(agent_state.get("game_time", 0.0))

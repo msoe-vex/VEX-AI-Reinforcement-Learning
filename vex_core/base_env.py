@@ -16,8 +16,6 @@ from typing import Dict, List, Tuple, Optional, Any
 
 from .base_game import VexGame, Robot, RobotSize, Team, ActionEvent, ActionStep
 
-from typing import Optional
-
 DELTA_T = 0.1  # Discrete time step in seconds
 
 
@@ -100,7 +98,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         #   "total_ticks": int, "remaining_ticks": int
         # }
         self.busy_state: Dict[str, Dict] = {}
-        self._deferred_rewards: Dict[str, Dict] = {}  # {agent: {initial_scores, penalty}}
+        self._deferred_rewards: Dict[str, Dict] = {}  # {agent: {penalty, action_name, accumulated_reward}}
+        self.projected_positions: Dict[str, np.ndarray] = {}
         
         # Environment-managed agent states (Time, etc.)
         self.env_agent_states: Dict[str, Dict] = {}
@@ -146,6 +145,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self.agent_movements = {agent: None for agent in self.possible_agents}
         self.busy_state = {}
         self._deferred_rewards = {}
+        self.projected_positions = {}
         
         # Reset game-specific state
         self.game.reset()
@@ -161,8 +161,11 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         
         # Initialize env state
         self.env_agent_states = {
-            agent: {"time": 0.0} for agent in self.agents
+            agent: {"tick": 0} for agent in self.agents
         }
+
+        # Populate initial inter-agent messages before first observation
+        self._update_messages(list(self.agents))
         
         observations = {
             agent: self.game.get_observation(agent, game_time=0.0)
@@ -250,16 +253,21 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
     def _advance_time_and_messages(self):
         """Advance game clock by one tick and update inter-agent messages."""
         for agent in self.possible_agents:
-            if agent in self.env_agent_states:
-                self.env_agent_states[agent]["time"] += DELTA_T
+            if agent in self.env_agent_states and agent not in self._terminated_agents:
+                self.env_agent_states[agent]["tick"] += 1
         self._update_messages(list(self.possible_agents))
+
+    def _get_agent_time(self, agent: str) -> float:
+        """Get agent-local game time in seconds from integer ticks."""
+        ticks = int(self.env_agent_states.get(agent, {}).get("tick", 0))
+        return ticks * DELTA_T
 
     def _check_terminations(self) -> Tuple[Dict[str, bool], set]:
         """Check if any agents should be terminated."""
         terminations = {}
         agents_to_remove = set()
         for agent in self.possible_agents:
-            current_time = self.env_agent_states.get(agent, {}).get("time", 0.0)
+            current_time = self._get_agent_time(agent)
             term = self.game.is_agent_terminated(agent, game_time=current_time)
             terminations[agent] = term
             if term:
@@ -296,30 +304,17 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         if self.environment_state is None:
             print("CRITICAL: self.environment_state is None in step()!")
         
-        all_agents = list(self.possible_agents)
+        all_agents = [
+            agent
+            for agent in self.possible_agents
+            if agent not in self._terminated_agents and agent in self.environment_state.get("agents", {})
+        ]
         
         rewards = {agent: 0.0 for agent in all_agents}
         infos = {agent: {} for agent in all_agents}
         
         # ──────────────────────────────────────────────────────────────
-        # 1. Tick busy agents from previous step (some may complete)
-        # ──────────────────────────────────────────────────────────────
-        tick_results = self._tick_busy_agents()
-        for agent, did_complete in tick_results.items():
-            if did_complete:
-                # Compute deferred reward now that events have fired
-                stored = self._deferred_rewards.pop(agent, None)
-                if stored is not None:
-                    reward = stored.get("accumulated_reward", 0.0) - stored.get("penalty", 0.0)
-                    rewards[agent] = reward
-                    self.environment_state["agents"][agent]["last_action_name"] = stored.get("action_name", "--")
-                    self.environment_state["agents"][agent]["last_action_reward"] = reward
-                infos[agent]["action_completed"] = True
-                if agent not in self.agents:
-                    self.agents.append(agent)
-
-        # ──────────────────────────────────────────────────────────────
-        # 2. Process new actions for non-busy agents
+        # 1. Process new actions for non-busy agents
         # ──────────────────────────────────────────────────────────────
         newly_actioned = set()
         for agent, action in actions.items():
@@ -333,8 +328,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             
             start_pos = agent_state["position"].copy()
             start_orient = agent_state["orientation"].copy()
-            initial_scores = self.game.compute_score()
-            
+            score_before_action = self.game.compute_score()
             # Parse action tuple (Control, Message)
             action_val = action
             emitted_msg = None
@@ -346,8 +340,15 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 
             action_int = int(action_val.value if hasattr(action_val, 'value') else action_val)
             agent_state["current_action"] = action_int
-            agent_state["game_time"] = self.env_agent_states.get(agent, {}).get("time", 0.0)
+            agent_state["game_time"] = self._get_agent_time(agent)
             action_steps, penalty = self.game.execute_action(agent, action_int)
+            score_after_start = self.game.compute_score()
+            immediate_action_reward = self.game.compute_reward(
+                agent,
+                score_before_action,
+                score_after_start,
+                0.0,
+            )
             
             # Store emitted message
             if emitted_msg is not None:
@@ -429,10 +430,9 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             except Exception:
                 action_name = str(action_int)
             self._deferred_rewards[agent] = {
-                "initial_scores": initial_scores,
                 "penalty": penalty,
                 "action_name": action_name,
-                "accumulated_reward": 0.0,
+                "accumulated_reward": immediate_action_reward,
             }
 
             # Agent is now busy — remove from self.agents
@@ -440,39 +440,70 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 self.agents.remove(agent)
 
         # ──────────────────────────────────────────────────────────────
-        # 3. Projected collision check (only newly started actions)
+        # 2. Projected collision check (only newly started actions)
         # ──────────────────────────────────────────────────────────────
+        failed_agents: set[str] = set()
         try:
-            self._resolve_projected_collisions(all_agents, infos, newly_actioned)
+            failed_agents = self._resolve_projected_collisions(all_agents, newly_actioned)
         except Exception:
-            pass
+            failed_agents = set()
 
-        for agent in all_agents:
-            if infos.get(agent, {}).get("action_terminated_early", False):
-                try:
-                    penalty_value = float(self.game.get_collision_penalty())
-                except Exception:
-                    penalty_value = 0.0
+        for agent in failed_agents:
+            busy = self.busy_state.get(agent)
+            if busy is None:
+                continue
+            start_pos = busy["start_pos"].copy()
+            start_orient = busy["start_orient"].copy()
+            self.busy_state[agent] = {
+                "start_pos": start_pos,
+                "start_orient": start_orient,
+                "target_pos": start_pos.copy(),
+                "target_orient": start_orient.copy(),
+                "plan": [{
+                    "start_pos": start_pos.copy(),
+                    "end_pos": start_pos.copy(),
+                    "start_orient": start_orient.copy(),
+                    "end_orient": start_orient.copy(),
+                    "tick_start": 0,
+                    "tick_end": 1,
+                    "events": [],
+                }],
+                "total_ticks": 1,
+                "remaining_ticks": 1,
+                "completed_segments": set(),
+            }
+            self.agent_movements[agent] = None
+            try:
+                penalty_value = float(self.game.get_collision_penalty())
+            except Exception:
+                penalty_value = 0.0
+            stored = self._deferred_rewards.get(agent)
+            if stored is not None:
+                stored["penalty"] = float(stored.get("penalty", 0.0)) + penalty_value
+
+        # ──────────────────────────────────────────────────────────────
+        # 3. Advance time + messages for this tick
+        # ──────────────────────────────────────────────────────────────
+        tick_results = self._tick_busy_agents()
+        for agent, did_complete in tick_results.items():
+            if did_complete:
                 stored = self._deferred_rewards.pop(agent, None)
-                rewards[agent] = -penalty_value
-                action_name = stored.get("action_name", "--") if stored else "COLLISION"
+                if stored is not None:
+                    reward = stored.get("accumulated_reward", 0.0) - stored.get("penalty", 0.0)
+                    rewards[agent] = reward
+                    self.environment_state["agents"][agent]["last_action_name"] = stored.get("action_name", "--")
+                    self.environment_state["agents"][agent]["last_action_reward"] = reward
                 infos[agent]["action_completed"] = True
-                infos[agent]["aborted"] = True
-                self.environment_state["agents"][agent]["last_action_name"] = action_name
-                self.environment_state["agents"][agent]["last_action_reward"] = -penalty_value
                 if agent not in self.agents:
                     self.agents.append(agent)
 
-        # ──────────────────────────────────────────────────────────────
-        # 4. Advance time + messages for this tick
-        # ──────────────────────────────────────────────────────────────
         self._advance_time_and_messages()
         self.score = self.game.compute_score()
 
         self.render(action_dict=actions, rewards=rewards, infos=infos)
 
         # ──────────────────────────────────────────────────────────────
-        # 5. Fast-forward while ALL agents are busy
+        # 4. Fast-forward while ALL agents are busy
         # ──────────────────────────────────────────────────────────────
         while (not self.agents) and any(a in self.busy_state for a in all_agents):
             self.num_moves += 1
@@ -507,14 +538,14 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                         del self.busy_state[agent]
             if all(
                 self.game.is_agent_terminated(
-                    a, game_time=self.env_agent_states.get(a, {}).get("time", 0.0)
+                    a, game_time=self._get_agent_time(a)
                 )
                 for a in all_agents
             ):
                 break
 
         # ──────────────────────────────────────────────────────────────
-        # 6. Terminations and observations
+        # 5. Terminations and observations
         # ──────────────────────────────────────────────────────────────
         terminations, agents_to_remove = self._check_terminations()
         for agent in agents_to_remove:
@@ -530,7 +561,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         observations = {
             agent: self.game.get_observation(
                 agent,
-                game_time=self.env_agent_states.get(agent, {}).get("time", 0.0)
+                game_time=self._get_agent_time(agent)
             )
             for agent in self.agents
         }
@@ -586,7 +617,6 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 messages[agent] = m_arr
 
         for agent in active_agents:
-            my_pos = positions[agent]
             received_sum = np.zeros(8, dtype=np.float32)
             count = 0
             
@@ -629,23 +659,21 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         else:
             proj = agent_state["position"].copy()
 
-        agent_state["projected_position"] = proj
         return proj
 
-    def _resolve_projected_collisions(self, active_agents: list, infos: Dict[str, Dict],
-                                       newly_actioned: set = None) -> None:
+    def _resolve_projected_collisions(self, active_agents: List[str], newly_actioned: Optional[set] = None) -> set:
         """
-        Project all agents' intended next-step positions and cancel any
-        NEWLY STARTED actions whose projections would collide with other agents.
+        Project all agents' intended next-step positions and convert any
+        NEWLY STARTED conflicting actions into one-tick failed actions.
 
         Only agents in `newly_actioned` (those that started a new action this
-        step) will have their action cancelled. Agents already mid-action from
+        step) are marked as impacted. Agents already mid-action from
         a previous step continue uninterrupted.
 
         - Agents with `busy_state` use `busy_state["target_pos"]` as projection.
         - Stationary agents project to their current center (within robot).
-        - If two projections overlap (distance < sum of radii) any agent in
-          `newly_actioned` is forced to cancel its current action.
+                - If two projections overlap (distance < sum of radii), impacted
+                    agents are returned to be converted into one-tick failures by step().
         """
         if newly_actioned is None:
             newly_actioned = set()
@@ -657,6 +685,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 projections[agent] = self._project_agent_next_position(agent)
             except Exception:
                 projections[agent] = self.environment_state["agents"][agent]["position"].copy()
+        self.projected_positions = projections
 
         # Pairwise collision check on projected positions
         colliding_pairs: set[tuple[str, str]] = set()
@@ -680,24 +709,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             if b in newly_actioned:
                 impacted.add(b)
 
-        for agent in impacted:
-            # Cancel the newly-started action so robot will not collide
-            if agent in self.busy_state:
-                try:
-                    del self.busy_state[agent]
-                except KeyError:
-                    pass
-                self.agent_movements[agent] = None
-                infos.setdefault(agent, {})["action_terminated_early"] = True
-            else:
-                # Not busy but projection conflicts with someone else
-                infos.setdefault(agent, {})["projection_conflict"] = True
-
-            # Mark flag on state for tests/logging
-            try:
-                self.environment_state["agents"][agent]["projected_collision"] = True
-            except Exception:
-                pass
+        return impacted
 
     def is_valid_action(
         self, 
@@ -737,12 +749,9 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                         if info.get("action_completed", False):
                             reward = rewards.get(agent, 0.0)
                             action_name = self.environment_state["agents"][agent].get("last_action_name", "--")
-                            reward_str = f"  (r={reward:.2f})" if reward != 0.0 else ""
+                            reward_str = f"  (r={reward:.2f})"
                             
-                            if info.get("aborted", False):
-                                print(f"  {agent}: ABORTED {action_name}{reward_str} (Collision)")
-                            else:
-                                print(f"  {agent}: COMPLETED {action_name}{reward_str}")
+                            print(f"  {agent}: COMPLETED {action_name}{reward_str}")
 
         if self.render_mode != "image":
             return
@@ -862,7 +871,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             )
             
             # Draw projected position (if available) as a dashed outline rectangle
-            proj = st.get("projected_position", None)
+            proj = self.projected_positions.get(agent)
             if proj is not None:
                 px, py = float(proj[0]), float(proj[1])
                 proj_theta = float(theta)
@@ -908,7 +917,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         
         # Prepare agent times map
         agent_times = {
-            agent: self.env_agent_states[agent]["time"] if agent in self.env_agent_states else 0.0
+            agent: self._get_agent_time(agent)
             for agent in self.possible_agents
         }
 
