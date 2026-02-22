@@ -303,36 +303,33 @@ class BlockStatus:
 class ObsIndex:
     """Observation vector indices for Push Back game.
     
-    Layout (80 total):
+    Layout (85 total):
     - 0-2: Self position (x, y) and orientation
-    - 3-5: Teammate position and orientation
-    - 6-7: Held blocks (friendly, opponent)
-    - 8: Parked status
-    - 9: Time remaining
-    - 10-11: Block counts on field (friendly, opponent)
-    - 12-41: Friendly block positions (15 * 2)
-    - 42-71: Opponent block positions (15 * 2)
-    - 72-75: Goals added by this agent (4 goals)
-    - 72-75: Goals added by this agent (4 goals)
-    - 76-79: Loaders cleared by this agent (4 loaders)
-    - 80-87: Received messages (8 dims)
+    - 3-4: Held blocks (friendly, opponent)
+    - 5: Parked status
+    - 6: Time remaining
+    - 7-8: Block counts in FOV (friendly, opponent)
+    - 9-38: Friendly block positions (15 * 2)
+    - 39-68: Opponent block positions (15 * 2)
+    - 69-72: Goals added by this agent (4 goals)
+    - 73-76: Loaders cleared by this agent (4 loaders)
+    - 77-84: Received messages (8 dims)
     """
     SELF_POS_X = 0
     SELF_POS_Y = 1
     SELF_ORIENT = 2
-    TEAMMATE_START = 3
-    HELD_FRIENDLY = 6
-    HELD_OPPONENT = 7
-    PARKED = 8
-    TIME_REMAINING = 9
-    FRIENDLY_BLOCK_COUNT = 10
-    OPPONENT_BLOCK_COUNT = 11
-    FRIENDLY_BLOCKS_START = 12
-    OPPONENT_BLOCKS_START = 42
-    GOALS_ADDED_START = 72
-    LOADERS_CLEARED_START = 76
-    RECEIVED_MSG_START = 80
-    TOTAL = 88
+    HELD_FRIENDLY = 3
+    HELD_OPPONENT = 4
+    PARKED = 5
+    TIME_REMAINING = 6
+    FRIENDLY_BLOCK_COUNT = 7
+    OPPONENT_BLOCK_COUNT = 8
+    FRIENDLY_BLOCKS_START = 9
+    OPPONENT_BLOCKS_START = 39
+    GOALS_ADDED_START = 69
+    LOADERS_CLEARED_START = 73
+    RECEIVED_MSG_START = 77
+    TOTAL = 85
 
 
 # =============================================================================
@@ -641,8 +638,9 @@ class PushBackGame(VexGame):
     def get_observation(self, agent: str, game_time: float = 0.0) -> np.ndarray:
         """Build observation vector for an agent.
         
-        The agent knows the color of blocks it holds (from loaders and field).
-        It knows positions of all blocks on field, separated by friendly/opponent.
+        Uses FOV-based partial observability: the agent can only see blocks
+        within its camera field-of-view. Teammate info is NOT included
+        directly — agents must use communication messages to coordinate.
         """
         agent_state = self.state["agents"][agent]
         
@@ -653,26 +651,13 @@ class PushBackGame(VexGame):
         obs_parts.append(float(agent_state["position"][1]))
         obs_parts.append(float(agent_state["orientation"][0]))
         
-        # 2. Teammate robots only: position (2) + orientation (1) each, max 1 teammate
-        MAX_TEAMMATES = 1  # Support up to 2 robots per team
-        my_team = agent_state["team"]
-        teammate_data = []
-        for other_agent, other_state in self.state["agents"].items():
-            if other_agent != agent and other_state["team"] == my_team:
-                teammate_data.extend([
-                    float(other_state["position"][0]),
-                    float(other_state["position"][1]),
-                    float(other_state["orientation"][0])
-                ])
-        # Pad with zeros if no teammate
-        while len(teammate_data) < MAX_TEAMMATES * 3:
-            teammate_data.extend([0.0, 0.0, 0.0])
-        obs_parts.extend(teammate_data[:MAX_TEAMMATES * 3])
+        # 2. (Teammate info removed — available only via communication)
         
         # 3. Held blocks by color - count from actual blocks
         agent_name = agent_state["agent_name"]
         held_friendly = 0
         held_opponent = 0
+        my_team = agent_state["team"]
         for block in self.state["blocks"]:
             if block["status"] == BlockStatus.HELD and block.get("held_by") == agent_name:
                 if block.get("team") == my_team:
@@ -688,16 +673,32 @@ class PushBackGame(VexGame):
         # 5. Time remaining (1)
         obs_parts.append(float(self.total_time - game_time))
         
-        # 6. Count and Position of blocks on field by color (friendly/opponent)
+        # 6. Count and Position of blocks visible in FOV by color (friendly/opponent)
+        #    Partial observability: only blocks within camera FOV cone are visible
         MAX_TRACKED = 15
         
         friendly_blocks = []
         opponent_blocks = []
         
         robot_pos = agent_state["position"]
+        camera_offset = float(agent_state.get("camera_rotation_offset", 0.0))
+        camera_theta = float(agent_state["orientation"][0]) + camera_offset
+        
         for block in self.state["blocks"]:
             if block["status"] == BlockStatus.ON_FIELD:
-                dist = np.linalg.norm(block["position"] - robot_pos)
+                block_pos = block["position"]
+                direction = block_pos - robot_pos
+                dist = float(np.linalg.norm(direction))
+                
+                # FOV check: only include blocks within camera field of view
+                if dist > 0:
+                    angle_to_block = np.arctan2(direction[1], direction[0])
+                    angle_diff = angle_to_block - camera_theta
+                    # Normalize to [-pi, pi]
+                    angle_diff = np.arctan2(np.sin(angle_diff), np.cos(angle_diff))
+                    if abs(angle_diff) > FOV / 2:
+                        continue  # Block outside FOV — not visible
+                
                 block_info = (dist, block["position"][0], block["position"][1])
                 
                 if block.get("team") == my_team:
@@ -709,7 +710,7 @@ class PushBackGame(VexGame):
         friendly_blocks.sort(key=lambda x: x[0])
         opponent_blocks.sort(key=lambda x: x[0])
         
-        # Add counts
+        # Add counts (of visible blocks in FOV)
         obs_parts.append(float(len(friendly_blocks)))
         obs_parts.append(float(len(opponent_blocks)))
         
@@ -760,18 +761,17 @@ class PushBackGame(VexGame):
     def get_observation_space_shape() -> Tuple[int]:
         """Get the shape of the observation space."""
         # Self: pos(2) + orient(1) = 3
-        # Teammate: 1 * 3 = 3
         # Held blocks: friendly(1) + opponent(1) = 2
         # Parked: 1
         # Time remaining: 1
-        # Friendly blocks count on field: 1 (Index 10)
-        # Opponent blocks count on field: 1 (Index 11)
-        # Friendly block positions: 15 * 2 = 30 (Indices 12-41)
-        # Opponent block positions: 15 * 2 = 30 (Indices 42-71)
-        # Goals added by this agent: 4 (Indices 72-75)
-        # Loaders cleared by this agent: 4 (Indices 76-79)
-        # Received messages: 8 (Indices 80-87)
-        # Total: 3 + 3 + 2 + 1 + 1 + 1 + 1 + 30 + 30 + 4 + 4 + 8 = 88
+        # Friendly blocks count in FOV: 1
+        # Opponent blocks count in FOV: 1
+        # Friendly block positions: 15 * 2 = 30
+        # Opponent block positions: 15 * 2 = 30
+        # Goals added by this agent: 4
+        # Loaders cleared by this agent: 4
+        # Received messages: 8
+        # Total: 3 + 2 + 1 + 1 + 1 + 1 + 30 + 30 + 4 + 4 + 8 = 85
         
         return (ObsIndex.TOTAL,)
     
