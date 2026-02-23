@@ -89,18 +89,20 @@ MAX_HELD_BLOCKS = 10
 
 class Actions(Enum):
     """Available actions for robots in the Push Back game."""
-    PICK_UP_BLOCK = 0             # Pick up nearest block (assumes success, doesn't know color)
-    SCORE_IN_LONG_GOAL_1 = 1      # Long goal 1 (y=48)
-    SCORE_IN_LONG_GOAL_2 = 2      # Long goal 2 (y=-48)
-    SCORE_IN_CENTER_UPPER = 3     # Center goal upper
-    SCORE_IN_CENTER_LOWER = 4     # Center goal lower
-    TAKE_FROM_LOADER_TL = 5       # Clear Top Left loader (once only, gets all 6 blocks)
-    TAKE_FROM_LOADER_TR = 6       # Clear Top Right loader (once only, gets all 6 blocks)
-    TAKE_FROM_LOADER_BL = 7       # Clear Bottom Left loader (once only, gets all 6 blocks)
-    TAKE_FROM_LOADER_BR = 8       # Clear Bottom Right loader (once only, gets all 6 blocks)
-    PARK = 9                      # Park in team's zone
-    TURN_TOWARD_CENTER = 10       # Turn to face center of field
-    IDLE = 11
+    PICK_UP_RED_BLOCK = 0         # Pick up nearest red block in FOV
+    PICK_UP_BLUE_BLOCK = 1        # Pick up nearest blue block in FOV
+    SCORE_IN_LONG_GOAL_1 = 2      # Long goal 1 (y=48)
+    SCORE_IN_LONG_GOAL_2 = 3      # Long goal 2 (y=-48)
+    SCORE_IN_CENTER_UPPER = 4     # Center goal upper
+    SCORE_IN_CENTER_LOWER = 5     # Center goal lower
+    TAKE_FROM_LOADER_TL = 6       # Clear Top Left loader (once only, gets all 6 blocks)
+    TAKE_FROM_LOADER_TR = 7       # Clear Top Right loader (once only, gets all 6 blocks)
+    TAKE_FROM_LOADER_BL = 8       # Clear Bottom Left loader (once only, gets all 6 blocks)
+    TAKE_FROM_LOADER_BR = 9       # Clear Bottom Right loader (once only, gets all 6 blocks)
+    PARK_RED = 10                 # Park in red zone
+    PARK_BLUE = 11                # Park in blue zone
+    TURN_TOWARD_CENTER = 12       # Turn to face center of field
+    IDLE = 13
 
 
 def is_scoring_action(action: Actions) -> bool:
@@ -610,6 +612,8 @@ class PushBackGame(VexGame):
                 "robot_size": robot.size.value,
                 "inferred_held_blocks": 0,
                 "inferred_parked": False,
+                "parked": False,
+                "parked_zone": None,
                 # "gameTime": REMOVED - Managed by Enviroment
                 "active": True,
                 "agent_name": robot.name,
@@ -671,7 +675,7 @@ class PushBackGame(VexGame):
         opponent_blocks = []
         
         robot_pos = agent_state["position"]
-        my_team = agent_state["team"]
+        my_team = str(agent_state.get("team", "red"))
         camera_offset = float(agent_state.get("camera_rotation_offset", 0.0))
         camera_theta = float(agent_state["orientation"][0]) + camera_offset
         
@@ -807,8 +811,10 @@ class PushBackGame(VexGame):
         start_orient = agent_state["orientation"].copy()
         
         # Any active non-park action unparks the robot
-        if action not in (Actions.IDLE.value, Actions.PARK.value):
+        if action not in (Actions.IDLE.value, Actions.PARK_RED.value, Actions.PARK_BLUE.value):
             agent_state["inferred_parked"] = False
+            agent_state["parked"] = False
+            agent_state["parked_zone"] = None
         
         # Default values
         penalty = 0.0
@@ -818,8 +824,10 @@ class PushBackGame(VexGame):
             target_orient=start_orient.copy(),
         )]
         
-        if action == Actions.PICK_UP_BLOCK.value:
-            steps, penalty = self._action_pickup_block(agent_state, target_team=None)
+        if action == Actions.PICK_UP_RED_BLOCK.value:
+            steps, penalty = self._action_pickup_block(agent_state, target_team="red")
+        elif action == Actions.PICK_UP_BLUE_BLOCK.value:
+            steps, penalty = self._action_pickup_block(agent_state, target_team="blue")
         
         elif action == Actions.SCORE_IN_LONG_GOAL_1.value:
             steps, penalty = self._action_score_in_goal(
@@ -849,8 +857,10 @@ class PushBackGame(VexGame):
                 agent_state, idx
             )
         
-        elif action == Actions.PARK.value:
-            steps, penalty = self._action_park(agent_state)
+        elif action == Actions.PARK_RED.value:
+            steps, penalty = self._action_park(agent_state, park_zone_color="red")
+        elif action == Actions.PARK_BLUE.value:
+            steps, penalty = self._action_park(agent_state, park_zone_color="blue")
         
         elif action == Actions.TURN_TOWARD_CENTER.value:
             steps, penalty = self._action_turn_toward_center(agent_state)
@@ -889,10 +899,12 @@ class PushBackGame(VexGame):
         except Exception:
             return
 
-        if action_enum not in (Actions.IDLE, Actions.PARK):
+        if action_enum not in (Actions.IDLE, Actions.PARK_RED, Actions.PARK_BLUE):
             agent_state["inferred_parked"] = False
+            agent_state["parked"] = False
+            agent_state["parked_zone"] = None
 
-        if action_enum == Actions.PICK_UP_BLOCK:
+        if action_enum in (Actions.PICK_UP_RED_BLOCK, Actions.PICK_UP_BLUE_BLOCK):
             # No direct held-block sensor: assume pickup succeeded and increment by 1.
             agent_state["inferred_held_blocks"] = min(
                 MAX_HELD_BLOCKS,
@@ -930,8 +942,14 @@ class PushBackGame(VexGame):
             agent_state["inferred_held_blocks"] = 0
             return
 
-        if action_enum == Actions.PARK:
+        if action_enum in (Actions.PARK_RED, Actions.PARK_BLUE):
             agent_state["inferred_parked"] = True
+            agent_state["parked"] = True
+            agent_state["parked_zone"] = "red" if action_enum == Actions.PARK_RED else "blue"
+
+    def _can_park_in_zone(self, agent_state: Dict, park_zone_color: str) -> bool:
+        """Variant hook: whether this agent may park in a requested zone."""
+        return park_zone_color in PARK_ZONES
     
     def update_observation_from_tracker(self, agent: str, observation: np.ndarray) -> np.ndarray:
         """Update observation array with tracker fields from game state.
@@ -1097,7 +1115,7 @@ class PushBackGame(VexGame):
         # Camera angle is robot body orientation plus the stored offset
         camera_offset = float(agent_state.get("camera_rotation_offset", 0.0))
         camera_theta = float(agent_state["orientation"][0]) + camera_offset
-        robot_team = agent_state["team"]
+        robot_team = str(agent_state.get("team", "red"))
         
         # Determine which team's blocks to pick up (actual game logic)
         pickup_team = target_team if target_team is not None else robot_team
@@ -1272,14 +1290,23 @@ class PushBackGame(VexGame):
         agent_state: Dict, 
         loader_idx: int
     ) -> Tuple[List[ActionStep], float]:
-        """Clear all blocks from a loader (can only be done once per loader per agent).
+        """Clear all blocks from a loader.
         
         The agent collects all 6 blocks from the loader at once.
         The agent does NOT know what colors the blocks are.
+        If this agent or its teammate already cleared the loader, the action is
+        skipped and receives DEFAULT_PENALTY.
         """
         BLOCKS_PER_LOADER = 6
         start_pos = agent_state["position"].copy()
         start_orient = agent_state["orientation"].copy()
+
+        if loader_idx < 0 or loader_idx >= len(LOADERS):
+            return [ActionStep(
+                duration=0.1,
+                target_pos=start_pos.copy(),
+                target_orient=start_orient.copy(),
+            )], DEFAULT_PENALTY
         
         # Check if this loader has already been cleared by this agent
         if agent_state.get("inferred_loaders_taken", [0, 0, 0, 0])[loader_idx] >= 1:
@@ -1288,6 +1315,22 @@ class PushBackGame(VexGame):
                 target_pos=start_pos.copy(),
                 target_orient=start_orient.copy(),
             )], DEFAULT_PENALTY
+
+        # Check if teammate already cleared this loader
+        my_team = self.get_team_for_agent(agent_state.get("agent_name", ""))
+        my_agent_name = agent_state.get("agent_name")
+        for other_agent_name, other_state in self.state.get("agents", {}).items():
+            if other_agent_name == my_agent_name:
+                continue
+            if self.get_team_for_agent(other_agent_name) != my_team:
+                continue
+            other_taken = other_state.get("inferred_loaders_taken", [0, 0, 0, 0])
+            if 0 <= loader_idx < len(other_taken) and other_taken[loader_idx] >= 1:
+                return [ActionStep(
+                    duration=0.1,
+                    target_pos=start_pos.copy(),
+                    target_orient=start_orient.copy(),
+                )], DEFAULT_PENALTY
 
         loader_pos = LOADERS[loader_idx].position
         robot_len, _ = self.get_robot_dimensions(agent_state["agent_name"])
@@ -1330,11 +1373,18 @@ class PushBackGame(VexGame):
         return steps, 0.0
     
     def _action_park(
-        self, agent_state: Dict
+        self, agent_state: Dict, park_zone_color: str
     ) -> Tuple[List[ActionStep], float]:
-        """Park in team's zone."""
-        team = agent_state["team"]
-        park_zone = PARK_ZONES[team]
+        """Park in requested zone color."""
+        park_zone = PARK_ZONES.get(park_zone_color)
+        if park_zone is None:
+            start_pos = agent_state["position"].copy()
+            start_orient = agent_state["orientation"].copy()
+            return [ActionStep(
+                duration=0.1,
+                target_pos=start_pos.copy(),
+                target_orient=start_orient.copy(),
+            )], DEFAULT_PENALTY
 
         start_pos = agent_state["position"].copy()
         start_orient = agent_state["orientation"].copy()
@@ -1357,10 +1407,17 @@ class PushBackGame(VexGame):
                 target_orient=start_orient.copy(),
             )], DEFAULT_PENALTY
 
-        # Only one robot can park per team
+        if not self._can_park_in_zone(agent_state, park_zone_color):
+            return [ActionStep(
+                duration=0.1,
+                target_pos=start_pos.copy(),
+                target_orient=start_orient.copy(),
+            )], DEFAULT_PENALTY
+
+        # Only one robot can physically park in the same zone at a time.
         for other_agent, other_state in self.state["agents"].items():
             if other_agent != agent_state["agent_name"]:
-                if other_state["team"] == team and other_state.get("inferred_parked", False):
+                if other_state.get("inferred_parked", False) and other_state.get("parked_zone") == park_zone_color:
                     return [ActionStep(
                         duration=0.1,
                         target_pos=start_pos.copy(),
@@ -1372,7 +1429,7 @@ class PushBackGame(VexGame):
         # Build park event
         park_event = ActionEvent(
             type="park",
-            data={"agent": agent_state["agent_name"]},
+            data={"agent": agent_state["agent_name"], "park_zone": park_zone_color},
         )
         
         post_duration = DEFAULT_DURATION
@@ -1444,9 +1501,20 @@ class PushBackGame(VexGame):
     
     def get_team_for_agent(self, agent: str) -> str:
         """Get team for an agent."""
+        agent_state = self.state.get("agents", {}).get(agent) if hasattr(self, "state") else None
+        if agent_state is not None:
+            return str(agent_state.get("team", "red"))
+
+        for robot in self.robots:
+            if robot.name == agent:
+                try:
+                    return str(robot.team.value)
+                except Exception:
+                    return str(robot.team)
+
         if "red" in agent.lower():
             return "red"
-        elif "blue" in agent.lower():
+        if "blue" in agent.lower():
             return "blue"
         return "red"
     
@@ -1485,9 +1553,11 @@ class PushBackGame(VexGame):
             if held_friendly <= 0:
                 return False
         
-        # Pickup action - invalid if at max capacity OR no friendly blocks present
-        if action == Actions.PICK_UP_BLOCK.value:
-            if total_held >= MAX_HELD_BLOCKS or observation[ObsIndex.FRIENDLY_BLOCK_COUNT] <= 0:
+        # Color-specific pickup actions - require at least one visible block of either color
+        # (exact color availability is validated in _action_pickup_block and penalized if missing).
+        if action in (Actions.PICK_UP_RED_BLOCK.value, Actions.PICK_UP_BLUE_BLOCK.value):
+            visible_blocks = observation[ObsIndex.FRIENDLY_BLOCK_COUNT] + observation[ObsIndex.OPPONENT_BLOCK_COUNT]
+            if total_held >= MAX_HELD_BLOCKS or visible_blocks <= 0:
                 return False
         
         # Clear loader actions - can only clear each loader once
@@ -1504,7 +1574,7 @@ class PushBackGame(VexGame):
             if observation[ObsIndex.LOADERS_CLEARED_START + 3] >= 1:
                 return False
         
-        if action == Actions.PARK.value:
+        if action in (Actions.PARK_RED.value, Actions.PARK_BLUE.value):
             # Parking is only valid if 15 seconds or less remain
             time_remaining = observation[ObsIndex.TIME_REMAINING]
             if time_remaining > 15.0:
@@ -1535,7 +1605,7 @@ class PushBackGame(VexGame):
         assumed_loaders: set[int] = set()
         for event in events:
             if event.type == "pickup_block" and not did_assume_pickup:
-                self.update_tracker(agent, Actions.PICK_UP_BLOCK.value)
+                self.update_tracker(agent, Actions.PICK_UP_RED_BLOCK.value)
                 did_assume_pickup = True
             elif event.type == "clear_loader":
                 loader_idx = event.data.get("loader_idx")
@@ -1553,7 +1623,11 @@ class PushBackGame(VexGame):
                 elif goal_type == GoalType.CENTER_LOWER:
                     self.update_tracker(agent, Actions.SCORE_IN_CENTER_LOWER.value)
             elif event.type == "park" and not did_assume_park:
-                self.update_tracker(agent, Actions.PARK.value)
+                park_zone = str(event.data.get("park_zone", "red"))
+                self.update_tracker(
+                    agent,
+                    Actions.PARK_RED.value if park_zone == "red" else Actions.PARK_BLUE.value,
+                )
                 did_assume_park = True
         
         for event in events:
@@ -1612,7 +1686,7 @@ class PushBackGame(VexGame):
 
                 goal = self.goal_manager.get_goal(goal_type)
                 target_status = BlockStatus.get_status_for_goal(goal_type)
-                robot_team = agent_state.get("team")
+                robot_team = str(agent_state.get("team", "red"))
 
                 held_indices = [
                     i for i, block in enumerate(self.state["blocks"])
@@ -1658,7 +1732,10 @@ class PushBackGame(VexGame):
                     self._update_goal_block_positions(goal, target_status)
             
             elif event.type == "park":
-                pass
+                park_zone = str(event.data.get("park_zone", "red"))
+                agent_state["parked"] = True
+                agent_state["inferred_parked"] = True
+                agent_state["parked_zone"] = park_zone
             
             elif event.type == "turn_toward_center":
                 target_angle = event.data.get("target_angle", 0.0)
@@ -1693,7 +1770,7 @@ class PushBackGame(VexGame):
         for i, agent in enumerate(agents):
             st = self.state["agents"][agent]
             team = self.get_team_for_agent(agent)
-            robot_color = 'red' if team == 'red' else 'blue'
+            robot_color = 'red' if str(st.get("team", "red")) == 'red' else 'blue'
             
             x, y = st["position"][0], st["position"][1]
             
@@ -2055,9 +2132,23 @@ class PushBackGame(VexGame):
             Actions.TAKE_FROM_LOADER_BR.value: 3,  # Bottom Right
         }
         
-        if action == Actions.PICK_UP_BLOCK.value:
-            nearest_block_x = observation[ObsIndex.FRIENDLY_BLOCKS_START]
-            nearest_block_y = observation[ObsIndex.FRIENDLY_BLOCKS_START + 1]
+        if action in (Actions.PICK_UP_RED_BLOCK.value, Actions.PICK_UP_BLUE_BLOCK.value):
+            if action == Actions.PICK_UP_BLUE_BLOCK.value:
+                target_is_friendly = str(robot.team.value) == "blue"
+            elif action == Actions.PICK_UP_RED_BLOCK.value:
+                target_is_friendly = str(robot.team.value) == "red"
+
+            if target_is_friendly:
+                nearest_block_x = observation[ObsIndex.FRIENDLY_BLOCKS_START]
+                nearest_block_y = observation[ObsIndex.FRIENDLY_BLOCKS_START + 1]
+            else:
+                nearest_block_x = observation[ObsIndex.OPPONENT_BLOCKS_START]
+                nearest_block_y = observation[ObsIndex.OPPONENT_BLOCKS_START + 1]
+
+            if nearest_block_x <= -998.0 or nearest_block_y <= -998.0:
+                actions.append("WAIT;0.5")
+                return actions
+
             target_pos = [nearest_block_x, nearest_block_y]
             
             actions.append("INTAKE;100")
@@ -2088,8 +2179,8 @@ class PushBackGame(VexGame):
             actions.append("DRIVE;6;30")
             actions.append("CLEAR_LOADER")
 
-        elif action == Actions.PARK.value:
-            if robot.team.value == "red":
+        elif action in (Actions.PARK_RED.value, Actions.PARK_BLUE.value):
+            if action == Actions.PARK_RED.value:
                 park_zone = PARK_ZONES["red"]
                 target_pos = [park_zone.center[0], park_zone.center[1]]
                 approach_pos = [park_zone.center[0] + 24, park_zone.center[1]]
