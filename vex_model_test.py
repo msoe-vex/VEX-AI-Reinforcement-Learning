@@ -3,6 +3,7 @@ import argparse
 import os
 import numpy as np
 import glob
+import csv
 from gymnasium import spaces
 
 # Import from new modular architecture
@@ -62,7 +63,16 @@ def load_agent_models(model_dir, agents, device):
     
     return models
 
-def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=True, render_mode="image", deterministic=True):
+def run_simulation(
+    model_dir,
+    game_name,
+    output_dir,
+    iterations=1,
+    export_gif=True,
+    render_mode="image",
+    deterministic=True,
+    force_communication=None,
+):
     """
     Loads trained models and runs one or more simulations in the VEX environment.
 
@@ -74,6 +84,7 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
         export_gif (bool): Whether to render frames and export GIF(s).
         render_mode (str): Mode for rendering: 'terminal', 'image', or 'none'.
         deterministic (bool): Whether to run deterministic environment mechanics.
+        force_communication (bool | None): If set, overrides metadata communication setting.
     """
     if not os.path.exists(model_dir):
         print(f"Error: Model directory not found at {model_dir}")
@@ -94,6 +105,10 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
             print(f"Read enable_communication={enable_communication} from metadata")
         except Exception as e:
             print(f"Warning: Could not read enable_communication from metadata: {e}")
+
+    if force_communication is not None:
+        enable_communication = force_communication
+        print(f"Overriding communication via CLI: enable_communication={enable_communication}")
 
     # Initialize the game/environment with matching communication configuration
     game = PushBackGame.get_game(
@@ -135,6 +150,9 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
 
     team_score_totals = {}
     team_score_counts = {}
+    os.makedirs(output_dir, exist_ok=True)
+    results_csv_path = os.path.join(output_dir, "results.csv")
+    iteration_results = []
 
     for iteration in range(1, iterations + 1):
         print(f"\nRunning simulation iteration {iteration}/{iterations}...")
@@ -191,6 +209,8 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
                             message_mean = message_params[:, :8]
 
                     message_vector = message_mean.cpu().numpy()[0]
+                    if not enable_communication:
+                        message_vector = np.zeros_like(message_vector)
                 else:
                     # In case a communication-enabled model is loaded into a non-communication
                     # action space, only keep the discrete action logits expected by env.
@@ -250,6 +270,26 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
                 team_score_totals[team_name] = team_score_totals.get(team_name, 0.0) + float(score)
                 team_score_counts[team_name] = team_score_counts.get(team_name, 0) + 1
 
+            row = {
+                "iteration": iteration,
+                "steps": step_count,
+                "env_steps": env.num_steps,
+                "internal_ticks": env.num_ticks,
+            }
+            for team_name, score in env.score.items():
+                row[f"score_{team_name}"] = float(score)
+            iteration_results.append(row)
+        else:
+            iteration_results.append(
+                {
+                    "iteration": iteration,
+                    "steps": step_count,
+                    "env_steps": env.num_steps,
+                    "internal_ticks": env.num_ticks,
+                    "score": env.score,
+                }
+            )
+
         if export_gif:
             print("Creating GIF of the simulation...")
             env.createGIF()
@@ -261,6 +301,20 @@ def run_simulation(model_dir, game_name, output_dir, iterations=1, export_gif=Tr
             print(f"  {team_name}: {avg_score:.3f}")
     else:
         print("  No per-team score dictionary found on env.score.")
+
+    if iteration_results:
+        fieldnames = []
+        for row in iteration_results:
+            for key in row.keys():
+                if key not in fieldnames:
+                    fieldnames.append(key)
+
+        with open(results_csv_path, "w", newline="") as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in iteration_results:
+                writer.writerow(row)
+        print(f"Saved per-iteration results to: {results_csv_path}")
 
     env.close()
 
@@ -303,6 +357,12 @@ if __name__ == "__main__":
         default=True,
         help="Enable deterministic environment mechanics (use --no-deterministic for stochastic outcomes)"
     )
+    parser.add_argument(
+        "--communication",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Override communication setting from metadata (use --communication or --no-communication)"
+    )
     
     args = parser.parse_args()
     
@@ -331,4 +391,5 @@ if __name__ == "__main__":
         export_gif = args.render_mode == "image",
         render_mode = args.render_mode if args.render_mode != "none" else None,
         deterministic=args.deterministic,
+        force_communication=args.communication,
     )
