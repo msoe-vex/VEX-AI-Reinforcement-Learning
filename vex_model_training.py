@@ -226,7 +226,11 @@ if __name__ == "__main__":
     num_gpus_available = int(ray.available_resources().get("GPU", 0))
     print(f"GPUs detected by Ray: {num_gpus_available}")
 
-    all_policies = temp_env.possible_agents
+    all_agents = temp_env.possible_agents
+    configured_policy_ids = sorted({policy_mapping_fn(agent_id, None) for agent_id in all_agents})
+    if not configured_policy_ids:
+        raise ValueError("No policies were produced by policy_mapping_fn.")
+    print(f"Configured policy IDs: {configured_policy_ids}")
     train_batch_size_per_learner = 2400
 
     # Optional schedules for lr and entropy over estimated total timesteps.
@@ -296,9 +300,9 @@ if __name__ == "__main__":
             rollout_fragment_length="auto",  # Let RLlib calculate the optimal fragment length
         )
         .multi_agent(
-            policies=set(all_policies),  # Define policy IDs
+            policies=set(configured_policy_ids),  # Define policy IDs from mapping function
             policy_mapping_fn=policy_mapping_fn,
-            policies_to_train=list(all_policies),
+            policies_to_train=list(configured_policy_ids),
         )
         .rl_module(
             rl_module_spec=RLModuleSpec(
