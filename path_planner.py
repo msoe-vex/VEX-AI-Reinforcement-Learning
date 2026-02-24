@@ -1,6 +1,5 @@
 from casadi import *
 import numpy as np
-import random
 from math import sqrt, exp  # Added missing imports if needed
 from collections import deque
 import time
@@ -100,11 +99,10 @@ class PathPlanner:
             robot: Robot object with dimensions and constraints
         """
         # Calculate robot parameters locally
-        robot_length_norm = robot.length / self.field_size_inches
-        robot_width_norm = robot.width / self.field_size_inches
         buffer_radius_norm = robot.buffer / self.field_size_inches
         robot_radius = sqrt(robot.length**2 + robot.width**2) / 2
         robot_radius_norm = robot_radius / self.field_size_inches
+        total_radius_norm = robot_radius_norm + buffer_radius_norm
         
         max_velocity_norm = robot.max_speed / self.field_size_inches
         max_accel_norm = robot.max_acceleration / self.field_size_inches
@@ -133,14 +131,9 @@ class PathPlanner:
             start_point_norm,
             end_point_norm,
             normalized_obstacles,
-            robot_radius_norm,
-            buffer_radius_norm,
+            total_radius_norm,
             GRID_SIZE,
         )
-            
-        # Helper call needs updated parameters
-        # self.a_star_search needs robot info for grid generation if it uses it.
-        # Let's fix a_star_search later, focus on SOLVE logic first.
 
 
         # Calculate steps based on distance in inches
@@ -166,7 +159,7 @@ class PathPlanner:
         cost = 0.0
 
         # Perform A* search to get an initial path (using normalized coordinates)
-        a_star_path = self.a_star_search(planning_start_norm, planning_end_norm, normalized_obstacles, robot_radius_norm, buffer_radius_norm)
+        a_star_path = self.a_star_search(planning_start_norm, planning_end_norm, normalized_obstacles, total_radius_norm)
         if a_star_path:
             # Interpolate the A* path to match the number of steps
             a_star_path = np.array(a_star_path)
@@ -201,8 +194,6 @@ class PathPlanner:
         # Define variable bounds
         x_lowerbound_ = [-exp(10)] * self.num_of_x_
         x_upperbound_ = [exp(10)] * self.num_of_x_
-        total_radius_norm = robot_radius_norm + buffer_radius_norm
-
         for i in range(self.indexes.px, self.indexes.py + self.num_steps):
             x_lowerbound_[i] = total_radius_norm
             x_upperbound_[i] = 1 - total_radius_norm
@@ -329,25 +320,11 @@ class PathPlanner:
             velocities_normalized = np.column_stack((vel_x, vel_y))
             velocities_inches = velocities_normalized * self.field_size_inches
         else:
-            # Fallback to A* (or straight line) when NLP is infeasible.
-            if a_star_path is not None and len(a_star_path) >= 2:
-                fallback_path = np.array(a_star_path, dtype=np.float64)
-                if len(fallback_path) != self.num_steps:
-                    interp_axis = np.linspace(0, 1, len(fallback_path))
-                    sample_axis = np.linspace(0, 1, self.num_steps)
-                    fallback_x = np.interp(sample_axis, interp_axis, fallback_path[:, 0])
-                    fallback_y = np.interp(sample_axis, interp_axis, fallback_path[:, 1])
-                    positions_normalized = np.column_stack((fallback_x, fallback_y))
-                else:
-                    positions_normalized = fallback_path
-            else:
-                fallback_x, fallback_y = self.get_initial_path(
-                    planning_start_norm[0],
-                    planning_start_norm[1],
-                    planning_end_norm[0],
-                    planning_end_norm[1],
-                )
-                positions_normalized = np.column_stack((fallback_x, fallback_y))
+            positions_normalized = self._build_fallback_positions_normalized(
+                a_star_path,
+                planning_start_norm,
+                planning_end_norm,
+            )
 
             positions_inches = np.array([self.normalized_to_inches(pos) for pos in positions_normalized])
             dt = self.initial_time_step
@@ -525,7 +502,7 @@ class PathPlanner:
         total_path_time = dt * len(positions)
         return planned_px, planned_py, total_path_time
 
-    def _generate_obstacle_grid(self, obstacles, start_point, end_point, robot_radius_norm, buffer_radius_norm, grid_size=GRID_SIZE):
+    def _generate_obstacle_grid(self, obstacles, start_point, end_point, total_radius_norm, grid_size=GRID_SIZE):
         """
         Helper method to generate an obstacle grid for A* search and visualization.
         
@@ -533,7 +510,8 @@ class PathPlanner:
             obstacles: List of obstacles in normalized coordinates
             start_point: Start point in normalized coordinates
             end_point: End point in normalized coordinates
-            grid_size: Size of the grid (default 48x48)
+            total_radius_norm: Combined robot + buffer radius in normalized units
+            grid_size: Size of the grid
             
         Returns:
             grid: 2D numpy array where 0=free, 1=blocked
@@ -545,14 +523,14 @@ class PathPlanner:
         # Block grid cells based on obstacles
         for obstacle in obstacles:
             cx, cy = int(obstacle.x * grid_size), int(obstacle.y * grid_size)
-            radius = int((obstacle.radius + robot_radius_norm + buffer_radius_norm) * grid_size)
+            radius = int((obstacle.radius + total_radius_norm) * grid_size)
             for x in range(max(0, cx - radius), min(grid_size, cx + radius + 1)):
                 for y in range(max(0, cy - radius), min(grid_size, cy + radius + 1)):
                     if (x - cx)**2 + (y - cy)**2 <= radius**2:
                         grid[y, x] = 1  # Mark as blocked (grid is [row=y, col=x])
         
         # Block any cell within robot radius of the field boundary
-        robot_radius_cells = int((robot_radius_norm + buffer_radius_norm) * grid_size)
+        robot_radius_cells = int(total_radius_norm * grid_size)
         for i in range(grid_size):
             for j in range(grid_size):
                 if i < robot_radius_cells or i >= grid_size - robot_radius_cells or j < robot_radius_cells or j >= grid_size - robot_radius_cells:
@@ -595,10 +573,8 @@ class PathPlanner:
 
         return None
 
-    def _is_normalized_point_valid_for_nlp(self, point_norm, obstacles, robot_radius_norm, buffer_radius_norm):
+    def _is_normalized_point_valid_for_nlp(self, point_norm, obstacles, total_radius_norm):
         px, py = float(point_norm[0]), float(point_norm[1])
-
-        total_radius_norm = robot_radius_norm + buffer_radius_norm
 
         # Keep robot center inside field with boundary margin.
         if px < total_radius_norm or px > 1.0 - total_radius_norm:
@@ -615,13 +591,12 @@ class PathPlanner:
 
         return True
 
-    def _snap_endpoints_to_valid_cells(self, start_point, end_point, obstacles, robot_radius_norm, buffer_radius_norm, grid_size=GRID_SIZE):
+    def _snap_endpoints_to_valid_cells(self, start_point, end_point, obstacles, total_radius_norm, grid_size=GRID_SIZE):
         grid, start, end = self._generate_obstacle_grid(
             obstacles,
             start_point,
             end_point,
-            robot_radius_norm,
-            buffer_radius_norm,
+            total_radius_norm,
             grid_size,
         )
 
@@ -630,8 +605,7 @@ class PathPlanner:
             return self._is_normalized_point_valid_for_nlp(
                 point_norm,
                 obstacles,
-                robot_radius_norm,
-                buffer_radius_norm,
+                total_radius_norm,
             )
 
         snapped_start = self._find_nearest_valid_cell_bfs(grid, start, validator=nlp_validator)
@@ -656,12 +630,32 @@ class PathPlanner:
         alpha = np.linspace(0.0, 1.0, num_segments + 1)
         return np.array([start + a * (end - start) for a in alpha], dtype=np.float64)
 
-    def a_star_search(self, start_point, end_point, obstacles, robot_radius_norm, buffer_radius_norm):
+    def _build_fallback_positions_normalized(self, a_star_path, planning_start_norm, planning_end_norm):
+        if a_star_path is not None and len(a_star_path) >= 2:
+            fallback_path = np.array(a_star_path, dtype=np.float64)
+            if len(fallback_path) == self.num_steps:
+                return fallback_path
+
+            interp_axis = np.linspace(0, 1, len(fallback_path))
+            sample_axis = np.linspace(0, 1, self.num_steps)
+            fallback_x = np.interp(sample_axis, interp_axis, fallback_path[:, 0])
+            fallback_y = np.interp(sample_axis, interp_axis, fallback_path[:, 1])
+            return np.column_stack((fallback_x, fallback_y))
+
+        fallback_x, fallback_y = self.get_initial_path(
+            planning_start_norm[0],
+            planning_start_norm[1],
+            planning_end_norm[0],
+            planning_end_norm[1],
+        )
+        return np.column_stack((fallback_x, fallback_y))
+
+    def a_star_search(self, start_point, end_point, obstacles, total_radius_norm):
         """
-        Perform A* search on a 48x48 grid.
+        Perform A* search on the planning grid.
         """
         grid_size = GRID_SIZE
-        grid, start, end = self._generate_obstacle_grid(obstacles, start_point, end_point, robot_radius_norm, buffer_radius_norm, grid_size)
+        grid, start, end = self._generate_obstacle_grid(obstacles, start_point, end_point, total_radius_norm, grid_size)
 
         start = self._find_nearest_valid_cell_bfs(grid, start)
         end = self._find_nearest_valid_cell_bfs(grid, end)
@@ -727,7 +721,6 @@ class PathPlanner:
         All inputs are in inches.
         """
         import matplotlib.pyplot as plt
-        from matplotlib.transforms import Affine2D
 
         grid_size = GRID_SIZE
         
@@ -755,7 +748,8 @@ class PathPlanner:
         pseudo_end_norm = self.inches_to_normalized(np.array(pseudo_end_inches, dtype=np.float64))
         
         # Generate the grid using the helper method
-        grid, start_grid, end_grid = self._generate_obstacle_grid(normalized_obstacles, start_norm, end_norm, robot_radius_norm, buffer_radius_norm, grid_size)
+        total_radius_norm = robot_radius_norm + buffer_radius_norm
+        grid, start_grid, end_grid = self._generate_obstacle_grid(normalized_obstacles, start_norm, end_norm, total_radius_norm, grid_size)
         pseudo_start_grid = self._normalized_to_grid(pseudo_start_norm, grid_size)
         pseudo_end_grid = self._normalized_to_grid(pseudo_end_norm, grid_size)
         
