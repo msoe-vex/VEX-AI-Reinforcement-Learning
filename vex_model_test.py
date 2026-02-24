@@ -71,6 +71,7 @@ def run_simulation(
     export_gif=True,
     render_mode="image",
     deterministic=True,
+    communication_override=None,
 ):
     """
     Loads trained models and runs one or more simulations in the VEX environment.
@@ -103,6 +104,9 @@ def run_simulation(
             print(f"Read enable_communication={enable_communication} from metadata")
         except Exception as e:
             print(f"Warning: Could not read enable_communication from metadata: {e}")
+
+    if communication_override is not None:
+        print(f"Overridden enable_communication={enable_communication} from arguments")
 
     # Initialize the game/environment with matching communication configuration
     game = PushBackGame.get_game(
@@ -192,7 +196,9 @@ def run_simulation(
 
                     message_vector = None
                     remaining = model_output.shape[1] - num_actions
-                    if remaining >= MESSAGE_SIZE:
+                    if not communication_override: # If communication is disabled, set message vector to zeros
+                        message_vector = np.zeros(MESSAGE_SIZE, dtype=np.float32)
+                    elif remaining >= MESSAGE_SIZE:
                         message_mean = model_output[:, num_actions:num_actions + MESSAGE_SIZE]
                         message_vector = message_mean.cpu().numpy()[0]
                     elif remaining > 0:
@@ -345,6 +351,12 @@ if __name__ == "__main__":
         default=True,
         help="Enable deterministic environment mechanics (use --no-deterministic for stochastic outcomes)"
     )
+    parser.add_argument(
+        "--communication",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable communication (overrides metadata if provided)"
+    )
     
     args = parser.parse_args()
     
@@ -373,4 +385,5 @@ if __name__ == "__main__":
         export_gif = args.render_mode == "image",
         render_mode = args.render_mode if args.render_mode != "none" else None,
         deterministic=args.deterministic,
+        communication_override=args.communication,
     )

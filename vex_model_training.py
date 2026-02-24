@@ -21,40 +21,64 @@ from vex_model_compile import compile_checkpoint_to_torchscript
 import sys
 import json
 
-ALTERNATE_HEAD_BLOCKS = [50, 50, 50, 50, 50, 50]  # Action, Message, Action, Message. Then BOTH train.
+TRAINING_PHASES = [
+    {"iterations": 10,  "train_encoder": True,  "train_action": True,  "train_message": True,  "lr": 0.0005,  "entropy": 0.05},
+    {"iterations": 30,  "train_encoder": False, "train_action": True,  "train_message": False, "lr": 0.0005,  "entropy": 0.05},
+    {"iterations": 30,  "train_encoder": False, "train_action": False, "train_message": True,  "lr": 0.0005,  "entropy": 0.05},
+    {"iterations": 30,  "train_encoder": False, "train_action": True,  "train_message": False, "lr": 0.0005,  "entropy": 0.05},
+    {"iterations": 30,  "train_encoder": False, "train_action": False, "train_message": True,  "lr": 0.0005,  "entropy": 0.05},
+    {"iterations": 100, "train_encoder": True,  "train_action": True,  "train_message": True,  "lr": 0.00005, "entropy": 0.005},
+]
 
-def toggle_heads_on_learner(learner, iteration, blocks):
-    """Helper function to toggle requiring gradients for action and message heads based on the iteration block."""
-    
-    # Determine which phase we are in
-    current_phase_idx = 0
+def get_training_phase(iteration, phases):
+    """Determine the current training phase settings based on the iteration."""
     iters_accumulated = 0
-    for block_size in blocks:
-        if iteration < iters_accumulated + block_size:
-            break
-        iters_accumulated += block_size
-        current_phase_idx += 1
-        
-    # Default to training at least the action head
-    train_action = True
-    train_message = False
-        
+    for phase in phases:
+        if iteration < iters_accumulated + phase["iterations"]:
+            return phase
+        iters_accumulated += phase["iterations"]
+    return phases[-1]
+
+def apply_head_training_status_on_learner(learner, phase):
+    """Helper function to toggle requiring gradients for encoder, action and message heads on the Learner."""
+    train_encoder = phase.get("train_encoder", True)
+    train_action = phase.get("train_action", True)
+    train_message = phase.get("train_message", True)
+    new_lr = phase.get("lr", 0.0005)
+    new_entropy = phase.get("entropy", 0.05)
+    
+    # 1. Update Learning Rate on all optimizers
+    if hasattr(learner, "_optimizers"):
+        for opt in learner._optimizers.values():
+            for param_group in opt.param_groups:
+                param_group['lr'] = new_lr
+                
+    # 2. Update Entropy coefficient
+    if hasattr(learner, "entropy_coeff_schedule"):
+        from ray.rllib.utils.schedules.constant_schedule import ConstantSchedule
+        learner.entropy_coeff_schedule = ConstantSchedule(new_entropy, framework="torch")
+    
+    import torch
+    for attr in ["entropy_coeff", "_entropy_coeff"]:
+        if hasattr(learner, attr):
+            val = getattr(learner, attr)
+            if isinstance(val, torch.Tensor):
+                val.data = torch.tensor(new_entropy, dtype=torch.float32, device=val.device)
+            else:
+                setattr(learner, attr, new_entropy)
+
     for module_id, module in learner.module.items():
         target_module = module.unwrapped() if hasattr(module, "unwrapped") else module
         
+        # Encoder
+        if hasattr(target_module, "_encoder_net"):
+            for p in target_module._encoder_net.parameters():
+                p.requires_grad = train_encoder
+
+        # Heads
         if hasattr(target_module, "pi") and hasattr(target_module, "message_head") and target_module.message_head is not None:
-            if current_phase_idx >= len(blocks):
-                # If we've exhausted all blocks, train BOTH heads
-                train_action = True
-                train_message = True
-            else:
-                # Alternating logic: Even phases train Action, Odd phases train Message
-                train_action = (current_phase_idx % 2 == 0)
-                train_message = not train_action
-            
             for p in target_module.pi.parameters():
                 p.requires_grad = train_action
-                
             for p in target_module.message_head.parameters():
                 p.requires_grad = train_message
             for p in target_module.attention_unit.parameters():
@@ -62,14 +86,9 @@ def toggle_heads_on_learner(learner, iteration, blocks):
             target_module.msg_log_std.requires_grad = train_message
             
         elif hasattr(target_module, "pi"):
-            # If communication is disabled, just train the action head constantly
-            train_action = True
-            train_message = False
+            # Communication disabled fallback - always train action head
             for p in target_module.pi.parameters():
-                p.requires_grad = train_action
-
-    return train_action, train_message
-
+                p.requires_grad = True
 
 class VexScoreCallback(RLlibCallback):
     """Custom callback to track team scores at the end of each episode and toggle frozen layers."""
@@ -77,18 +96,15 @@ class VexScoreCallback(RLlibCallback):
     def on_algorithm_init(self, *, algorithm, **kwargs):
         """Called when a new algorithm instance has been created."""
         try:
-            # We need to capture the status from the helper function
-            status = {"action": False, "message": False}
-            def init_wrapper(learner):
-                act, msg = toggle_heads_on_learner(learner, 0, ALTERNATE_HEAD_BLOCKS)
-                status["action"] = act
-                status["message"] = msg
-                
-            algorithm.learner_group.foreach_learner(init_wrapper)
+            phase = get_training_phase(0, TRAINING_PHASES)
+            algorithm.learner_group.foreach_learner(
+                lambda learner: apply_head_training_status_on_learner(learner, phase)
+            )
             
-            action_status = "TRAINING" if status["action"] else "FROZEN"
-            msg_status = "TRAINING" if status["message"] else "FROZEN"
-            print(f"  [Init] Alternating Heads: Action [{action_status}] | Message [{msg_status}]")
+            enc_status = "TRAINING" if phase.get("train_encoder", True) else "FROZEN"
+            action_status = "TRAINING" if phase.get("train_action", True) else "FROZEN"
+            msg_status = "TRAINING" if phase.get("train_message", True) else "FROZEN"
+            print(f"  [Init] Phase Config: Encoder [{enc_status}] | Action [{action_status}] | Message [{msg_status}] | LR: {phase.get('lr', 0.0005)} | Ent: {phase.get('entropy', 0.05)}")
         except getattr(Exception, "dummy", Exception):
             pass
 
@@ -125,17 +141,15 @@ class VexScoreCallback(RLlibCallback):
             
         # Toggle frozen heads
         try:
-            status = {"action": False, "message": False}
-            def toggle_wrapper(learner):
-                act, msg = toggle_heads_on_learner(learner, iteration, ALTERNATE_HEAD_BLOCKS)
-                status["action"] = act
-                status["message"] = msg
-                
-            algorithm.learner_group.foreach_learner(toggle_wrapper)
+            phase = get_training_phase(iteration, TRAINING_PHASES)
+            algorithm.learner_group.foreach_learner(
+                lambda learner: apply_head_training_status_on_learner(learner, phase)
+            )
             
-            action_status = "TRAINING" if status["action"] else "FROZEN"
-            msg_status = "TRAINING" if status["message"] else "FROZEN"
-            print(f"  -> Alternating Heads: Action [{action_status}] | Message [{msg_status}]")
+            enc_status = "TRAINING" if phase.get("train_encoder", True) else "FROZEN"
+            action_status = "TRAINING" if phase.get("train_action", True) else "FROZEN"
+            msg_status = "TRAINING" if phase.get("train_message", True) else "FROZEN"
+            print(f"  -> Phase Config: Encoder [{enc_status}] | Action [{action_status}] | Message [{msg_status}] | LR: {phase.get('lr', 0.0005)} | Ent: {phase.get('entropy', 0.05)}")
         except getattr(Exception, "dummy", Exception):
             pass
             
@@ -329,42 +343,16 @@ if __name__ == "__main__":
     print(f"Configured policy IDs: {configured_policy_ids}")
     train_batch_size_per_learner = 2400
 
-    # Optional schedules for lr and entropy over estimated total timesteps.
-    # Behavior: hold initial value for first 20%, then linearly move to final value.
-    estimated_total_timesteps = max(1, args.num_iters * train_batch_size_per_learner)
-    hold_fraction = 0.2
-    hold_timesteps = int(estimated_total_timesteps * hold_fraction)
-    lr_schedule = None
-    entropy_schedule = None
+    # Set number of iterations manually according to phase list
+    args.num_iters = sum(phase["iterations"] for phase in TRAINING_PHASES)
+    print(f"Total training iterations set to {args.num_iters} based on TRAINING_PHASES.")
 
-    if args.learning_rate_final is not None and args.learning_rate_final != args.learning_rate:
-        lr_schedule = [
-            [0, float(args.learning_rate)],
-            [hold_timesteps, float(args.learning_rate)],
-            [estimated_total_timesteps, float(args.learning_rate_final)],
-        ]
-
-    if args.entropy_final is not None and args.entropy_final != args.entropy:
-        entropy_schedule = [
-            [0, float(args.entropy)],
-            [hold_timesteps, float(args.entropy)],
-            [estimated_total_timesteps, float(args.entropy_final)],
-        ]
-
-    if lr_schedule:
-        print(f"Using learning rate schedule: {lr_schedule}")
-    else:
-        print(f"Using constant learning rate: {args.learning_rate}")
-
-    if entropy_schedule:
-        print(f"Using entropy schedule: {entropy_schedule}")
-    else:
-        print(f"Using constant entropy coefficient: {args.entropy}")
+    print("Using custom callback for LR and entropy scheduling based on iterations.")
 
     # RLlib new API: schedules must be provided directly via `lr` and
-    # `entropy_coeff` (not via deprecated *_schedule fields).
-    lr_config_value = lr_schedule if lr_schedule is not None else float(args.learning_rate)
-    entropy_config_value = entropy_schedule if entropy_schedule is not None else float(args.entropy)
+    # `entropy_coeff` (not via deprecated *_schedule fields). Pass the initial values.
+    lr_config_value = TRAINING_PHASES[0]["lr"]
+    entropy_config_value = TRAINING_PHASES[0]["entropy"]
     
     # Configure the RLlib Trainer using PPO with new API stack
     config = (
@@ -440,18 +428,10 @@ if __name__ == "__main__":
     # Save game metadata early (before training starts)
     metadata = {
         "game": args.game,
-        "learning_rate": args.learning_rate,
-        "learning_rate_final": args.learning_rate_final,
-        "learning_rate_schedule": lr_schedule,
+        "training_phases": TRAINING_PHASES,
         "discount_factor": args.discount_factor,
-        "entropy": args.entropy,
-        "entropy_final": args.entropy_final,
-        "entropy_schedule": entropy_schedule,
         "randomize": args.randomize,
         "num_iters": args.num_iters,
-        "estimated_total_timesteps": estimated_total_timesteps,
-        "schedule_hold_fraction": hold_fraction,
-        "schedule_hold_timesteps": hold_timesteps,
         "source_experiment_directory": restore_experiment_directory,
         "restored_checkpoint_path": restore_path,
         "enable_communication": args.communication,
