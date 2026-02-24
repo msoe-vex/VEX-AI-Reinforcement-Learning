@@ -105,7 +105,7 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
                     self.msg_head = msg_head
                     self.msg_log_std = msg_log_std
 
-                def forward(self, feats):
+                def forward(self, feats: torch.Tensor) -> torch.Tensor:
                     logits = self.pi(feats)
                     if (self.msg_head is None) or (self.msg_log_std is None):
                         return logits
@@ -151,7 +151,8 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
             
             # Save using JIT SCRIPT (Best for C++)
             save_path = os.path.join(output_path, f"{policy_id}.pt")
-            obs_shape = game.observation_space(game.possible_agents[0]).shape
+            temp_env = env_creator()
+            obs_shape = temp_env.observation_space(temp_env.possible_agents[0]).shape
             dummy_obs = torch.randn(1, *obs_shape)
             
             try:

@@ -13,6 +13,8 @@ from gymnasium.spaces import Discrete, Box, Tuple
 # Import internal constants required for the output dictionary
 from ray.rllib.core.models.base import ENCODER_OUT, CRITIC, ACTOR
 
+from vex_core.base_env import MESSAGE_SIZE
+
 
 # ============================================================================
 # SIMPLE MODEL DEFINITION - Easy to modify!
@@ -70,10 +72,9 @@ def build_vex_model(obs_dim, action_dim, enable_communication=False):
     if enable_communication:
         attention_unit = nn.Linear(prev_dim, 1)
         # 4. Message Encoder (What to say)
-        # Output: 8 dimensions (Mean of the logical message)
-        message_encoder = nn.Linear(prev_dim, 8)
+        message_encoder = nn.Linear(prev_dim, MESSAGE_SIZE)
         # Message LogStd (Learnable parameter)
-        message_log_std = nn.Parameter(torch.zeros(1, 8))
+        message_log_std = nn.Parameter(torch.zeros(1, MESSAGE_SIZE))
     else:
         attention_unit = None
         message_encoder = None
@@ -97,8 +98,9 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
         # Get dimensions from environment spaces
         obs_dim = self.observation_space.shape[0]
         
-        # Determine enable_communication from ACTION SPACE TYPE (primary source of truth)
-        # This ensures the model outputs match what RLlib expects
+        # Determine enable_communication from action space type.
+        # When communication is enabled, action space is Tuple(Discrete, Box).
+        # When disabled, action space is just Discrete.
         enable_communication = isinstance(self.action_space, Tuple)
         
         if isinstance(self.action_space, Discrete):
@@ -108,9 +110,6 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
             action_dim = self.action_space.shape[0]
             is_continuous = True
         elif isinstance(self.action_space, Tuple):
-            # Assumes structure: (Discrete(Action), Box(Message))
-            # We focus on the first part for the Intention Head (Action Logic)
-            # The message part is handled by the explicit Message Head
             first_space = self.action_space[0]
             if isinstance(first_space, Discrete):
                 action_dim = first_space.n
@@ -126,8 +125,7 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
         # Build the actual model using our simple function
         self._encoder_net, self.pi, self.value_head, self.attention_unit, self.message_head, self.msg_log_std = build_vex_model(
             obs_dim=obs_dim,
-            action_dim=action_dim if not isinstance(self.action_space, Tuple) else 
-                       (self.action_space[0].n if isinstance(self.action_space[0], Discrete) else 0),
+            action_dim=action_dim,
             enable_communication=enable_communication
         )
 
@@ -156,13 +154,13 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
         intention_logits = self.pi(features)
         
         if self.attention_unit is not None and self.message_head is not None:
-            # ATOC Outputs - Communication enabled
+            # ATOC Outputs - Communication enabled (Tuple action space)
             attention_logits = self.attention_unit(features)
             msg_mean = self.message_head(features)
             
             # Gate message by attention (soft on/off for communication)
             gate = torch.sigmoid(attention_logits)  # (B, 1)
-            msg_mean = msg_mean * gate               # (B, 8) * (B, 1) → broadcast
+            msg_mean = msg_mean * gate               # (B, MESSAGE_SIZE) * (B, 1) → broadcast
             
             # Concat outputs for Tuple Distribution: [DiscreteLogits, BoxMean, BoxLogStd]
             batch_size = features.shape[0]
@@ -174,7 +172,7 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
             output["comm_gate"] = gate
             output["message"] = msg_mean
         else:
-            # Communication disabled - only use action logits
+            # Communication disabled (Discrete action space) - only action logits
             dist_inputs = intention_logits
         
         output[Columns.ACTION_DIST_INPUTS] = dist_inputs
@@ -193,13 +191,13 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
         intention_logits = self.pi(features)
         
         if self.attention_unit is not None and self.message_head is not None:
-            # ATOC Outputs - Communication enabled
+            # ATOC Outputs - Communication enabled (Tuple action space)
             attention_logits = self.attention_unit(features)
             msg_mean = self.message_head(features)
             
             # Gate message by attention (soft on/off for communication)
             gate = torch.sigmoid(attention_logits)  # (B, 1)
-            msg_mean = msg_mean * gate               # (B, 8) * (B, 1) → broadcast
+            msg_mean = msg_mean * gate               # (B, MESSAGE_SIZE) * (B, 1) → broadcast
             
             # Concat outputs for Tuple Distribution: [DiscreteLogits, BoxMean, BoxLogStd]
             batch_size = features.shape[0]
@@ -211,7 +209,7 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
             output["comm_gate"] = gate
             output["message"] = msg_mean
         else:
-            # Communication disabled - only use action logits
+            # Communication disabled (Discrete action space) - only action logits
             dist_inputs = intention_logits
         
         output[Columns.ACTION_DIST_INPUTS] = dist_inputs

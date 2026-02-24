@@ -22,6 +22,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from vex_core.base_game import Robot, VexGame, ActionEvent, ActionStep
+from vex_core.base_env import MESSAGE_SIZE
 from path_planner import PathPlanner
 
 # Forward declarations for get_game method
@@ -528,6 +529,20 @@ class PushBackGame(VexGame):
     # Abstract methods for variants
     # =========================================================================
     
+    def _get_random_start_position(self, robot: Robot, seed: Optional[int]) -> np.ndarray:
+        """Generate a random start position for a robot within its park zone."""
+        if seed is not None:
+            np.random.seed(seed)
+        
+        min_x = -FIELD_SIZE_INCHES / 2 + 12.0
+        max_x = FIELD_SIZE_INCHES / 2 - 12.0
+        min_y = -FIELD_SIZE_INCHES / 2 + 12.0
+        max_y = FIELD_SIZE_INCHES / 2 - 12.0
+
+        x = np.random.uniform(min_x, max_x)
+        y = np.random.uniform(min_y, max_y)
+
+        return np.array([x, y], dtype=np.float32)
 
     
     @abstractmethod
@@ -602,10 +617,11 @@ class PushBackGame(VexGame):
         """Create initial game state and store in self.state."""
         # Initialize agents from Robot objects
         agents_dict = {}
+
         for robot in self.robots:
             agents_dict[robot.name] = {
-                "position": robot.start_position.copy().astype(np.float32),
-                "orientation": np.array([robot.start_orientation], dtype=np.float32),
+                "position": robot.start_position.copy().astype(np.float32) if not randomize else self._get_random_start_position(robot, seed),
+                "orientation": np.array([robot.start_orientation], dtype=np.float32) if not randomize else np.array([np.random.uniform(-np.pi, np.pi)], dtype=np.float32),
                 # camera_rotation_offset is a scalar (radians) relative to robot body orientation
                 "camera_rotation_offset": float(getattr(robot, "camera_rotation_offset", 0.0)),
                 "team": robot.team.value,
@@ -639,7 +655,7 @@ class PushBackGame(VexGame):
         }
         return self.state
     
-    def get_observation(self, agent: str, game_time: float = 0.0) -> np.ndarray:
+    def get_game_observation(self, agent: str, game_time: float = 0.0) -> np.ndarray:
         """Build observation vector for an agent.
         
         Uses FOV-based partial observability: the agent can only see blocks
@@ -688,10 +704,7 @@ class PushBackGame(VexGame):
                 # FOV check: only include blocks within camera field of view
                 if dist > 0:
                     angle_to_block = np.arctan2(direction[1], direction[0])
-                    angle_diff = angle_to_block - camera_theta
-                    # Normalize to [-pi, pi]
-                    angle_diff = np.arctan2(np.sin(angle_diff), np.cos(angle_diff))
-                    if abs(angle_diff) > FOV / 2:
+                    if not self._within_fov(camera_theta, angle_to_block, FOV):
                         continue  # Block outside FOV — not visible
                 
                 block_info = (dist, block["position"][0], block["position"][1])
@@ -733,16 +746,9 @@ class PushBackGame(VexGame):
         # 8. Loaders cleared by this agent (4) - 0 or 1 each from inferred tracker
         obs_parts.extend([float(min(x, 1)) for x in agent_state.get("inferred_loaders_taken", [0, 0, 0, 0])])
         
-        # 9. Received messages (8 dims)
-        # Read from agent_state["received_messages"] if present, else zeros
-        msgs = agent_state.get("received_messages", np.zeros(8, dtype=np.float32))
-        if len(msgs) != 8:
-            msgs = np.zeros(8, dtype=np.float32)
-        obs_parts.extend([float(x) for x in msgs])
-        
         return np.array(obs_parts, dtype=np.float32)
     
-    def observation_space(self, agent: str) -> spaces.Space:
+    def get_game_observation_space(self, agent: str) -> spaces.Space:
         """Get observation space for an agent."""
         shape = self.get_observation_space_shape()
         
@@ -765,22 +771,17 @@ class PushBackGame(VexGame):
         # Opponent block positions: 15 * 2 = 30
         # Goals added by this agent: 4
         # Loaders cleared by this agent: 4
-        # Received messages: 8
-        # Total: 3 + 2 + 1 + 1 + 1 + 1 + 30 + 30 + 4 + 4 + 8 = 85
+        # Total: 3 + 2 + 1 + 1 + 1 + 1 + 30 + 30 + 4 + 4 = 77
         
-        return (ObsIndex.TOTAL,)
+        return (77,)
     
-    def action_space(self, agent: str) -> spaces.Space:
+    def get_game_action_space(self, agent: str) -> spaces.Space:
         """Get action space for an agent.
-
-        Action space shape is intentionally fixed regardless of communication mode.
-        When communication is disabled, the environment ignores the provided
-        message and writes zeros into emitted/received message channels.
+        
+        Returns purely the game's discrete action space. The environment
+        will wrap this with communication message space if enabled.
         """
-        return spaces.Tuple((
-            spaces.Discrete(self.num_actions),
-            spaces.Box(low=-1.0, high=1.0, shape=(8,), dtype=np.float32)
-        ))
+        return spaces.Discrete(self.num_actions)
 
     @staticmethod
     def get_action_space_shape() -> Tuple[int]:
@@ -1072,6 +1073,10 @@ class PushBackGame(VexGame):
     def _is_stochastic(self) -> bool:
         return not self.deterministic
 
+    def _within_fov(self, camera_angle: float, other_angle: float, fov: float) -> bool:
+        angle_diff = (float(other_angle) - float(camera_angle) + np.pi) % (2 * np.pi) - np.pi
+        return abs(angle_diff) <= float(fov) / 2.0
+
     def _visibility_probability(self, distance_inches: float) -> float:
         x = float(distance_inches)
         probability = 1.0 / (
@@ -1144,13 +1149,7 @@ class PushBackGame(VexGame):
                 
                 if dist > 0:
                     angle_to_block = np.arctan2(direction[1], direction[0])
-                    angle_diff = angle_to_block - camera_theta
-                    while angle_diff > np.pi:
-                        angle_diff -= 2 * np.pi
-                    while angle_diff < -np.pi:
-                        angle_diff += 2 * np.pi
-                    
-                    if abs(angle_diff) <= FOV / 2:
+                    if self._within_fov(camera_theta, angle_to_block, FOV):
                         if self._is_stochastic() and np.random.random() > self._visibility_probability(dist):
                             continue
                         if dist < min_dist:
@@ -1892,8 +1891,7 @@ class PushBackGame(VexGame):
                 if distance <= 1e-6 or distance > 72.0:
                     continue
                 angle_to_point = float(np.arctan2(to_point[1], to_point[0]))
-                angle_delta = float(np.arctan2(np.sin(angle_to_point - camera_theta), np.cos(angle_to_point - camera_theta)))
-                if abs(angle_delta) <= float(FOV) / 2.0:
+                if self._within_fov(camera_theta, angle_to_point, FOV):
                     max_probability = max(max_probability, float(self._visibility_probability(distance)))
 
             return float(np.clip(max_probability, 0.0, 1.0))

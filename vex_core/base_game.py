@@ -189,7 +189,7 @@ class VexGame(ABC):
         pass
     
     @abstractmethod
-    def get_observation(self, agent: str, game_time: float = 0.0) -> np.ndarray:
+    def get_game_observation(self, agent: str, game_time: float = 0.0) -> spaces.Space:
         """
         Build the observation vector for an agent.
         
@@ -217,12 +217,12 @@ class VexGame(ABC):
         pass
     
     @abstractmethod
-    def observation_space(self, agent: str) -> spaces.Space:
+    def get_game_observation_space(self, agent: str) -> spaces.Space:
         """Get the observation space for an agent."""
         pass
     
     @abstractmethod
-    def action_space(self, agent: str) -> spaces.Space:
+    def get_game_action_space(self, agent: str) -> spaces.Space:
         """Get the action space for an agent."""
         pass
     

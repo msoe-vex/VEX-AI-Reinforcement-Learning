@@ -18,6 +18,7 @@ from .base_game import VexGame, Robot, RobotSize, Team, ActionEvent, ActionStep
 
 DELTA_T = 0.1  # Discrete time step in seconds
 COMM_DELAY_TICKS = 4  # Message delivery delay in ticks (~0.375s, half of 0.75s RTT)
+MESSAGE_SIZE = 8  # Dimension of inter-agent communication message vector
 
 
 class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
@@ -77,11 +78,11 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         
         # Spaces from game
         self.observation_spaces = {
-            agent: game.observation_space(agent) 
+            agent: self.observation_space(agent) 
             for agent in self.possible_agents
         }
         self.action_spaces = {
-            agent: game.action_space(agent) 
+            agent: self.action_space(agent) 
             for agent in self.possible_agents
         }
         
@@ -134,12 +135,33 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
     @functools.lru_cache(maxsize=None)
     def observation_space(self, agent: str) -> spaces.Space:
         """Get observation space for an agent."""
-        return self.game.observation_space(agent)
+        game_space = self.game.get_game_observation_space(agent)
+        
+        if not self.enable_communication:
+            return game_space
+            
+        # Append MESSAGE_SIZE dimensions to the observation space
+        if isinstance(game_space, spaces.Box):
+            orig_shape = game_space.shape[0]
+            new_shape = (orig_shape + MESSAGE_SIZE,)
+            low = np.full(new_shape, -1e10, dtype=np.float32)
+            high = np.full(new_shape, 1e10, dtype=np.float32)
+            return spaces.Box(low=low, high=high, dtype=np.float32)
+        else:
+            raise ValueError(f"Expected Box observation space from game, got {type(game_space)}")
     
     @functools.lru_cache(maxsize=None)
     def action_space(self, agent: str) -> spaces.Space:
         """Get action space for an agent."""
-        return self.game.action_space(agent)
+        game_space = self.game.get_game_action_space(agent)
+        
+        if self.enable_communication:
+            return spaces.Tuple((
+                game_space,
+                spaces.Box(low=-1.0, high=1.0, shape=(MESSAGE_SIZE,), dtype=np.float32)
+            ))
+        else:
+            return game_space
     
     def reset(
         self, 
@@ -182,7 +204,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self._update_messages(list(self.agents))
         
         observations = {
-            agent: self.game.get_observation(agent, game_time=0.0)
+            agent: self._build_env_observation(agent, game_time=0.0)
             for agent in self.agents
         }
         infos = {agent: {} for agent in self.agents}
@@ -386,6 +408,23 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 agents_to_remove.add(agent)
         return terminations, agents_to_remove
 
+    def _build_env_observation(self, agent: str, game_time: float) -> np.ndarray:
+        """Builds the full environment observation for an agent.
+        
+        Delegates to the game for the core state observation, and if
+        communication is enabled, appends the received messages vector.
+        """
+        obs = self.game.get_game_observation(agent, game_time=game_time)
+        
+        if self.enable_communication:
+            agent_state = self.environment_state["agents"].get(agent, {})
+            msgs = agent_state.get("received_messages", np.zeros(MESSAGE_SIZE, dtype=np.float32))
+            if len(msgs) != MESSAGE_SIZE:
+                msgs = np.zeros(MESSAGE_SIZE, dtype=np.float32)
+            obs = np.concatenate([obs, msgs]).astype(np.float32)
+            
+        return obs
+
     def step(
         self, 
         actions: Dict[str, Any]
@@ -457,20 +496,20 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             # Store emitted message (or force zeros when communication is disabled)
             if self.enable_communication and emitted_msg is not None:
                 arr = np.array(emitted_msg, dtype=np.float32).ravel()
-                if arr.size != 8:
-                    if arr.size < 8:
-                        padded = np.zeros(8, dtype=np.float32)
+                if arr.size != MESSAGE_SIZE:
+                    if arr.size < MESSAGE_SIZE:
+                        padded = np.zeros(MESSAGE_SIZE, dtype=np.float32)
                         if arr.size > 0:
                             padded[: arr.size] = arr
                         arr = padded
                     else:
-                        arr = arr[:8].astype(np.float32)
+                        arr = arr[:MESSAGE_SIZE].astype(np.float32)
                 # Queue message for delayed delivery instead of immediate emit
                 current_tick = int(self.env_agent_states.get(agent, {}).get("tick", 0))
                 self._message_buffer[agent].append((current_tick + COMM_DELAY_TICKS, arr))
                 agent_state["emitted_message"] = arr  # Store latest for debugging
             else:
-                agent_state["emitted_message"] = np.zeros(8, dtype=np.float32)
+                agent_state["emitted_message"] = np.zeros(MESSAGE_SIZE, dtype=np.float32)
 
             # Build tick-based interpolation plan
             plan = []
@@ -647,13 +686,12 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         
         # Build strictly filtered observation dicts only for returning agents
         observations = {
-            agent: self.game.get_observation(
-                agent,
-                game_time=self._get_agent_time(agent)
+            agent: self._build_env_observation(
+                agent, game_time=self._get_agent_time(agent)
             )
             for agent in self.agents
         }
-        
+
         rewards_out = {agent: rewards.get(agent, 0.0) for agent in self.agents}
         terminations_out = {agent: terminations.get(agent, False) for agent in self.agents}
         truncations_out = {agent: False for agent in self.agents}
@@ -697,10 +735,10 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             self._message_buffer[agent] = [(t, m) for t, m in buf if t > current_tick]
             if ready:
                 # Use the most recent delivered message
-                self._last_delivered_messages[agent] = np.array(ready[-1], dtype=np.float32).ravel()[:8]
+                self._last_delivered_messages[agent] = np.array(ready[-1], dtype=np.float32).ravel()[:MESSAGE_SIZE]
 
         for agent in active_agents:
-            received_sum = np.zeros(8, dtype=np.float32)
+            received_sum = np.zeros(MESSAGE_SIZE, dtype=np.float32)
             count = 0
             
             for other in active_agents:
@@ -709,9 +747,9 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 
                 other_msg = self._last_delivered_messages.get(other)
                 if other_msg is not None and other_msg.size > 0:
-                    if other_msg.size != 8:
-                        msg = np.zeros(8, dtype=np.float32)
-                        msg[: min(8, other_msg.size)] = other_msg[:8]
+                    if other_msg.size != MESSAGE_SIZE:
+                        msg = np.zeros(MESSAGE_SIZE, dtype=np.float32)
+                        msg[: min(MESSAGE_SIZE, other_msg.size)] = other_msg[:MESSAGE_SIZE]
                     else:
                         msg = other_msg
                     received_sum += msg
@@ -837,12 +875,12 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                             if isinstance(action, (tuple, list)) and len(action) >= 2:
                                 msg = np.array(action[1], dtype=np.float32).ravel()
                                 if msg.size > 0:
-                                    if msg.size < 8:
-                                        padded = np.zeros(8, dtype=np.float32)
+                                    if msg.size < MESSAGE_SIZE:
+                                        padded = np.zeros(MESSAGE_SIZE, dtype=np.float32)
                                         padded[: msg.size] = msg
                                         msg = padded
-                                    elif msg.size > 8:
-                                        msg = msg[:8]
+                                    elif msg.size > MESSAGE_SIZE:
+                                        msg = msg[:MESSAGE_SIZE]
                                     msg_fmt = np.array2string(
                                         msg,
                                         precision=2,

@@ -23,9 +23,9 @@ class VexAISkillsGame(PushBackGame):
         if robots is None:
             robots = [
                 Robot(name="red_robot_0", team=Team.RED, size=RobotSize.INCH_24, length=15, width=15,
-                      start_position=np.array([60.0, 0.0], dtype=np.float32)),
+                      start_position=np.array([60.0, 0.0], dtype=np.float32), start_orientation=np.pi),
                 Robot(name="red_robot_1", team=Team.RED, size=RobotSize.INCH_15, length=15, width=15,
-                      start_position=np.array([-60.0, 0.0], dtype=np.float32)),
+                      start_position=np.array([-60.0, 0.0], dtype=np.float32), start_orientation=0),
             ]
         super().__init__(robots, enable_communication=enable_communication, deterministic=deterministic)
     

@@ -55,14 +55,25 @@ def main():
         default=True,
         help="Enable deterministic environment mechanics (use --no-deterministic for stochastic outcomes)"
     )
+    parser.add_argument(
+        "--communication",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable agent communication (use --communication to enable)"
+    )
     args = parser.parse_args()
     
     # Create game instance using factory method
-    game = PushBackGame.get_game(args.game, deterministic=args.deterministic)
+    game = PushBackGame.get_game(
+        args.game,
+        enable_communication=args.communication,
+        deterministic=args.deterministic,
+    )
     
     print(f"Testing VEX Push Back environment...")
     print(f"Game: {args.game}")
     print(f"Game class: {game.__class__.__name__}")
+    print(f"Communication: {args.communication}")
     
     # Create environment
     env = VexMultiAgentEnv(
@@ -70,6 +81,7 @@ def main():
         render_mode=args.render_mode if args.render_mode != "none" else None,
         output_directory=args.output_dir,
         randomize=not args.no_randomize,
+        enable_communication=args.communication,
         deterministic=args.deterministic,
     )
     
@@ -92,20 +104,22 @@ def main():
     done = False
     step_count = 0
     
-    while not done and step_count < args.steps:
-        # Random actions only for free (non-busy) agents
+    while not done and step_count < args.steps:        
+        # Sample random actions from action space
         actions = {agent: env.action_space(agent).sample() for agent in env.agents}
         
+        # Step the environment
         step_count += 1
         observations, rewards, terminations, truncations, infos = env.step(actions)
         done = terminations.get("__all__", False) or truncations.get("__all__", False)
+        if args.render_mode:
+            env.render()
     
-    if args.render_mode in ["image", "terminal"]:
-        print(
-            f"\nSimulation complete after {step_count} steps "
-            f"(env steps: {env.num_steps}, internal ticks: {env.num_ticks})."
-        )
-        print(f"Final score: {env.score}")
+    print(
+        f"\nSimulation complete after {step_count} steps "
+        f"(env steps: {env.num_steps}, internal ticks: {env.num_ticks})."
+    )
+    print(f"Final score: {env.score}")
     
     if args.render_mode == "image":
         env.createGIF()
