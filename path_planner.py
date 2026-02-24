@@ -201,10 +201,11 @@ class PathPlanner:
         # Define variable bounds
         x_lowerbound_ = [-exp(10)] * self.num_of_x_
         x_upperbound_ = [exp(10)] * self.num_of_x_
+        total_radius_norm = robot_radius_norm + buffer_radius_norm
 
         for i in range(self.indexes.px, self.indexes.py + self.num_steps):
-            x_lowerbound_[i] = 0 #+ self.robot_radius
-            x_upperbound_[i] = 1 #- self.robot_radius
+            x_lowerbound_[i] = total_radius_norm
+            x_upperbound_[i] = 1 - total_radius_norm
         for i in range(self.indexes.vx, self.indexes.vy + self.num_steps - 1):
             x_lowerbound_[i] = -max_velocity_norm
             x_upperbound_[i] = max_velocity_norm
@@ -297,7 +298,7 @@ class PathPlanner:
                 if obstacle.ignore_collision:
                     g_lowerbound_[g_index] = exp(-10)
                 else:
-                    g_lowerbound_[g_index] = (obstacle.radius + robot_radius_norm + buffer_radius_norm)**2
+                    g_lowerbound_[g_index] = (obstacle.radius + total_radius_norm)**2
                 g_upperbound_[g_index] = exp(10)
                 g_index += 1
 
@@ -551,7 +552,7 @@ class PathPlanner:
                         grid[y, x] = 1  # Mark as blocked (grid is [row=y, col=x])
         
         # Block any cell within robot radius of the field boundary
-        robot_radius_cells = int(robot_radius_norm * grid_size)
+        robot_radius_cells = int((robot_radius_norm + buffer_radius_norm) * grid_size)
         for i in range(grid_size):
             for j in range(grid_size):
                 if i < robot_radius_cells or i >= grid_size - robot_radius_cells or j < robot_radius_cells or j >= grid_size - robot_radius_cells:
@@ -597,7 +598,7 @@ class PathPlanner:
     def _is_normalized_point_valid_for_nlp(self, point_norm, obstacles, robot_radius_norm, buffer_radius_norm):
         px, py = float(point_norm[0]), float(point_norm[1])
 
-        total_radius_norm = robot_radius_norm + buffer_radius_norm + 1e-6  # Add small margin to ensure safety
+        total_radius_norm = robot_radius_norm + buffer_radius_norm
 
         # Keep robot center inside field with boundary margin.
         if px < total_radius_norm or px > 1.0 - total_radius_norm:
