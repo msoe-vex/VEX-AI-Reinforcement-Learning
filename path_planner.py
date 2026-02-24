@@ -899,11 +899,15 @@ if __name__ == "__main__":
             unsuccessful_trials += 1
             unsuccessful_solve_time += planner.solve_time
 
+            planner.print_trajectory_details(positions, velocities, dt, None)
+            planner.plotResults(positions, velocities, start_point, end_point, obstacles, robot=robot)
+            input()
+
         total_solve_time += planner.solve_time
 
-        planner.print_trajectory_details(positions, velocities, dt, None)
-        #planner.plotResults(positions, velocities, start_point, end_point, obstacles, robot=robot)
-        input()
+        # planner.print_trajectory_details(positions, velocities, dt, None)
+        # planner.plotResults(positions, velocities, start_point, end_point, obstacles, robot=robot)
+        # input()
 
     print(f"Average solve time (successful): {successful_solve_time / successful_trials:.3f} seconds" if successful_trials > 0 else "No successful trials")
     print(f"Average solve time (unsuccessful): {unsuccessful_solve_time / unsuccessful_trials:.3f} seconds" if unsuccessful_trials > 0 else "No unsuccessful trials")
