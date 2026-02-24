@@ -83,6 +83,8 @@ DEFAULT_DURATION = 0.5
 # Maximum blocks a robot can hold
 MAX_HELD_BLOCKS = 10
 
+SENTINEL_BLOCK_VALUE = -144.0
+
 
 # =============================================================================
 # Actions
@@ -726,18 +728,18 @@ class PushBackGame(VexGame):
         f_positions = []
         for i in range(min(len(friendly_blocks), MAX_TRACKED)):
             f_positions.extend([friendly_blocks[i][1], friendly_blocks[i][2]])
-        # Pad with -999 sentinel for empty slots (can't use -inf, breaks NN)
+        # Pad with SENTINEL_BLOCK_VALUE for empty slots (can't use -inf, breaks NN)
         while len(f_positions) < MAX_TRACKED * 2:
-            f_positions.extend([-999.0, -999.0])
+            f_positions.extend([SENTINEL_BLOCK_VALUE, SENTINEL_BLOCK_VALUE])
         obs_parts.extend(f_positions)
         
         # Add opponent block positions
         o_positions = []
         for i in range(min(len(opponent_blocks), MAX_TRACKED)):
             o_positions.extend([opponent_blocks[i][1], opponent_blocks[i][2]])
-        # Pad with -999 sentinel for empty slots (can't use -inf, breaks NN)
+        # Pad with SENTINEL_BLOCK_VALUE for empty slots (can't use -inf, breaks NN)
         while len(o_positions) < MAX_TRACKED * 2:
-            o_positions.extend([-999.0, -999.0])
+            o_positions.extend([SENTINEL_BLOCK_VALUE, SENTINEL_BLOCK_VALUE])
         obs_parts.extend(o_positions)
         
         # 7. Blocks added to each goal BY THIS AGENT (4) from inferred tracker

@@ -22,11 +22,32 @@ import sys
 import json
 
 TRAINING_PHASES = [
-    {"iterations": 10,  "train_encoder": True,  "train_action": True,  "train_message": True,  "lr": 0.0005,  "entropy": 0.05},
-    {"iterations": 30,  "train_encoder": False, "train_action": True,  "train_message": False, "lr": 0.0005,  "entropy": 0.05},
-    {"iterations": 30,  "train_encoder": False, "train_action": False, "train_message": True,  "lr": 0.0005,  "entropy": 0.05},
-    {"iterations": 30,  "train_encoder": False, "train_action": True,  "train_message": False, "lr": 0.0005,  "entropy": 0.05},
-    {"iterations": 30,  "train_encoder": False, "train_action": False, "train_message": True,  "lr": 0.0005,  "entropy": 0.05},
+    # Phase 1: BOOTSTRAP (The "Silent" Era)
+    # Goal: Learn basic robot movement and game mechanics without message noise.
+    {"iterations": 100,  "train_encoder": True,  "train_action": True,  "train_message": False, "lr": 0.0005,  "entropy": 0.05},
+
+    # Phase 2: TALK ONLY (The "Encoding" Era)
+    # Goal: Freeze the good behavior. Now, force the message head to explain 
+    # what the robot is doing/seeing.
+    {"iterations": 90,  "train_encoder": False, "train_action": False, "train_message": True,  "lr": 0.0005,  "entropy": 0.05},
+
+    # Fine tune
+    {"iterations": 10,  "train_encoder": True, "train_action": True,  "train_message": True, "lr": 0.00005,  "entropy": 0.005},
+
+    # Phase 3: LISTEN ONLY (The "Coordination" Era)
+    # Goal: Keep messages stable. Now, teach the robots to use those messages 
+    # to improve their existing policy.
+    {"iterations": 90,  "train_encoder": False, "train_action": True,  "train_message": False, "lr": 0.0005,  "entropy": 0.03},
+
+    # Fine tune
+    {"iterations": 10,  "train_encoder": True, "train_action": True,  "train_message": True, "lr": 0.00005,  "entropy": 0.005},
+
+    # Phase 4: CO-EVOLUTION (The "Bilingual" Era)
+    # Goal: Small tweaks to both heads to align the "language" with the "actions."
+    {"iterations": 100,  "train_encoder": False, "train_action": True,  "train_message": True,  "lr": 0.0001,  "entropy": 0.02},
+
+    # Phase 5: FINAL POLISH
+    # Goal: Train all heads to optimize the policy and communication.
     {"iterations": 100, "train_encoder": True,  "train_action": True,  "train_message": True,  "lr": 0.00005, "entropy": 0.005},
 ]
 
@@ -40,20 +61,21 @@ def get_training_phase(iteration, phases):
     return phases[-1]
 
 def apply_head_training_status_on_learner(learner, phase):
-    """Helper function to toggle requiring gradients for encoder, action and message heads on the Learner."""
+    """Helper function to set specific learning rates for encoder, action and message heads."""
     train_encoder = phase.get("train_encoder", True)
     train_action = phase.get("train_action", True)
     train_message = phase.get("train_message", True)
-    new_lr = phase.get("lr", 0.0005)
+    base_lr = phase.get("lr", 0.0005)
     new_entropy = phase.get("entropy", 0.05)
     
-    # 1. Update Learning Rate on all optimizers
-    if hasattr(learner, "_optimizers"):
-        for opt in learner._optimizers.values():
-            for param_group in opt.param_groups:
-                param_group['lr'] = new_lr
-                
-    # 2. Update Entropy coefficient
+    # Very small learning rate for "frozen" components to keep momentum alive but prevent large updates
+    frozen_lr = 1e-8 
+    
+    enc_lr = base_lr if train_encoder else frozen_lr
+    act_lr = base_lr if train_action else frozen_lr
+    msg_lr = base_lr if train_message else frozen_lr
+    
+    # Update Entropy coefficient
     if hasattr(learner, "entropy_coeff_schedule"):
         from ray.rllib.utils.schedules.constant_schedule import ConstantSchedule
         learner.entropy_coeff_schedule = ConstantSchedule(new_entropy, framework="torch")
@@ -67,28 +89,56 @@ def apply_head_training_status_on_learner(learner, phase):
             else:
                 setattr(learner, attr, new_entropy)
 
+    enc_params = set()
+    act_params = set()
+    msg_params = set()
+
     for module_id, module in learner.module.items():
         target_module = module.unwrapped() if hasattr(module, "unwrapped") else module
         
-        # Encoder
         if hasattr(target_module, "_encoder_net"):
-            for p in target_module._encoder_net.parameters():
-                p.requires_grad = train_encoder
-
-        # Heads
-        if hasattr(target_module, "pi") and hasattr(target_module, "message_head") and target_module.message_head is not None:
-            for p in target_module.pi.parameters():
-                p.requires_grad = train_action
-            for p in target_module.message_head.parameters():
-                p.requires_grad = train_message
-            for p in target_module.attention_unit.parameters():
-                p.requires_grad = train_message
-            target_module.msg_log_std.requires_grad = train_message
+            enc_params.update(target_module._encoder_net.parameters())
             
-        elif hasattr(target_module, "pi"):
-            # Communication disabled fallback - always train action head
-            for p in target_module.pi.parameters():
+        if hasattr(target_module, "pi"):
+            act_params.update(target_module.pi.parameters())
+            
+        if hasattr(target_module, "message_head") and target_module.message_head is not None:
+            msg_params.update(target_module.message_head.parameters())
+            msg_params.update(target_module.attention_unit.parameters())
+            msg_params.add(target_module.msg_log_std)
+
+    if hasattr(learner, "_optimizers"):
+        for opt in learner._optimizers.values():
+            all_params = []
+            for g in opt.param_groups:
+                all_params.extend(g['params'])
+            
+            new_groups = []
+            enc_group = {'params': [], 'lr': enc_lr}
+            act_group = {'params': [], 'lr': act_lr}
+            msg_group = {'params': [], 'lr': msg_lr}
+            other_group = {'params': [], 'lr': base_lr}
+            
+            for p in all_params:
                 p.requires_grad = True
+                if p in enc_params:
+                    enc_group['params'].append(p)
+                elif p in act_params:
+                    act_group['params'].append(p)
+                elif p in msg_params:
+                    msg_group['params'].append(p)
+                else:
+                    other_group['params'].append(p)
+                    
+            if opt.param_groups:
+                base_kwargs = {k: v for k, v in opt.param_groups[0].items() if k not in ('params', 'lr')}
+                
+                for g in [enc_group, act_group, msg_group, other_group]:
+                    if g['params']:
+                        g.update(base_kwargs)
+                        new_groups.append(g)
+                        
+                opt.param_groups = new_groups
 
 class VexScoreCallback(RLlibCallback):
     """Custom callback to track team scores at the end of each episode and toggle frozen layers."""
@@ -341,7 +391,7 @@ if __name__ == "__main__":
     if not configured_policy_ids:
         raise ValueError("No policies were produced by policy_mapping_fn.")
     print(f"Configured policy IDs: {configured_policy_ids}")
-    train_batch_size_per_learner = 2400
+    train_batch_size_per_learner = 4096
 
     # Set number of iterations manually according to phase list
     args.num_iters = sum(phase["iterations"] for phase in TRAINING_PHASES)
@@ -403,7 +453,7 @@ if __name__ == "__main__":
             lr=lr_config_value,
             gamma=args.discount_factor,
             entropy_coeff=entropy_config_value,
-            train_batch_size_per_learner=train_batch_size_per_learner,  # 4x episode length (~600) to ensure episodes complete
+            train_batch_size_per_learner=train_batch_size_per_learner,
         )
         .callbacks(VexScoreCallback)  # Track team scores
         .debugging(log_level="ERROR")  # Reduce logging verbosity
