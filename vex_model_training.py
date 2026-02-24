@@ -21,10 +21,66 @@ from vex_model_compile import compile_checkpoint_to_torchscript
 import sys
 import json
 
+ALTERNATE_HEAD_BLOCKS = [50, 50, 50, 50, 50, 50]  # Action, Message, Action, Message. Then BOTH train.
+
+def toggle_heads_on_learner(learner, iteration, blocks):
+    """Helper function to toggle requiring gradients for action and message heads based on the iteration block."""
+    
+    # Determine which phase we are in
+    current_phase_idx = 0
+    iters_accumulated = 0
+    for block_size in blocks:
+        if iteration < iters_accumulated + block_size:
+            break
+        iters_accumulated += block_size
+        current_phase_idx += 1
+        
+    for module_id, module in learner.module.items():
+        target_module = module.unwrapped() if hasattr(module, "unwrapped") else module
+        
+        if hasattr(target_module, "pi") and hasattr(target_module, "message_head") and target_module.message_head is not None:
+            if current_phase_idx >= len(blocks):
+                # If we've exhausted all blocks, train BOTH heads
+                train_action = True
+                train_message = True
+            else:
+                # Alternating logic: Even phases train Action, Odd phases train Message
+                train_action = (current_phase_idx % 2 == 0)
+                train_message = not train_action
+            
+            for p in target_module.pi.parameters():
+                p.requires_grad = train_action
+                
+            for p in target_module.message_head.parameters():
+                p.requires_grad = train_message
+            for p in target_module.attention_unit.parameters():
+                p.requires_grad = train_message
+            target_module.msg_log_std.requires_grad = train_message
+
+    return train_action, train_message
+
 
 class VexScoreCallback(RLlibCallback):
-    """Custom callback to track team scores at the end of each episode."""
+    """Custom callback to track team scores at the end of each episode and toggle frozen layers."""
     
+    def on_algorithm_init(self, *, algorithm, **kwargs):
+        """Called when a new algorithm instance has been created."""
+        try:
+            # We need to capture the status from the helper function
+            status = {"action": False, "message": False}
+            def init_wrapper(learner):
+                act, msg = toggle_heads_on_learner(learner, 0, ALTERNATE_HEAD_BLOCKS)
+                status["action"] = act
+                status["message"] = msg
+                
+            algorithm.learner_group.foreach_learner(init_wrapper)
+            
+            action_status = "TRAINING" if status["action"] else "FROZEN"
+            msg_status = "TRAINING" if status["message"] else "FROZEN"
+            print(f"  [Init] Alternating Heads: Action [{action_status}] | Message [{msg_status}]")
+        except getattr(Exception, "dummy", Exception):
+            pass
+
     def on_episode_end(self, *, episode, env_runner, metrics_logger, env, env_index, rl_module, **kwargs):
         """Called at the end of each episode to log team scores."""
         try:
@@ -43,7 +99,7 @@ class VexScoreCallback(RLlibCallback):
             pass  # Silently ignore errors
 
     def on_train_result(self, *, algorithm, metrics_logger, result, **kwargs):
-        """Called after each training iteration to print scores to stdout."""
+        """Called after each training iteration to print scores and toggle frozen layers."""
         env_runner_results = result.get("env_runners", {})
         episode_return = env_runner_results.get("episode_return_mean")
         iteration = result.get("training_iteration", 0)
@@ -55,6 +111,23 @@ class VexScoreCallback(RLlibCallback):
             print(f"[Iter {iteration}] Red Score Mean: {red_mean:.1f}, Blue Score Mean: {blue_mean:.1f}, Episode Return Mean: {episode_return:.1f}")
         elif episode_return is not None:
             print(f"[Iter {iteration}] Episode Return Mean: {episode_return:.1f}")
+            
+        # Toggle frozen heads
+        try:
+            status = {"action": False, "message": False}
+            def toggle_wrapper(learner):
+                act, msg = toggle_heads_on_learner(learner, iteration, ALTERNATE_HEAD_BLOCKS)
+                status["action"] = act
+                status["message"] = msg
+                
+            algorithm.learner_group.foreach_learner(toggle_wrapper)
+            
+            action_status = "TRAINING" if status["action"] else "FROZEN"
+            msg_status = "TRAINING" if status["message"] else "FROZEN"
+            print(f"  -> Alternating Heads: Action [{action_status}] | Message [{msg_status}]")
+        except getattr(Exception, "dummy", Exception):
+            pass
+            
         sys.stdout.flush()
 
 
