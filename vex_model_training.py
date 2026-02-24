@@ -35,6 +35,10 @@ def toggle_heads_on_learner(learner, iteration, blocks):
         iters_accumulated += block_size
         current_phase_idx += 1
         
+    # Default to training at least the action head
+    train_action = True
+    train_message = False
+        
     for module_id, module in learner.module.items():
         target_module = module.unwrapped() if hasattr(module, "unwrapped") else module
         
@@ -56,6 +60,13 @@ def toggle_heads_on_learner(learner, iteration, blocks):
             for p in target_module.attention_unit.parameters():
                 p.requires_grad = train_message
             target_module.msg_log_std.requires_grad = train_message
+            
+        elif hasattr(target_module, "pi"):
+            # If communication is disabled, just train the action head constantly
+            train_action = True
+            train_message = False
+            for p in target_module.pi.parameters():
+                p.requires_grad = train_action
 
     return train_action, train_message
 
