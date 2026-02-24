@@ -34,6 +34,12 @@ class VexAICompGame(PushBackGame):
     @property
     def total_time(self) -> float:
         return 120.0
+
+    def _can_park_in_zone(self, agent_state: Dict, park_zone_color: str) -> bool:
+        """VAISC2: Only 24" robot can park, and only in its alliance zone."""
+        if int(agent_state.get("robot_size", 0)) != 24:
+            return False
+        return park_zone_color == str(agent_state.get("team", "red"))
     
     def compute_score(self) -> Dict[str, int]:
         """
@@ -133,10 +139,10 @@ class VexAICompGame(PushBackGame):
                 if team_l == team_c and team_l in scores:
                     scores[team_l] += CONTROL_BONUS
 
-        # 3. Parked Robots (24" only)
+        # 3. Parked Robots (VAISC2: only 24" in alliance zone)
         for agent_name, agent_state in self.state["agents"].items():
             if agent_state.get("parked", False):
-                if agent_state.get("robot_size") == 24:  # RobotSize.INCH_24.value
+                if agent_state.get("robot_size") == 24 and agent_state.get("parked_zone") == agent_state.get("team"):
                     team = agent_state["team"]
                     if team in scores:
                         scores[team] += PARK_24

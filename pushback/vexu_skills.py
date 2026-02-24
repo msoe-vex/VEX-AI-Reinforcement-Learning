@@ -35,6 +35,10 @@ class VexUSkillsGame(PushBackGame):
     def get_team_for_agent(self, agent: str) -> str:
         """Skills is cooperative: all agents contribute to shared red score."""
         return "red"
+
+    def _can_park_in_zone(self, agent_state: Dict, park_zone_color: str) -> bool:
+        """VEX U Skills: only red zone parking is valid."""
+        return park_zone_color == "red"
     
     def compute_score(self) -> Dict[str, int]:
         """
@@ -99,9 +103,13 @@ class VexUSkillsGame(PushBackGame):
             if is_cleared:
                 score += CLEARED_PARK_ZONE
         
-        # Parked robots
-        parked_count = sum(1 for a in self.state["agents"].values() if a.get("parked", False))
-        score += parked_count * PARK_ROBOT
+        # Parked robots: only red-zone parking counts, and only one can score.
+        parked_red = sum(
+            1
+            for a in self.state["agents"].values()
+            if a.get("parked", False) and a.get("parked_zone") == "red"
+        )
+        score += (1 if parked_red > 0 else 0) * PARK_ROBOT
         
         return {"red": score}
     

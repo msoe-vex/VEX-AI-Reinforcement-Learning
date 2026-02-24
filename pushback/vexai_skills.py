@@ -18,12 +18,13 @@ class VexAISkillsGame(PushBackGame):
     """VEX AI Skills game variant."""
     
     def __init__(self, robots: list = None, enable_communication: bool = False, deterministic: bool = True):
-        # Default: 24" in blue park zone, 15" in red park zone (per VAIRS4)
+        # Default: both robots are on the cooperative team color (red).
+        # Start positions still follow VAIRS4 (24" in blue park zone, 15" in red park zone).
         if robots is None:
             robots = [
-                Robot(name="blue_robot_0", team=Team.BLUE, size=RobotSize.INCH_24, length=15, width=15,
+                Robot(name="red_robot_0", team=Team.RED, size=RobotSize.INCH_24, length=15, width=15,
                       start_position=np.array([60.0, 0.0], dtype=np.float32)),
-                Robot(name="red_robot_0", team=Team.RED, size=RobotSize.INCH_15, length=15, width=15,
+                Robot(name="red_robot_1", team=Team.RED, size=RobotSize.INCH_15, length=15, width=15,
                       start_position=np.array([-60.0, 0.0], dtype=np.float32)),
             ]
         super().__init__(robots, enable_communication=enable_communication, deterministic=deterministic)
@@ -35,6 +36,15 @@ class VexAISkillsGame(PushBackGame):
     def get_team_for_agent(self, agent: str) -> str:
         """Skills is cooperative: all agents contribute to shared red score."""
         return "red"
+
+    def _can_park_in_zone(self, agent_state: Dict, park_zone_color: str) -> bool:
+        """VAIRS parking: 24" -> red zone, 15" -> blue zone."""
+        size = int(agent_state.get("robot_size", 0))
+        if size == 24:
+            return park_zone_color == "red"
+        if size == 15:
+            return park_zone_color == "blue"
+        return False
     
     def compute_score(self) -> Dict[str, int]:
         """
@@ -105,8 +115,15 @@ class VexAISkillsGame(PushBackGame):
             if count == 6:
                 score += LOADER_FULL_BONUS
         
-        # 3. Parked Robots
-        parked_count = sum(1 for a in self.state["agents"].values() if a.get("parked", False))
+        # 3. Parked Robots (VAIRS rules)
+        parked_count = 0
+        for agent_state in self.state["agents"].values():
+            if not agent_state.get("parked", False):
+                continue
+            size = int(agent_state.get("robot_size", 0))
+            zone = agent_state.get("parked_zone")
+            if (size == 24 and zone == "red") or (size == 15 and zone == "blue"):
+                parked_count += 1
         score += parked_count * PARK_ROBOT
         
         return {"red": score}

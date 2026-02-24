@@ -109,24 +109,35 @@ def find_latest_checkpoint(experiment_directory: str):
     return max(checkpoint_dirs, key=checkpoint_sort_key)
 
 
-def apply_training_metadata_overrides(args, metadata):
-    """Override CLI args with values from training_metadata.json."""
+def apply_training_metadata_overrides(args, metadata, explicit_cli_flags):
+    """Override CLI args with values from training_metadata.json unless explicitly set via CLI."""
     metadata_to_arg = {
-        "game": "game",
-        "learning_rate": "learning_rate",
-        "learning_rate_final": "learning_rate_final",
-        "discount_factor": "discount_factor",
-        "entropy": "entropy",
-        "entropy_final": "entropy_final",
-        "randomize": "randomize",
-        "num_iters": "num_iters",
-        "enable_communication": "enable_communication",
-        "deterministic": "deterministic",
+        "game": ("game", ["--game"]),
+        "learning_rate": ("learning_rate", ["--learning-rate"]),
+        "learning_rate_final": ("learning_rate_final", ["--learning-rate-final"]),
+        "discount_factor": ("discount_factor", ["--discount-factor"]),
+        "entropy": ("entropy", ["--entropy"]),
+        "entropy_final": ("entropy_final", ["--entropy-final"]),
+        "randomize": ("randomize", ["--randomize", "--no-randomize"]),
+        "num_iters": ("num_iters", ["--num-iters"]),
+        "enable_communication": ("communication", ["--communication", "--no-communication"]),
+        "deterministic": ("deterministic", ["--deterministic", "--no-deterministic"]),
     }
 
-    for metadata_key, arg_name in metadata_to_arg.items():
-        if metadata_key in metadata:
+    for metadata_key, (arg_name, cli_flags) in metadata_to_arg.items():
+        if metadata_key in metadata and not any(flag in explicit_cli_flags for flag in cli_flags):
             setattr(args, arg_name, metadata[metadata_key])
+
+
+def get_explicit_cli_flags(raw_argv):
+    """Return set of explicitly provided long-form CLI flags from argv."""
+    explicit_flags = set()
+    for token in raw_argv:
+        if not token.startswith("--"):
+            continue
+        flag = token.split("=", 1)[0]
+        explicit_flags.add(flag)
+    return explicit_flags
 
 if __name__ == "__main__":
     # Suppress excessive experiment checkpoint warnings completely
@@ -165,6 +176,7 @@ if __name__ == "__main__":
     parser.add_argument('--deterministic', action=argparse.BooleanOptionalAction, default=True,
                         help='Enable deterministic environment mechanics (use --no-deterministic for stochastic outcomes)')
 
+    explicit_cli_flags = get_explicit_cli_flags(sys.argv[1:])
     args = parser.parse_args()
 
     restore_path = None
@@ -176,7 +188,7 @@ if __name__ == "__main__":
         if os.path.exists(metadata_path):
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
-            apply_training_metadata_overrides(args, metadata)
+            apply_training_metadata_overrides(args, metadata, explicit_cli_flags)
             print(f"Loaded and applied metadata overrides from: {metadata_path}")
         else:
             print(f"Warning: No training metadata found at {metadata_path}; using CLI/default parameters.")
@@ -226,7 +238,11 @@ if __name__ == "__main__":
     num_gpus_available = int(ray.available_resources().get("GPU", 0))
     print(f"GPUs detected by Ray: {num_gpus_available}")
 
-    all_policies = temp_env.possible_agents
+    all_agents = temp_env.possible_agents
+    configured_policy_ids = sorted({policy_mapping_fn(agent_id, None) for agent_id in all_agents})
+    if not configured_policy_ids:
+        raise ValueError("No policies were produced by policy_mapping_fn.")
+    print(f"Configured policy IDs: {configured_policy_ids}")
     train_batch_size_per_learner = 2400
 
     # Optional schedules for lr and entropy over estimated total timesteps.
@@ -296,9 +312,9 @@ if __name__ == "__main__":
             rollout_fragment_length="auto",  # Let RLlib calculate the optimal fragment length
         )
         .multi_agent(
-            policies=set(all_policies),  # Define policy IDs
+            policies=set(configured_policy_ids),  # Define policy IDs from mapping function
             policy_mapping_fn=policy_mapping_fn,
-            policies_to_train=list(all_policies),
+            policies_to_train=list(configured_policy_ids),
         )
         .rl_module(
             rl_module_spec=RLModuleSpec(
@@ -402,7 +418,12 @@ if __name__ == "__main__":
 
     # Use the best checkpoint directly from the analysis
     best_checkpoint = analysis.best_checkpoint
-    best_checkpoint_path = best_checkpoint.path
+    best_checkpoint_path = best_checkpoint.path if best_checkpoint is not None else find_latest_checkpoint(experiment_dir)
+    if best_checkpoint_path is None:
+        raise RuntimeError(
+            f"No checkpoint was found in {experiment_dir}. "
+            "Check checkpoint settings or trial logs before compilation."
+        )
     
     print(f"Saving results to: {experiment_dir}")
 

@@ -926,8 +926,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             
             start_pos, end_pos = movement
             agent_state = self.environment_state["agents"][agent]
-            team = self.game.get_team_for_agent(agent)
-            color = 'red' if team == 'red' else 'blue'
+            robot_color_team = str(agent_state.get("team", "red"))
+            color = 'red' if robot_color_team == 'red' else 'blue'
             
             try:
                 # Get robot for this agent via direct lookup
@@ -972,8 +972,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         # Draw robots on field
         for i, agent in enumerate(self.possible_agents):
             st = self.environment_state["agents"][agent]
-            team = self.game.get_team_for_agent(agent)
-            robot_color = 'red' if team == 'red' else 'blue'
+            robot_color_team = str(st.get("team", "red"))
+            robot_color = 'red' if robot_color_team == 'red' else 'blue'
             
             x, y = st["position"][0], st["position"][1]
             theta = st["orientation"][0]
