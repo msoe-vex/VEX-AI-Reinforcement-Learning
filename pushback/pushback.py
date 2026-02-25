@@ -628,7 +628,8 @@ class PushBackGame(VexGame):
                 "camera_rotation_offset": float(getattr(robot, "camera_rotation_offset", 0.0)),
                 "team": robot.team.value,
                 "robot_size": robot.size.value,
-                "inferred_held_blocks": 0,
+                "inferred_held_friendly": 0,
+                "inferred_held_opponent": 0,
                 "inferred_parked": False,
                 "parked": False,
                 "parked_zone": None,
@@ -648,7 +649,10 @@ class PushBackGame(VexGame):
             if block.get("held_by"):
                 agent_name = block["held_by"]
                 if agent_name in agents_dict:
-                    agents_dict[agent_name]["inferred_held_blocks"] += 1
+                    if block.get("team") == agents_dict[agent_name]["team"]:
+                        agents_dict[agent_name]["inferred_held_friendly"] += 1
+                    else:
+                        agents_dict[agent_name]["inferred_held_opponent"] += 1
         
         self.state = {
             "agents": agents_dict,
@@ -674,8 +678,8 @@ class PushBackGame(VexGame):
         obs_parts.append(float(agent_state["orientation"][0]))
         
         # 2. Held blocks by color from inferred tracker
-        obs_parts.append(float(agent_state.get("inferred_held_blocks", 0)))
-        obs_parts.append(0.0)
+        obs_parts.append(float(agent_state.get("inferred_held_friendly", 0)))
+        obs_parts.append(float(agent_state.get("inferred_held_opponent", 0)))
         
         # 3. Self parked status (1) from inferred tracker
         # TODO: Add a new observation that says if robot is 15 or 24 size to help shared policy learn where to park
@@ -897,8 +901,10 @@ class PushBackGame(VexGame):
         agent_state = self.state["agents"][agent]
 
         # Ensure inferred keys exist
-        if "inferred_held_blocks" not in agent_state:
-            agent_state["inferred_held_blocks"] = 0
+        if "inferred_held_friendly" not in agent_state:
+            agent_state["inferred_held_friendly"] = 0
+        if "inferred_held_opponent" not in agent_state:
+            agent_state["inferred_held_opponent"] = 0
         if "inferred_parked" not in agent_state:
             agent_state["inferred_parked"] = False
         if "inferred_goals_added" not in agent_state:
@@ -918,10 +924,12 @@ class PushBackGame(VexGame):
 
         if action_enum in (Actions.PICK_UP_FRIENDLY_BLOCK, Actions.PICK_UP_OPPONENT_BLOCK):
             # No direct held-block sensor: assume pickup succeeded and increment by 1.
-            agent_state["inferred_held_blocks"] = min(
-                MAX_HELD_BLOCKS,
-                int(agent_state.get("inferred_held_blocks", 0)) + 1,
-            )
+            total_held = int(agent_state.get("inferred_held_friendly", 0)) + int(agent_state.get("inferred_held_opponent", 0))
+            if total_held < MAX_HELD_BLOCKS:
+                if action_enum == Actions.PICK_UP_FRIENDLY_BLOCK:
+                    agent_state["inferred_held_friendly"] = int(agent_state.get("inferred_held_friendly", 0)) + 1
+                else:
+                    agent_state["inferred_held_opponent"] = int(agent_state.get("inferred_held_opponent", 0)) + 1
             return
 
         if action_enum in (
@@ -947,11 +955,11 @@ class PushBackGame(VexGame):
         if action_enum in scoring_map:
             inferred_goals = list(agent_state.get("inferred_goals_added", [0, 0, 0, 0]))
             goal_idx = scoring_map[action_enum]
-            inferred_held = max(0, int(agent_state.get("inferred_held_blocks", 0)))
-            inferred_goals[goal_idx] = int(inferred_goals[goal_idx]) + inferred_held
+            inferred_goals[goal_idx] = int(inferred_goals[goal_idx]) + max(0, int(agent_state.get("inferred_held_friendly", 0)))
             agent_state["inferred_goals_added"] = inferred_goals
             # Assumed model: scoring action transfers all currently held blocks.
-            agent_state["inferred_held_blocks"] = 0
+            agent_state["inferred_held_friendly"] = 0
+            agent_state["inferred_held_opponent"] = 0
             return
 
         if action_enum in (Actions.PARK_FRIENDLY, Actions.PARK_OPPONENT):
@@ -980,9 +988,10 @@ class PushBackGame(VexGame):
         agent_state = self.state["agents"][agent]
         
         # Held blocks (assumed tracker; robot has no direct held-block sensor)
-        inferred_held = float(agent_state.get("inferred_held_blocks", 0))
-        observation[ObsIndex.HELD_FRIENDLY] = inferred_held
-        observation[ObsIndex.HELD_OPPONENT] = 0.0
+        inferred_held_friendly = float(agent_state.get("inferred_held_friendly", 0))
+        inferred_held_opponent = float(agent_state.get("inferred_held_opponent", 0))
+        observation[ObsIndex.HELD_FRIENDLY] = inferred_held_friendly
+        observation[ObsIndex.HELD_OPPONENT] = inferred_held_opponent
         
         # Parked status
         observation[ObsIndex.PARKED] = 1.0 if agent_state.get("inferred_parked", False) else 0.0
