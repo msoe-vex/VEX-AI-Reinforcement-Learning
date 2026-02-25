@@ -348,7 +348,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--deterministic",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help="Enable deterministic environment mechanics (use --no-deterministic for stochastic outcomes)"
     )
     parser.add_argument(
