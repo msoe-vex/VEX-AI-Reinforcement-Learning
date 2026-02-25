@@ -696,13 +696,14 @@ class PushBackGame(VexGame):
         
         friendly_blocks = []
         opponent_blocks = []
+        visible_block_indices = []
         
         robot_pos = agent_state["position"]
         my_team = str(agent_state.get("team", "red"))
         camera_offset = float(agent_state.get("camera_rotation_offset", 0.0))
         camera_theta = float(agent_state["orientation"][0]) + camera_offset
         
-        for block in self.state["blocks"]:
+        for i, block in enumerate(self.state["blocks"]):
             if block["status"] == BlockStatus.ON_FIELD:
                 block_pos = block["position"]
                 direction = block_pos - robot_pos
@@ -713,13 +714,19 @@ class PushBackGame(VexGame):
                     angle_to_block = np.arctan2(direction[1], direction[0])
                     if not self._within_fov(camera_theta, angle_to_block, FOV):
                         continue  # Block outside FOV — not visible
+                        
+                    if self._is_stochastic() and np.random.random() > self._visibility_probability(dist):
+                        continue  # Block dropped out due to distance probability
                 
+                visible_block_indices.append(i)
                 block_info = (dist, block["position"][0], block["position"][1])
                 
                 if block.get("team") == my_team:
                     friendly_blocks.append(block_info)
                 else:
                     opponent_blocks.append(block_info)
+                    
+        agent_state["visible_block_indices"] = visible_block_indices
         
         # Sort by distance
         friendly_blocks.sort(key=lambda x: x[0])
@@ -1170,8 +1177,11 @@ class PushBackGame(VexGame):
         # Determine which team's blocks to pick up (actual game logic)
         pickup_team = target_team if target_team is not None else robot_team
         
-        # Find nearest block of the target team in FOV
-        for i, block in enumerate(self.state["blocks"]):
+        visible_indices = agent_state.get("visible_block_indices", [])
+        
+        # Find nearest block of the target team among observed blocks
+        for i in visible_indices:
+            block = self.state["blocks"][i]
             if block["status"] == BlockStatus.ON_FIELD:
                 if block.get("team") != pickup_team:
                     continue
@@ -1180,14 +1190,9 @@ class PushBackGame(VexGame):
                 direction = block_pos - robot_pos
                 dist = np.linalg.norm(direction)
                 
-                if dist > 0:
-                    angle_to_block = np.arctan2(direction[1], direction[0])
-                    if self._within_fov(camera_theta, angle_to_block, FOV):
-                        if self._is_stochastic() and np.random.random() > self._visibility_probability(dist):
-                            continue
-                        if dist < min_dist:
-                            min_dist = dist
-                            target_idx = i
+                if dist < min_dist:
+                    min_dist = dist
+                    target_idx = i
         
         penalty = 0.0
         

@@ -18,6 +18,7 @@ from pushback import PushBackGame
 from vex_custom_model import VexCustomPPO
 
 from vex_model_compile import compile_checkpoint_to_torchscript
+from vex_model_test import run_simulation
 import sys
 import json
 
@@ -545,3 +546,21 @@ if __name__ == "__main__":
 
     # Shutdown Ray
     ray.shutdown()
+    
+    # Run the test script automatically via imported function
+    print(f"Running automated testing for 1000 iterations...")
+    try:
+        run_simulation(
+            model_dir=experiment_dir,
+            game_name=args.game,
+            output_dir=experiment_dir,
+            iterations=1000,
+            export_gif=False,
+            render_mode="none",
+            deterministic=args.deterministic,
+            communication_override=args.communication
+        )
+        print("Automated testing complete.")
+    except Exception as e:
+        print(f"Automated testing failed: {e}")
+
