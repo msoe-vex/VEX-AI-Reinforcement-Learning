@@ -18,7 +18,7 @@ from .base_game import VexGame, Robot, RobotSize, Team, ActionEvent, ActionStep
 
 DELTA_T = 0.1  # Discrete time step in seconds
 COMM_DELAY_TICKS = 4  # Message delivery delay in ticks (~0.375s, half of 0.75s RTT)
-MESSAGE_SIZE = 8  # Dimension of inter-agent communication message vector
+MESSAGE_SIZE = 16  # Dimension of inter-agent communication message vector
 
 
 class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
