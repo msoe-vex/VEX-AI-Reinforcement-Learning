@@ -678,6 +678,7 @@ class PushBackGame(VexGame):
         obs_parts.append(0.0)
         
         # 3. Self parked status (1) from inferred tracker
+        # TODO: Add a new observation that says if robot is 15 or 24 size to help shared policy learn where to park
         obs_parts.append(1.0 if agent_state.get("inferred_parked", False) else 0.0)
         
         # 4. Time remaining (1)

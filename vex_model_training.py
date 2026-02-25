@@ -227,8 +227,8 @@ def env_creator(config=None):
 
 # Policy mapping function to assign agents to policies.
 def policy_mapping_fn(agent_id, episode):
-    # return "shared_policy" # Use the same policy for all agents
-    return agent_id # Change to agent_id if you want to use different policies for each agent
+    return "shared_policy" # Use the same policy for all agents
+    # return agent_id # Change to agent_id if you want to use different policies for each agent
 
 
 def find_latest_checkpoint(experiment_directory: str):

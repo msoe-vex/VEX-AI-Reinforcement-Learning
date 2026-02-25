@@ -106,6 +106,10 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         
         # Communication delay buffer: {agent: [(delivery_tick, message_vector), ...]}
         self._message_buffer: Dict[str, list] = {agent: [] for agent in self.possible_agents}
+        # Last delivered message cache per sender (persists until replaced)
+        self._last_delivered_messages: Dict[str, Optional[np.ndarray]] = {
+            agent: None for agent in self.possible_agents
+        }
         
         # Environment-managed agent states (Time, etc.)
         self.env_agent_states: Dict[str, Dict] = {}
@@ -175,6 +179,9 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self._agent_penalty_totals = {agent: 0.0 for agent in self.possible_agents}
         self.projected_positions = {}
         self._message_buffer = {agent: [] for agent in self.possible_agents}
+        self._last_delivered_messages = {
+            agent: None for agent in self.possible_agents
+        }
         
         # Reset game-specific state
         self.game.reset()
@@ -412,6 +419,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         if self.enable_communication:
             agent_state = self.environment_state["agents"].get(agent, {})
             msgs = agent_state.get("received_messages", np.zeros(MESSAGE_SIZE, dtype=np.float32))
+
             if len(msgs) != MESSAGE_SIZE:
                 msgs = np.zeros(MESSAGE_SIZE, dtype=np.float32)
             obs = np.concatenate([obs, msgs]).astype(np.float32)
@@ -719,6 +727,11 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             for agent in active_agents
         }
 
+        # Snapshot message buffers so we can both compute per-recipient deliveries
+        # and then purge any fully-delivered packets up to the max tick.
+        buffers_snapshot = {a: list(self._message_buffer.get(a, [])) for a in active_agents}
+        max_tick = max(ticks_map.values()) if ticks_map else 0
+
         # For each recipient, aggregate the most-recent ready message from each sender
         for recipient in active_agents:
             r_tick = ticks_map.get(recipient, 0)
@@ -729,39 +742,50 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 if sender == recipient:
                     continue
 
-                buf = self._message_buffer.get(sender, [])
+                buf = buffers_snapshot.get(sender, [])
+                # Messages are (delivery_tick, msg); pick those ready for THIS recipient
                 ready = [m for t, m in buf if t <= r_tick]
                 
                 if ready:
-                    # Use most recent ready message from this sender
                     other_msg = np.array(ready[-1], dtype=np.float32).ravel()[:MESSAGE_SIZE]
-                    if other_msg.size != MESSAGE_SIZE:
-                        msg = np.zeros(MESSAGE_SIZE, dtype=np.float32)
-                        msg[: min(MESSAGE_SIZE, other_msg.size)] = other_msg[:MESSAGE_SIZE]
+                else:
+                    # check if we have a last delivered message from this sender
+                    last_msg = self._last_delivered_messages.get(sender)
+                    if last_msg is not None:
+                        other_msg = last_msg
                     else:
-                        msg = other_msg
+                        continue
 
-                    received_sum += msg
-                    count += 1
+                if other_msg.size != MESSAGE_SIZE:
+                    msg = np.zeros(MESSAGE_SIZE, dtype=np.float32)
+                    msg[: min(MESSAGE_SIZE, other_msg.size)] = other_msg[:MESSAGE_SIZE]
+                else:
+                    msg = other_msg
+
+                received_sum += msg
+                count += 1
 
             if count > 0:
                 received_sum /= count
 
             self.environment_state["agents"][recipient]["received_messages"] = received_sum
 
-        # Purge any older messages, keeping only the most recently delivered per sender
-        max_tick = max(ticks_map.values()) if ticks_map else 0
+        # Purge any messages from the real buffers that have delivery_tick <= max_tick
         for sender in active_agents:
             buf = self._message_buffer.get(sender, [])
-            delivered = [(t, m) for (t, m) in buf if t <= max_tick]
-            pending = [(t, m) for (t, m) in buf if t > max_tick]
-            
-            new_buf = []
+            self._message_buffer[sender] = [(t, m) for (t, m) in buf if t > max_tick]
+            # Update last-delivered cache for diagnostics: most recent delivered up to max_tick
+            delivered = [m for (t, m) in buffers_snapshot.get(sender, []) if t <= max_tick]
             if delivered:
-                new_buf.append(delivered[-1])
-            new_buf.extend(pending)
-            
-            self._message_buffer[sender] = new_buf    
+                self._last_delivered_messages[sender] = np.array(delivered[-1], dtype=np.float32).ravel()[:MESSAGE_SIZE]
+            else:
+                # leave previous cache value if no new delivery; explicit None when no deliveries
+                if self._last_delivered_messages.get(sender) is None:
+                    self._last_delivered_messages[sender] = None
+
+
+
+    
     def _project_agent_next_position(self, agent: str) -> np.ndarray:
         """
         Project the position this agent is trying to reach on the next step.
