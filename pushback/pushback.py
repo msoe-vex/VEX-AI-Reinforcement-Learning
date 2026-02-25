@@ -1730,7 +1730,7 @@ class PushBackGame(VexGame):
                     block = self.state["blocks"][block_idx]
                     is_friendly = block.get("team") == robot_team
 
-                    if is_friendly:
+                    if True: # Score all blocks regardless of team  
                         score_success = (not self._is_stochastic()) or (np.random.random() < 0.90)
                         if score_success:
                             ejected_idx, _ = goal.add_block_from_nearest(block_idx, agent_state["position"])
