@@ -321,7 +321,7 @@ if __name__ == "__main__":
     parser.add_argument('--game', type=str, default="vexai_skills", help='Game variant to train')
     parser.add_argument('--communication', action=argparse.BooleanOptionalAction, default=True,
                         help='Enable or disable agent communication (use --no-communication to explicitly disable)')
-    parser.add_argument('--deterministic', action=argparse.BooleanOptionalAction, default=True,
+    parser.add_argument('--deterministic', action=argparse.BooleanOptionalAction, default=False,
                         help='Enable deterministic environment mechanics (use --no-deterministic for stochastic outcomes)')
 
     explicit_cli_flags = get_explicit_cli_flags(sys.argv[1:])

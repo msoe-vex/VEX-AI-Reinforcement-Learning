@@ -28,7 +28,7 @@ def main():
     parser.add_argument(
         "--steps",
         type=int,
-        default=100,
+        default=20,
         help="Number of steps to run"
     )
     parser.add_argument(
@@ -52,7 +52,7 @@ def main():
     parser.add_argument(
         "--deterministic",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help="Enable deterministic environment mechanics (use --no-deterministic for stochastic outcomes)"
     )
     parser.add_argument(

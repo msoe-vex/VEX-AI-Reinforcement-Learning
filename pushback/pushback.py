@@ -673,19 +673,17 @@ class PushBackGame(VexGame):
         obs_parts.append(float(agent_state["position"][1]))
         obs_parts.append(float(agent_state["orientation"][0]))
         
-        # 2. (Teammate info removed — available only via communication)
-        
-        # 3. Held blocks by color from inferred tracker
+        # 2. Held blocks by color from inferred tracker
         obs_parts.append(float(agent_state.get("inferred_held_blocks", 0)))
         obs_parts.append(0.0)
         
-        # 4. Self parked status (1) from inferred tracker
+        # 3. Self parked status (1) from inferred tracker
         obs_parts.append(1.0 if agent_state.get("inferred_parked", False) else 0.0)
         
-        # 5. Time remaining (1)
+        # 4. Time remaining (1)
         obs_parts.append(float(self.total_time - game_time))
         
-        # 6. Count and Position of blocks visible in FOV by color (friendly/opponent)
+        # 5. Count and Position of blocks visible in FOV by color (friendly/opponent)
         #    Partial observability: only blocks within camera FOV cone are visible
         MAX_TRACKED = 15
         
@@ -742,10 +740,10 @@ class PushBackGame(VexGame):
             o_positions.extend([SENTINEL_BLOCK_VALUE, SENTINEL_BLOCK_VALUE])
         obs_parts.extend(o_positions)
         
-        # 7. Blocks added to each goal BY THIS AGENT (4) from inferred tracker
+        # 6. Blocks added to each goal BY THIS AGENT (4) from inferred tracker
         obs_parts.extend([float(x) for x in agent_state.get("inferred_goals_added", [0, 0, 0, 0])])
         
-        # 8. Loaders cleared by this agent (4) - 0 or 1 each from inferred tracker
+        # 7. Loaders cleared by this agent (4) - 0 or 1 each from inferred tracker
         obs_parts.extend([float(min(x, 1)) for x in agent_state.get("inferred_loaders_taken", [0, 0, 0, 0])])
         
         return np.array(obs_parts, dtype=np.float32)
@@ -1080,10 +1078,17 @@ class PushBackGame(VexGame):
         return abs(angle_diff) <= float(fov) / 2.0
 
     def _visibility_probability(self, distance_inches: float) -> float:
+        # Probability function parameters can be tuned to adjust how visibility degrades with distance.
         x = float(distance_inches)
+
+        near_threshold = 12.0 # Too close, anything within this range will not be visible due to camera limitations
+        near_steepness = 1.0 # Controls how quickly visibility drops off as you approach the near threshold
+        half_distance = 48.0 # At this distance, visibility is 50%
+        half_steepness = 0.2 # Controls how quickly visibility drops off around the 50% distance
+
         probability = 1.0 / (
-            (1.0 + np.exp(-5.0 * (x - 12.0)))
-            * (1.0 + np.exp(0.1 * (x - 48.0)))
+            (1.0 + np.exp(-near_steepness * (x - near_threshold)))
+            * (1.0 + np.exp(-half_steepness * (x - half_distance)))
         )
         return float(np.clip(probability, 0.0, 1.0))
 
@@ -1662,12 +1667,12 @@ class PushBackGame(VexGame):
                             outcome = "success"
                         else:
                             roll = np.random.random()
-                            if roll < 0.65:
-                                outcome = "success"
-                            elif roll < 0.75:
-                                outcome = "ground"
+                            if roll < 0.90:
+                                outcome = "success" # 90% chance block is successfully picked up and held
+                            elif roll < 0.95:
+                                outcome = "ground" # 5% chance block is knocked to the ground near the loader
                             else:
-                                outcome = "stays"
+                                outcome = "stays" # 5% chance block stays in the loader (not picked up, no penalty)
                         
                         if outcome == "success":
                             b["status"] = BlockStatus.HELD
@@ -1756,6 +1761,11 @@ class PushBackGame(VexGame):
                 agent_state["orientation"] = np.array([target_angle], dtype=np.float32)
             
             # Unknown event types are ignored
+
+        # Update inferred_held_blocks to the actual number of held blocks
+        # REMOVE THIS IF ACTUAL HELD BLOCKS CAN'T be determined
+        actual_held = sum(1 for b in self.state["blocks"] if b["status"] == BlockStatus.HELD and b.get("held_by") == agent)
+        agent_state["inferred_held_blocks"] = actual_held
 
     def get_permanent_obstacles(self) -> List[Obstacle]:
         """Get permanent obstacles."""
