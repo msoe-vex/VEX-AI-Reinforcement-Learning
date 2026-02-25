@@ -331,10 +331,11 @@ class ObsIndex:
     OPPONENT_BLOCK_COUNT = 8
     FRIENDLY_BLOCKS_START = 9
     OPPONENT_BLOCKS_START = 39
-    GOALS_ADDED_START = 69
-    LOADERS_CLEARED_START = 73
-    RECEIVED_MSG_START = 77
-    TOTAL = 85
+    FRIENDLY_GOALS_ADDED_START = 69
+    OPPONENT_GOALS_ADDED_START = 73
+    LOADERS_CLEARED_START = 77
+    RECEIVED_MSG_START = 81
+    TOTAL = 89
 
 
 # =============================================================================
@@ -637,7 +638,8 @@ class PushBackGame(VexGame):
                 "active": True,
                 "agent_name": robot.name,
                 "current_action": None,
-                "inferred_goals_added": [0, 0, 0, 0],
+                "inferred_friendly_goals_added": [0, 0, 0, 0],
+                "inferred_opponent_goals_added": [0, 0, 0, 0],
                 "inferred_loaders_taken": [0, 0, 0, 0],
             }
         
@@ -745,8 +747,9 @@ class PushBackGame(VexGame):
             o_positions.extend([SENTINEL_BLOCK_VALUE, SENTINEL_BLOCK_VALUE])
         obs_parts.extend(o_positions)
         
-        # 6. Blocks added to each goal BY THIS AGENT (4) from inferred tracker
-        obs_parts.extend([float(x) for x in agent_state.get("inferred_goals_added", [0, 0, 0, 0])])
+        # 6. Blocks added to each goal BY THIS AGENT (8) from inferred tracker
+        obs_parts.extend([float(x) for x in agent_state.get("inferred_friendly_goals_added", [0, 0, 0, 0])])
+        obs_parts.extend([float(x) for x in agent_state.get("inferred_opponent_goals_added", [0, 0, 0, 0])])
         
         # 7. Loaders cleared by this agent (4) - 0 or 1 each from inferred tracker
         obs_parts.extend([float(min(x, 1)) for x in agent_state.get("inferred_loaders_taken", [0, 0, 0, 0])])
@@ -774,11 +777,11 @@ class PushBackGame(VexGame):
         # Opponent blocks count in FOV: 1
         # Friendly block positions: 15 * 2 = 30
         # Opponent block positions: 15 * 2 = 30
-        # Goals added by this agent: 4
+        # Goals added by this agent: 8
         # Loaders cleared by this agent: 4
-        # Total: 3 + 2 + 1 + 1 + 1 + 1 + 30 + 30 + 4 + 4 = 77
+        # Total: 3 + 2 + 1 + 1 + 1 + 1 + 30 + 30 + 8 + 4 = 81
         
-        return (77,)
+        return (81,)
     
     def get_game_action_space(self, agent: str) -> spaces.Space:
         """Get action space for an agent.
@@ -907,8 +910,10 @@ class PushBackGame(VexGame):
             agent_state["inferred_held_opponent"] = 0
         if "inferred_parked" not in agent_state:
             agent_state["inferred_parked"] = False
-        if "inferred_goals_added" not in agent_state:
-            agent_state["inferred_goals_added"] = [0, 0, 0, 0]
+        if "inferred_friendly_goals_added" not in agent_state:
+            agent_state["inferred_friendly_goals_added"] = [0, 0, 0, 0]
+        if "inferred_opponent_goals_added" not in agent_state:
+            agent_state["inferred_opponent_goals_added"] = [0, 0, 0, 0]
         if "inferred_loaders_taken" not in agent_state:
             agent_state["inferred_loaders_taken"] = [0, 0, 0, 0]
 
@@ -953,10 +958,16 @@ class PushBackGame(VexGame):
             Actions.SCORE_IN_CENTER_LOWER: 3,
         }
         if action_enum in scoring_map:
-            inferred_goals = list(agent_state.get("inferred_goals_added", [0, 0, 0, 0]))
+            inferred_friendly_goals = list(agent_state.get("inferred_friendly_goals_added", [0, 0, 0, 0]))
+            inferred_opponent_goals = list(agent_state.get("inferred_opponent_goals_added", [0, 0, 0, 0]))
             goal_idx = scoring_map[action_enum]
-            inferred_goals[goal_idx] = int(inferred_goals[goal_idx]) + max(0, int(agent_state.get("inferred_held_friendly", 0)))
-            agent_state["inferred_goals_added"] = inferred_goals
+            
+            inferred_friendly_goals[goal_idx] = int(inferred_friendly_goals[goal_idx]) + max(0, int(agent_state.get("inferred_held_friendly", 0)))
+            agent_state["inferred_friendly_goals_added"] = inferred_friendly_goals
+            
+            inferred_opponent_goals[goal_idx] = int(inferred_opponent_goals[goal_idx]) + max(0, int(agent_state.get("inferred_held_opponent", 0)))
+            agent_state["inferred_opponent_goals_added"] = inferred_opponent_goals
+            
             # Assumed model: scoring action transfers all currently held blocks.
             agent_state["inferred_held_friendly"] = 0
             agent_state["inferred_held_opponent"] = 0
@@ -996,10 +1007,15 @@ class PushBackGame(VexGame):
         # Parked status
         observation[ObsIndex.PARKED] = 1.0 if agent_state.get("inferred_parked", False) else 0.0
         
-        # Goals added by this agent (4 goals)
-        goals_added = agent_state.get("inferred_goals_added", [0, 0, 0, 0])
-        for i, count in enumerate(goals_added):
-            observation[ObsIndex.GOALS_ADDED_START + i] = float(count)
+        # Friendly goals added by this agent (4 goals)
+        friendly_goals_added = agent_state.get("inferred_friendly_goals_added", [0, 0, 0, 0])
+        for i, count in enumerate(friendly_goals_added):
+            observation[ObsIndex.FRIENDLY_GOALS_ADDED_START + i] = float(count)
+
+        # Opponent goals added by this agent (4 goals)
+        opponent_goals_added = agent_state.get("inferred_opponent_goals_added", [0, 0, 0, 0])
+        for i, count in enumerate(opponent_goals_added):
+            observation[ObsIndex.OPPONENT_GOALS_ADDED_START + i] = float(count)
         
         # Loaders cleared by this agent (4 loaders)
         loaders_taken = agent_state.get("inferred_loaders_taken", [0, 0, 0, 0])
