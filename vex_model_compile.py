@@ -50,11 +50,6 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
             enable_communication=config.get("enable_communication", enable_communication)
         )
 
-    if not ray.is_initialized():
-        ray.init(ignore_reinit_error=True)
-
-    register_env("VEX_Multi_Agent_Env", env_creator)
-
     # Normalize the checkpoint URI to an absolute path (Ray may expect a file:// or absolute path)
     print(f"Loading checkpoint: {checkpoint_path}")
     if not os.path.isabs(checkpoint_path):
@@ -65,27 +60,63 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
         print(f"Checkpoint path does not exist: {checkpoint_path}")
         return
 
-    try:
-        algo = Algorithm.from_checkpoint(checkpoint_path)
-    except Exception as e:
-        # Provide clearer guidance for common URI errors
-        err_msg = str(e)
-        print(f"Error restoring algorithm: {err_msg}")
-        if "URI has empty scheme" in err_msg:
-            print("Retrying with file:// scheme...")
-            try:
-                algo = Algorithm.from_checkpoint(f"file://{checkpoint_path}")
-            except Exception as e2:
-                print(f"Retry failed: {e2}")
-                return
-        else:
-            return
+    temp_env = env_creator()
+    agent_id = temp_env.possible_agents[0]
+    obs_space = temp_env.observation_space(agent_id)
+    act_space = temp_env.action_space(agent_id)
 
-    for policy_id in algo.config.policies:
-        print(f"--- Exporting Policy: {policy_id} ---")
+    rl_module_path = os.path.join(checkpoint_path, "learner_group", "learner", "rl_module")
+    policies_to_export = []
+
+    if os.path.exists(rl_module_path) and os.path.isdir(rl_module_path):
+        print("Loading weights directly from RLModule state...")
+        policy_ids = [d for d in os.listdir(rl_module_path) if os.path.isdir(os.path.join(rl_module_path, d))]
         
-        rl_module = algo.get_module(policy_id)
-        rl_module.eval()
+        from ray.rllib.core.rl_module.rl_module import RLModule
+        for policy_id in policy_ids:
+            weights_path = os.path.join(rl_module_path, policy_id)
+            print(f"Found policy weights for: {policy_id}")
+            try:
+                rl_module = RLModule.from_checkpoint(weights_path)
+                rl_module.eval()
+                policies_to_export.append((policy_id, rl_module))
+            except Exception as e:
+                print(f"Failed to load weights for {policy_id}: {e}")
+
+    if not policies_to_export:
+        print("Falling back to full Algorithm loading (Requires Ray initialization)...")
+        
+        if not ray.is_initialized():
+            ray.init(ignore_reinit_error=True, include_dashboard=False)
+        register_env("VEX_Multi_Agent_Env", env_creator)
+        
+        try:
+            algo = Algorithm.from_checkpoint(checkpoint_path)
+        except Exception as e:
+            # Provide clearer guidance for common URI errors
+            err_msg = str(e)
+            print(f"Error restoring algorithm: {err_msg}")
+            if "URI has empty scheme" in err_msg:
+                print("Retrying with file:// scheme...")
+                try:
+                    algo = Algorithm.from_checkpoint(f"file://{checkpoint_path}")
+                except Exception as e2:
+                    print(f"Retry failed: {e2}")
+                    return
+            else:
+                return
+
+        policy_ids = algo.config.policies if hasattr(algo.config, 'policies') else ["shared_policy"]
+        for policy_id in policy_ids:
+            try:
+                rmod = algo.get_module(policy_id)
+                rmod.eval()
+                policies_to_export.append((policy_id, rmod))
+            except Exception as e:
+                print(f"Could not load module for {policy_id}: {e}")
+
+    for policy_id, rl_module in policies_to_export:
+        print(f"--- Exporting Policy: {policy_id} ---")
         
         if hasattr(rl_module, 'clean_encoder'):
             clean_encoder = rl_module.clean_encoder
@@ -105,7 +136,7 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
                     self.msg_head = msg_head
                     self.msg_log_std = msg_log_std
 
-                def forward(self, feats):
+                def forward(self, feats: torch.Tensor) -> torch.Tensor:
                     logits = self.pi(feats)
                     if (self.msg_head is None) or (self.msg_log_std is None):
                         return logits
@@ -151,7 +182,7 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
             
             # Save using JIT SCRIPT (Best for C++)
             save_path = os.path.join(output_path, f"{policy_id}.pt")
-            obs_shape = game.observation_space(game.possible_agents[0]).shape
+            obs_shape = obs_space.shape
             dummy_obs = torch.randn(1, *obs_shape)
             
             try:
@@ -169,7 +200,8 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
         else:
             print("Could not find clean encoder in custom model.")
 
-    ray.shutdown()
+    if ray.is_initialized():
+        ray.shutdown()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

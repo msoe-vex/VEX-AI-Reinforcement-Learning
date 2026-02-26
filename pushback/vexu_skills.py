@@ -29,7 +29,7 @@ class VexUSkillsGame(PushBackGame):
         super().__init__(robots, enable_communication=enable_communication, deterministic=deterministic)
     
     @property
-    def total_time(self) -> float:
+    def default_total_time(self) -> float:
         return 60.0
 
     def get_team_for_agent(self, agent: str) -> str:

@@ -7,7 +7,8 @@ import csv
 from gymnasium import spaces
 
 # Import from new modular architecture
-from vex_core.base_env import VexMultiAgentEnv
+from vex_core.base_env import VexMultiAgentEnv, MESSAGE_SIZE
+from vex_core.config import VexEnvConfig
 from pushback import PushBackGame
 import json
 
@@ -64,28 +65,22 @@ def load_agent_models(model_dir, agents, device):
     return models
 
 def run_simulation(
-    model_dir,
-    game_name,
-    output_dir,
+    config: VexEnvConfig,
     iterations=1,
-    export_gif=True,
-    render_mode="image",
-    deterministic=True,
-    force_communication=None,
+    communication_override=None,
 ):
     """
     Loads trained models and runs one or more simulations in the VEX environment.
 
     Args:
-        model_dir (str): Path to the directory containing trained TorchScript models (.pt files).
-        game_name (str): Name of the game variant to use.
-        output_dir (str): Output directory for renders.
+        config (VexEnvConfig): Configuration object containing parameters.
         iterations (int): Number of episodes to run.
-        export_gif (bool): Whether to render frames and export GIF(s).
-        render_mode (str): Mode for rendering: 'terminal', 'image', or 'none'.
-        deterministic (bool): Whether to run deterministic environment mechanics.
-        force_communication (bool | None): If set, overrides metadata communication setting.
+        communication_override (bool): Override for communication setting.
     """
+    model_dir = config.experiment_path
+    output_dir = config.experiment_path
+    render_mode = config.render_mode
+    
     if not os.path.exists(model_dir):
         print(f"Error: Model directory not found at {model_dir}")
         return
@@ -94,8 +89,8 @@ def run_simulation(
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
 
-    # Try to read enable_communication from metadata
-    enable_communication = True
+    # Read enable_communication from metadata
+    enable_communication = False
     metadata_path = os.path.join(model_dir, "training_metadata.json")
     if os.path.exists(metadata_path):
         try:
@@ -106,24 +101,22 @@ def run_simulation(
         except Exception as e:
             print(f"Warning: Could not read enable_communication from metadata: {e}")
 
-    if force_communication is not None:
-        enable_communication = force_communication
-        print(f"Overriding communication via CLI: enable_communication={enable_communication}")
+    if communication_override is not None:
+        print(f"Overridden enable_communication={enable_communication} from arguments")
+        enable_communication = communication_override
+
+    config.enable_communication = enable_communication
 
     # Initialize the game/environment with matching communication configuration
     game = PushBackGame.get_game(
-        game_name,
-        enable_communication=enable_communication,
-        deterministic=deterministic,
+        config.game_name,
+        enable_communication=config.enable_communication,
+        deterministic=config.deterministic,
     )
     
     env = VexMultiAgentEnv(
         game=game,
-        render_mode=render_mode,
-        output_directory=output_dir,
-        randomize=False,
-        enable_communication=enable_communication,
-        deterministic=deterministic,
+        config=config,
     )
     
     # Load models for each agent
@@ -158,7 +151,7 @@ def run_simulation(
         print(f"\nRunning simulation iteration {iteration}/{iterations}...")
         observations, infos = env.reset()
 
-        if export_gif:
+        if render_mode == "image":
             env.clearTicksDirectory()
             env.render()  # Initial render
 
@@ -196,24 +189,20 @@ def run_simulation(
                     action_logits = model_output[:, :num_actions]
                     message_params = model_output[:, num_actions:]
 
-                    if message_params.numel() == 0:
-                        if render_mode in ["terminal", "image"]:
-                            print(f"Warning: model for {agent_id} returned no message params (output shape={model_output.shape}). Using zero message vector.")
-                        message_mean = torch.zeros(1, 8, device=model_output.device)
+                    message_vector = None
+                    remaining = model_output.shape[1] - num_actions
+                    if not communication_override: # If communication is disabled, set message vector to zeros
+                        message_vector = np.zeros(MESSAGE_SIZE, dtype=np.float32)
+                    elif remaining >= MESSAGE_SIZE:
+                        message_mean = model_output[:, num_actions:num_actions + MESSAGE_SIZE]
+                        message_vector = message_mean.cpu().numpy()[0]
+                    elif remaining > 0:
+                        mm = np.zeros(MESSAGE_SIZE, dtype=np.float32)
+                        mm[:remaining] = model_output[:, num_actions:].cpu().numpy()[0]
+                        message_vector = mm
                     else:
-                        if message_params.shape[1] < 8:
-                            mm = torch.zeros(1, 8, device=model_output.device)
-                            mm[:, : message_params.shape[1]] = message_params[:, :8]
-                            message_mean = mm
-                        else:
-                            message_mean = message_params[:, :8]
-
-                    message_vector = message_mean.cpu().numpy()[0]
-                    if not enable_communication:
-                        message_vector = np.zeros_like(message_vector)
+                        message_vector = np.zeros(MESSAGE_SIZE, dtype=np.float32)
                 else:
-                    # In case a communication-enabled model is loaded into a non-communication
-                    # action space, only keep the discrete action logits expected by env.
                     num_actions = action_space.n
                     action_logits = model_output[:, :num_actions]
                     message_vector = None
@@ -290,7 +279,7 @@ def run_simulation(
                 }
             )
 
-        if export_gif:
+        if render_mode == "image":
             print("Creating GIF of the simulation...")
             env.createGIF()
 
@@ -320,23 +309,14 @@ def run_simulation(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run VEX environment simulation with trained models.")
-    parser.add_argument(
-        "--experiment-path",
-        type=str,
-        required=True,
-        help="Path to the experiment directory containing trained TorchScript models (.pt files)."
-    )
-    parser.add_argument(
-        "--game",
-        type=str,
-        default=None,
-        help="Game variant (if not provided, reads from training_metadata.json in model directory)"
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="vex_model_test",
-        help="Output directory for renders"
+    VexEnvConfig.add_cli_args(
+        parser,
+        game=None,
+        render_mode="image",
+        experiment_path=None,
+        randomize=False,
+        communication=None,
+        deterministic=False
     )
     parser.add_argument(
         "--iterations",
@@ -344,52 +324,28 @@ if __name__ == "__main__":
         default=1,
         help="Number of simulation iterations to run"
     )
-    parser.add_argument(
-        "--render-mode",
-        type=str,
-        choices=["terminal", "image", "none"],
-        default="image",
-        help="Rendering mode: 'image' (saves frames & GIF), 'terminal' (prints text only), 'none' (silent)"
-    )
-    parser.add_argument(
-        "--deterministic",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Enable deterministic environment mechanics (use --no-deterministic for stochastic outcomes)"
-    )
-    parser.add_argument(
-        "--communication",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Override communication setting from metadata (use --communication or --no-communication)"
-    )
     
     args = parser.parse_args()
+    config = VexEnvConfig.from_args(args)
     
     # Try to read game from metadata if not provided
-    game_name = args.game
-    if game_name is None:
+    if config.game_name is None:
         # Look for metadata in the model directory
-        metadata_path = os.path.join(args.experiment_path, "training_metadata.json")
+        metadata_path = os.path.join(config.experiment_path, "training_metadata.json")
         if os.path.exists(metadata_path):
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
-                game_name = metadata.get("game", "vexai_skills")
-            print(f"Read game variant from metadata: {game_name}")
+                config.game_name = metadata.get("game", "vexai_skills")
+            print(f"Read game variant from metadata: {config.game_name}")
         else:
-            game_name = "vexai_skills"
-            print(f"No metadata found, using default game: {game_name}")
+            config.game_name = "vexai_skills"
+            print(f"No metadata found, using default game: {config.game_name}")
     
     if args.iterations < 1:
         raise ValueError("--iterations must be at least 1")
 
     run_simulation(
-        args.experiment_path,
-        game_name,
-        args.output_dir,
+        config=config,
         iterations=args.iterations,
-        export_gif = args.render_mode == "image",
-        render_mode = args.render_mode if args.render_mode != "none" else None,
-        deterministic=args.deterministic,
-        force_communication=args.communication,
+        communication_override=args.communication if hasattr(args, "communication") else None,
     )

@@ -3,6 +3,7 @@ import numpy as np
 
 # Import from new modular architecture
 from vex_core.base_game import VexGame
+from vex_core.base_env import MESSAGE_SIZE
 from typing import Dict
 
 class VexModelRunner:
@@ -74,12 +75,12 @@ class VexModelRunner:
             action_dim = model_output.shape[1]
         action_logits = model_output[:, :action_dim]
         
-        # Extract message vector (8 dims) if present after action logits
+        # Extract message vector (MESSAGE_SIZE dims) if present after action logits
         message_vector = None
         remaining = model_output.shape[1] - action_dim
-        if remaining >= 8:
-            # Message mean is the first 8 values after action logits
-            message_vector = model_output[:, action_dim:action_dim + 8].cpu().numpy()[0]
+        if remaining >= MESSAGE_SIZE:
+            # Message mean is the first MESSAGE_SIZE values after action logits
+            message_vector = model_output[:, action_dim:action_dim + MESSAGE_SIZE].cpu().numpy()[0]
         
         # Use stochastic sampling like RLlib does during training
         # The model outputs logits; convert to probabilities and sample

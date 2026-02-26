@@ -22,6 +22,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from vex_core.base_game import Robot, VexGame, ActionEvent, ActionStep
+from vex_core.base_env import MESSAGE_SIZE
 from path_planner import PathPlanner
 
 # Forward declarations for get_game method
@@ -81,6 +82,8 @@ DEFAULT_DURATION = 0.5
 
 # Maximum blocks a robot can hold
 MAX_HELD_BLOCKS = 10
+
+SENTINEL_BLOCK_VALUE = -144.0
 
 
 # =============================================================================
@@ -328,10 +331,11 @@ class ObsIndex:
     OPPONENT_BLOCK_COUNT = 8
     FRIENDLY_BLOCKS_START = 9
     OPPONENT_BLOCKS_START = 39
-    GOALS_ADDED_START = 69
-    LOADERS_CLEARED_START = 73
-    RECEIVED_MSG_START = 77
-    TOTAL = 85
+    FRIENDLY_GOALS_ADDED_START = 69
+    OPPONENT_GOALS_ADDED_START = 73
+    LOADERS_CLEARED_START = 77
+    RECEIVED_MSG_START = 81
+    TOTAL = 89
 
 
 # =============================================================================
@@ -528,6 +532,20 @@ class PushBackGame(VexGame):
     # Abstract methods for variants
     # =========================================================================
     
+    def _get_random_start_position(self, robot: Robot, seed: Optional[int]) -> np.ndarray:
+        """Generate a random start position for a robot within its park zone."""
+        if seed is not None:
+            np.random.seed(seed)
+        
+        min_x = -FIELD_SIZE_INCHES / 2 + 12.0
+        max_x = FIELD_SIZE_INCHES / 2 - 12.0
+        min_y = -FIELD_SIZE_INCHES / 2 + 12.0
+        max_y = FIELD_SIZE_INCHES / 2 - 12.0
+
+        x = np.random.uniform(min_x, max_x)
+        y = np.random.uniform(min_y, max_y)
+
+        return np.array([x, y], dtype=np.float32)
 
     
     @abstractmethod
@@ -565,9 +583,16 @@ class PushBackGame(VexGame):
         return game_class(enable_communication=enable_communication, deterministic=deterministic)
     
     @property
-    @abstractmethod
     def total_time(self) -> float:
         """Total game time in seconds."""
+        if getattr(self, '_randomized_time', None) is not None:
+            return self._randomized_time
+        return self.default_total_time
+    
+    @property
+    @abstractmethod
+    def default_total_time(self) -> float:
+        """Default total game time in seconds."""
         pass
     
     @property
@@ -600,17 +625,21 @@ class PushBackGame(VexGame):
         seed: Optional[int] = None
     ) -> Dict:
         """Create initial game state and store in self.state."""
+        self._randomized_time = np.random.uniform(self.default_total_time * 0.5, self.default_total_time * 1.5) if randomize else None
+        
         # Initialize agents from Robot objects
         agents_dict = {}
+
         for robot in self.robots:
             agents_dict[robot.name] = {
-                "position": robot.start_position.copy().astype(np.float32),
-                "orientation": np.array([robot.start_orientation], dtype=np.float32),
+                "position": robot.start_position.copy().astype(np.float32) if not randomize else self._get_random_start_position(robot, seed),
+                "orientation": np.array([robot.start_orientation], dtype=np.float32) if not randomize else np.array([np.random.uniform(-np.pi, np.pi)], dtype=np.float32),
                 # camera_rotation_offset is a scalar (radians) relative to robot body orientation
                 "camera_rotation_offset": float(getattr(robot, "camera_rotation_offset", 0.0)),
                 "team": robot.team.value,
                 "robot_size": robot.size.value,
-                "inferred_held_blocks": 0,
+                "inferred_held_friendly": 0,
+                "inferred_held_opponent": 0,
                 "inferred_parked": False,
                 "parked": False,
                 "parked_zone": None,
@@ -618,7 +647,8 @@ class PushBackGame(VexGame):
                 "active": True,
                 "agent_name": robot.name,
                 "current_action": None,
-                "inferred_goals_added": [0, 0, 0, 0],
+                "inferred_friendly_goals_added": [0, 0, 0, 0],
+                "inferred_opponent_goals_added": [0, 0, 0, 0],
                 "inferred_loaders_taken": [0, 0, 0, 0],
             }
         
@@ -630,7 +660,10 @@ class PushBackGame(VexGame):
             if block.get("held_by"):
                 agent_name = block["held_by"]
                 if agent_name in agents_dict:
-                    agents_dict[agent_name]["inferred_held_blocks"] += 1
+                    if block.get("team") == agents_dict[agent_name]["team"]:
+                        agents_dict[agent_name]["inferred_held_friendly"] += 1
+                    else:
+                        agents_dict[agent_name]["inferred_held_opponent"] += 1
         
         self.state = {
             "agents": agents_dict,
@@ -639,7 +672,7 @@ class PushBackGame(VexGame):
         }
         return self.state
     
-    def get_observation(self, agent: str, game_time: float = 0.0) -> np.ndarray:
+    def get_game_observation(self, agent: str, game_time: float = 0.0) -> np.ndarray:
         """Build observation vector for an agent.
         
         Uses FOV-based partial observability: the agent can only see blocks
@@ -655,31 +688,29 @@ class PushBackGame(VexGame):
         obs_parts.append(float(agent_state["position"][1]))
         obs_parts.append(float(agent_state["orientation"][0]))
         
-        # 2. (Teammate info removed — available only via communication)
+        # 2. Held blocks by color from inferred tracker
+        obs_parts.append(float(agent_state.get("inferred_held_friendly", 0)))
+        obs_parts.append(float(agent_state.get("inferred_held_opponent", 0)))
         
-        # 3. Held blocks by color from inferred tracker
-        obs_parts.append(float(agent_state.get("inferred_held_blocks", 0)))
-        obs_parts.append(0.0)
-        
-        # 4. Self parked status (1) from inferred tracker
+        # 3. Self parked status (1) from inferred tracker
+        # TODO: Add a new observation that says if robot is 15 or 24 size to help shared policy learn where to park
         obs_parts.append(1.0 if agent_state.get("inferred_parked", False) else 0.0)
         
-        # 5. Time remaining (1)
+        # 4. Time remaining (1)
         obs_parts.append(float(self.total_time - game_time))
         
-        # 6. Count and Position of blocks visible in FOV by color (friendly/opponent)
+        # 5. Count and Position of blocks visible in FOV by color (friendly/opponent)
         #    Partial observability: only blocks within camera FOV cone are visible
         MAX_TRACKED = 15
         
         friendly_blocks = []
         opponent_blocks = []
+        visible_block_indices = []
         
         robot_pos = agent_state["position"]
         my_team = str(agent_state.get("team", "red"))
-        camera_offset = float(agent_state.get("camera_rotation_offset", 0.0))
-        camera_theta = float(agent_state["orientation"][0]) + camera_offset
         
-        for block in self.state["blocks"]:
+        for i, block in enumerate(self.state["blocks"]):
             if block["status"] == BlockStatus.ON_FIELD:
                 block_pos = block["position"]
                 direction = block_pos - robot_pos
@@ -687,19 +718,22 @@ class PushBackGame(VexGame):
                 
                 # FOV check: only include blocks within camera field of view
                 if dist > 0:
-                    angle_to_block = np.arctan2(direction[1], direction[0])
-                    angle_diff = angle_to_block - camera_theta
-                    # Normalize to [-pi, pi]
-                    angle_diff = np.arctan2(np.sin(angle_diff), np.cos(angle_diff))
-                    if abs(angle_diff) > FOV / 2:
-                        continue  # Block outside FOV — not visible
+                    prob = self._visibility_probability(agent_state, block_pos)
+                    if prob == 0.0:
+                        continue  # Block outside FOV or too far
+                        
+                    if self._is_stochastic() and np.random.random() > prob:
+                        continue  # Block dropped out due to distance probability
                 
+                visible_block_indices.append(i)
                 block_info = (dist, block["position"][0], block["position"][1])
                 
                 if block.get("team") == my_team:
                     friendly_blocks.append(block_info)
                 else:
                     opponent_blocks.append(block_info)
+                    
+        agent_state["visible_block_indices"] = visible_block_indices
         
         # Sort by distance
         friendly_blocks.sort(key=lambda x: x[0])
@@ -713,36 +747,30 @@ class PushBackGame(VexGame):
         f_positions = []
         for i in range(min(len(friendly_blocks), MAX_TRACKED)):
             f_positions.extend([friendly_blocks[i][1], friendly_blocks[i][2]])
-        # Pad with -999 sentinel for empty slots (can't use -inf, breaks NN)
+        # Pad with SENTINEL_BLOCK_VALUE for empty slots (can't use -inf, breaks NN)
         while len(f_positions) < MAX_TRACKED * 2:
-            f_positions.extend([-999.0, -999.0])
+            f_positions.extend([SENTINEL_BLOCK_VALUE, SENTINEL_BLOCK_VALUE])
         obs_parts.extend(f_positions)
         
         # Add opponent block positions
         o_positions = []
         for i in range(min(len(opponent_blocks), MAX_TRACKED)):
             o_positions.extend([opponent_blocks[i][1], opponent_blocks[i][2]])
-        # Pad with -999 sentinel for empty slots (can't use -inf, breaks NN)
+        # Pad with SENTINEL_BLOCK_VALUE for empty slots (can't use -inf, breaks NN)
         while len(o_positions) < MAX_TRACKED * 2:
-            o_positions.extend([-999.0, -999.0])
+            o_positions.extend([SENTINEL_BLOCK_VALUE, SENTINEL_BLOCK_VALUE])
         obs_parts.extend(o_positions)
         
-        # 7. Blocks added to each goal BY THIS AGENT (4) from inferred tracker
-        obs_parts.extend([float(x) for x in agent_state.get("inferred_goals_added", [0, 0, 0, 0])])
+        # 6. Blocks added to each goal BY THIS AGENT (8) from inferred tracker
+        obs_parts.extend([float(x) for x in agent_state.get("inferred_friendly_goals_added", [0, 0, 0, 0])])
+        obs_parts.extend([float(x) for x in agent_state.get("inferred_opponent_goals_added", [0, 0, 0, 0])])
         
-        # 8. Loaders cleared by this agent (4) - 0 or 1 each from inferred tracker
+        # 7. Loaders cleared by this agent (4) - 0 or 1 each from inferred tracker
         obs_parts.extend([float(min(x, 1)) for x in agent_state.get("inferred_loaders_taken", [0, 0, 0, 0])])
-        
-        # 9. Received messages (8 dims)
-        # Read from agent_state["received_messages"] if present, else zeros
-        msgs = agent_state.get("received_messages", np.zeros(8, dtype=np.float32))
-        if len(msgs) != 8:
-            msgs = np.zeros(8, dtype=np.float32)
-        obs_parts.extend([float(x) for x in msgs])
         
         return np.array(obs_parts, dtype=np.float32)
     
-    def observation_space(self, agent: str) -> spaces.Space:
+    def get_game_observation_space(self, agent: str) -> spaces.Space:
         """Get observation space for an agent."""
         shape = self.get_observation_space_shape()
         
@@ -763,24 +791,19 @@ class PushBackGame(VexGame):
         # Opponent blocks count in FOV: 1
         # Friendly block positions: 15 * 2 = 30
         # Opponent block positions: 15 * 2 = 30
-        # Goals added by this agent: 4
+        # Goals added by this agent: 8
         # Loaders cleared by this agent: 4
-        # Received messages: 8
-        # Total: 3 + 2 + 1 + 1 + 1 + 1 + 30 + 30 + 4 + 4 + 8 = 85
+        # Total: 3 + 2 + 1 + 1 + 1 + 1 + 30 + 30 + 8 + 4 = 81
         
-        return (ObsIndex.TOTAL,)
+        return (81,)
     
-    def action_space(self, agent: str) -> spaces.Space:
+    def get_game_action_space(self, agent: str) -> spaces.Space:
         """Get action space for an agent.
-
-        Action space shape is intentionally fixed regardless of communication mode.
-        When communication is disabled, the environment ignores the provided
-        message and writes zeros into emitted/received message channels.
+        
+        Returns purely the game's discrete action space. The environment
+        will wrap this with communication message space if enabled.
         """
-        return spaces.Tuple((
-            spaces.Discrete(self.num_actions),
-            spaces.Box(low=-1.0, high=1.0, shape=(8,), dtype=np.float32)
-        ))
+        return spaces.Discrete(self.num_actions)
 
     @staticmethod
     def get_action_space_shape() -> Tuple[int]:
@@ -809,13 +832,7 @@ class PushBackGame(VexGame):
         agent_state = self.state["agents"][agent]
         start_pos = agent_state["position"].copy()
         start_orient = agent_state["orientation"].copy()
-        
-        # Any active non-park action unparks the robot
-        if action not in (Actions.IDLE.value, Actions.PARK_FRIENDLY.value, Actions.PARK_OPPONENT.value):
-            agent_state["inferred_parked"] = False
-            agent_state["parked"] = False
-            agent_state["parked_zone"] = None
-        
+
         # Default values
         penalty = 0.0
         steps = [ActionStep(
@@ -823,6 +840,17 @@ class PushBackGame(VexGame):
             target_pos=start_pos.copy(),
             target_orient=start_orient.copy(),
         )]
+        
+        penalty_for_unpark = 0.0
+        # Any active non-park action unparks the robot
+        if action not in (Actions.IDLE.value, Actions.PARK_FRIENDLY.value, Actions.PARK_OPPONENT.value):
+            # Give default penalty if was parked
+            if agent_state["parked"] or agent_state["inferred_parked"]:
+                penalty_for_unpark = DEFAULT_PENALTY
+            agent_state["inferred_parked"] = False
+            agent_state["parked"] = False
+            agent_state["parked_zone"] = None
+        
         
         if action == Actions.PICK_UP_FRIENDLY_BLOCK.value:
             steps, penalty = self._action_pickup_block(
@@ -862,15 +890,14 @@ class PushBackGame(VexGame):
                 agent_state, idx
             )
         
-        elif action == Actions.PARK_FRIENDLY.value:
+        elif action == Actions.PARK_FRIENDLY.value or action == Actions.PARK_OPPONENT.value:
+            robot_team = self.get_team_for_agent(agent_state["agent_name"])
+            opponent_team = "blue" if robot_team == "red" else "red"
+            zone = robot_team if action == Actions.PARK_FRIENDLY.value else opponent_team
             steps, penalty = self._action_park(
                 agent_state,
-                park_zone_color=self.get_team_for_agent(agent_state["agent_name"]),
+                park_zone_color=zone,
             )
-        elif action == Actions.PARK_OPPONENT.value:
-            robot_team = self.get_team_for_agent(agent_state["agent_name"])
-            opponent_zone = "blue" if robot_team == "red" else "red"
-            steps, penalty = self._action_park(agent_state, park_zone_color=opponent_zone)
         
         elif action == Actions.TURN_TOWARD_CENTER.value:
             steps, penalty = self._action_turn_toward_center(agent_state)
@@ -882,6 +909,8 @@ class PushBackGame(VexGame):
                 target_pos=start_pos.copy(),
                 target_orient=start_orient.copy(),
             )]
+                
+        penalty += penalty_for_unpark
         
         return steps, penalty
     
@@ -895,12 +924,16 @@ class PushBackGame(VexGame):
         agent_state = self.state["agents"][agent]
 
         # Ensure inferred keys exist
-        if "inferred_held_blocks" not in agent_state:
-            agent_state["inferred_held_blocks"] = 0
+        if "inferred_held_friendly" not in agent_state:
+            agent_state["inferred_held_friendly"] = 0
+        if "inferred_held_opponent" not in agent_state:
+            agent_state["inferred_held_opponent"] = 0
         if "inferred_parked" not in agent_state:
             agent_state["inferred_parked"] = False
-        if "inferred_goals_added" not in agent_state:
-            agent_state["inferred_goals_added"] = [0, 0, 0, 0]
+        if "inferred_friendly_goals_added" not in agent_state:
+            agent_state["inferred_friendly_goals_added"] = [0, 0, 0, 0]
+        if "inferred_opponent_goals_added" not in agent_state:
+            agent_state["inferred_opponent_goals_added"] = [0, 0, 0, 0]
         if "inferred_loaders_taken" not in agent_state:
             agent_state["inferred_loaders_taken"] = [0, 0, 0, 0]
 
@@ -916,10 +949,12 @@ class PushBackGame(VexGame):
 
         if action_enum in (Actions.PICK_UP_FRIENDLY_BLOCK, Actions.PICK_UP_OPPONENT_BLOCK):
             # No direct held-block sensor: assume pickup succeeded and increment by 1.
-            agent_state["inferred_held_blocks"] = min(
-                MAX_HELD_BLOCKS,
-                int(agent_state.get("inferred_held_blocks", 0)) + 1,
-            )
+            total_held = int(agent_state.get("inferred_held_friendly", 0)) + int(agent_state.get("inferred_held_opponent", 0))
+            if total_held < MAX_HELD_BLOCKS:
+                if action_enum == Actions.PICK_UP_FRIENDLY_BLOCK:
+                    agent_state["inferred_held_friendly"] = int(agent_state.get("inferred_held_friendly", 0)) + 1
+                else:
+                    agent_state["inferred_held_opponent"] = int(agent_state.get("inferred_held_opponent", 0)) + 1
             return
 
         if action_enum in (
@@ -943,13 +978,19 @@ class PushBackGame(VexGame):
             Actions.SCORE_IN_CENTER_LOWER: 3,
         }
         if action_enum in scoring_map:
-            inferred_goals = list(agent_state.get("inferred_goals_added", [0, 0, 0, 0]))
+            inferred_friendly_goals = list(agent_state.get("inferred_friendly_goals_added", [0, 0, 0, 0]))
+            inferred_opponent_goals = list(agent_state.get("inferred_opponent_goals_added", [0, 0, 0, 0]))
             goal_idx = scoring_map[action_enum]
-            inferred_held = max(0, int(agent_state.get("inferred_held_blocks", 0)))
-            inferred_goals[goal_idx] = int(inferred_goals[goal_idx]) + inferred_held
-            agent_state["inferred_goals_added"] = inferred_goals
+            
+            inferred_friendly_goals[goal_idx] = int(inferred_friendly_goals[goal_idx]) + max(0, int(agent_state.get("inferred_held_friendly", 0)))
+            agent_state["inferred_friendly_goals_added"] = inferred_friendly_goals
+            
+            inferred_opponent_goals[goal_idx] = int(inferred_opponent_goals[goal_idx]) + max(0, int(agent_state.get("inferred_held_opponent", 0)))
+            agent_state["inferred_opponent_goals_added"] = inferred_opponent_goals
+            
             # Assumed model: scoring action transfers all currently held blocks.
-            agent_state["inferred_held_blocks"] = 0
+            agent_state["inferred_held_friendly"] = 0
+            agent_state["inferred_held_opponent"] = 0
             return
 
         if action_enum in (Actions.PARK_FRIENDLY, Actions.PARK_OPPONENT):
@@ -978,17 +1019,23 @@ class PushBackGame(VexGame):
         agent_state = self.state["agents"][agent]
         
         # Held blocks (assumed tracker; robot has no direct held-block sensor)
-        inferred_held = float(agent_state.get("inferred_held_blocks", 0))
-        observation[ObsIndex.HELD_FRIENDLY] = inferred_held
-        observation[ObsIndex.HELD_OPPONENT] = 0.0
+        inferred_held_friendly = float(agent_state.get("inferred_held_friendly", 0))
+        inferred_held_opponent = float(agent_state.get("inferred_held_opponent", 0))
+        observation[ObsIndex.HELD_FRIENDLY] = inferred_held_friendly
+        observation[ObsIndex.HELD_OPPONENT] = inferred_held_opponent
         
         # Parked status
         observation[ObsIndex.PARKED] = 1.0 if agent_state.get("inferred_parked", False) else 0.0
         
-        # Goals added by this agent (4 goals)
-        goals_added = agent_state.get("inferred_goals_added", [0, 0, 0, 0])
-        for i, count in enumerate(goals_added):
-            observation[ObsIndex.GOALS_ADDED_START + i] = float(count)
+        # Friendly goals added by this agent (4 goals)
+        friendly_goals_added = agent_state.get("inferred_friendly_goals_added", [0, 0, 0, 0])
+        for i, count in enumerate(friendly_goals_added):
+            observation[ObsIndex.FRIENDLY_GOALS_ADDED_START + i] = float(count)
+
+        # Opponent goals added by this agent (4 goals)
+        opponent_goals_added = agent_state.get("inferred_opponent_goals_added", [0, 0, 0, 0])
+        for i, count in enumerate(opponent_goals_added):
+            observation[ObsIndex.OPPONENT_GOALS_ADDED_START + i] = float(count)
         
         # Loaders cleared by this agent (4 loaders)
         loaders_taken = agent_state.get("inferred_loaders_taken", [0, 0, 0, 0])
@@ -1072,11 +1119,41 @@ class PushBackGame(VexGame):
     def _is_stochastic(self) -> bool:
         return not self.deterministic
 
-    def _visibility_probability(self, distance_inches: float) -> float:
+    def _within_fov(self, agent_state: dict, point: np.ndarray) -> bool:
+        agent_pos = agent_state["position"]
+        camera_offset = float(agent_state.get("camera_rotation_offset", 0.0))
+        camera_angle = float(agent_state["orientation"][0]) + camera_offset
+        
+        direction = point - agent_pos
+        other_angle = np.arctan2(direction[1], direction[0])
+        
+        angle_diff = (float(other_angle) - float(camera_angle) + np.pi) % (2 * np.pi) - np.pi
+        return abs(angle_diff) <= float(FOV) / 2.0
+
+    def _visibility_probability(self, agent_state: dict, point: np.ndarray) -> float:
+        if not self._within_fov(agent_state, point):
+            return 0.0
+
+        agent_pos = agent_state["position"]
+        distance_inches = float(np.linalg.norm(point - agent_pos))
+
+        # Probability function parameters can be tuned to adjust how visibility degrades with distance.
         x = float(distance_inches)
+
+        min_dist = 0.0
+        max_dist = 72.0
+
+        if x < min_dist or x > max_dist:
+            return 0.0
+
+        near_threshold = 12.0 # Too close, anything within this range will not be visible due to camera limitations
+        near_steepness = 1.0 # Controls how quickly visibility drops off as you approach the near threshold
+        half_distance = 48.0 # At this distance, visibility is 50%
+        half_steepness = 0.2 # Controls how quickly visibility drops off around the 50% distance
+
         probability = 1.0 / (
-            (1.0 + np.exp(-5.0 * (x - 12.0)))
-            * (1.0 + np.exp(0.1 * (x - 48.0)))
+            (1.0 + np.exp(-near_steepness * (x - near_threshold)))
+            * (1.0 + np.exp(half_steepness * (x - half_distance)))
         )
         return float(np.clip(probability, 0.0, 1.0))
 
@@ -1132,8 +1209,11 @@ class PushBackGame(VexGame):
         # Determine which team's blocks to pick up (actual game logic)
         pickup_team = target_team if target_team is not None else robot_team
         
-        # Find nearest block of the target team in FOV
-        for i, block in enumerate(self.state["blocks"]):
+        visible_indices = agent_state.get("visible_block_indices", [])
+        
+        # Find nearest block of the target team among observed blocks
+        for i in visible_indices:
+            block = self.state["blocks"][i]
             if block["status"] == BlockStatus.ON_FIELD:
                 if block.get("team") != pickup_team:
                     continue
@@ -1142,20 +1222,9 @@ class PushBackGame(VexGame):
                 direction = block_pos - robot_pos
                 dist = np.linalg.norm(direction)
                 
-                if dist > 0:
-                    angle_to_block = np.arctan2(direction[1], direction[0])
-                    angle_diff = angle_to_block - camera_theta
-                    while angle_diff > np.pi:
-                        angle_diff -= 2 * np.pi
-                    while angle_diff < -np.pi:
-                        angle_diff += 2 * np.pi
-                    
-                    if abs(angle_diff) <= FOV / 2:
-                        if self._is_stochastic() and np.random.random() > self._visibility_probability(dist):
-                            continue
-                        if dist < min_dist:
-                            min_dist = dist
-                            target_idx = i
+                if dist < min_dist:
+                    min_dist = dist
+                    target_idx = i
         
         penalty = 0.0
         
@@ -1409,16 +1478,6 @@ class PushBackGame(VexGame):
                 target_orient=start_orient.copy(),
             )], DEFAULT_PENALTY
 
-        # Prevent parking early: only allow when 15 seconds or less remain.
-        current_time = float(agent_state.get("game_time", 0.0))
-        time_remaining = float(self.total_time - current_time)
-        if time_remaining > 15.0:
-            return [ActionStep(
-                duration=0.1,
-                target_pos=start_pos.copy(),
-                target_orient=start_orient.copy(),
-            )], DEFAULT_PENALTY
-
         if not self._can_park_in_zone(agent_state, park_zone_color):
             return [ActionStep(
                 duration=0.1,
@@ -1587,9 +1646,8 @@ class PushBackGame(VexGame):
                 return False
         
         if action in (Actions.PARK_FRIENDLY.value, Actions.PARK_OPPONENT.value):
-            # Parking is only valid if 15 seconds or less remain
-            time_remaining = observation[ObsIndex.TIME_REMAINING]
-            if time_remaining > 15.0:
+            # Parking is only valid if not already parked
+            if observation[ObsIndex.PARKED] >= 1:
                 return False
         
         return True
@@ -1661,12 +1719,12 @@ class PushBackGame(VexGame):
                             outcome = "success"
                         else:
                             roll = np.random.random()
-                            if roll < 0.65:
-                                outcome = "success"
-                            elif roll < 0.75:
-                                outcome = "ground"
+                            if roll < 0.90:
+                                outcome = "success" # 90% chance block is successfully picked up and held
+                            elif roll < 0.95:
+                                outcome = "ground" # 5% chance block is knocked to the ground near the loader
                             else:
-                                outcome = "stays"
+                                outcome = "stays" # 5% chance block stays in the loader (not picked up, no penalty)
                         
                         if outcome == "success":
                             b["status"] = BlockStatus.HELD
@@ -1714,7 +1772,7 @@ class PushBackGame(VexGame):
                     block = self.state["blocks"][block_idx]
                     is_friendly = block.get("team") == robot_team
 
-                    if is_friendly:
+                    if True: # Score all blocks regardless of team  
                         score_success = (not self._is_stochastic()) or (np.random.random() < 0.90)
                         if score_success:
                             ejected_idx, _ = goal.add_block_from_nearest(block_idx, agent_state["position"])
@@ -1755,6 +1813,11 @@ class PushBackGame(VexGame):
                 agent_state["orientation"] = np.array([target_angle], dtype=np.float32)
             
             # Unknown event types are ignored
+
+        # Update inferred_held_blocks to the actual number of held blocks
+        # REMOVE THIS IF ACTUAL HELD BLOCKS CAN'T be determined
+        actual_held = sum(1 for b in self.state["blocks"] if b["status"] == BlockStatus.HELD and b.get("held_by") == agent)
+        agent_state["inferred_held_blocks"] = actual_held
 
     def get_permanent_obstacles(self) -> List[Obstacle]:
         """Get permanent obstacles."""
@@ -1884,21 +1947,11 @@ class PushBackGame(VexGame):
 
             max_probability = 0.0
             for _, agent_state in agents.items():
-                agent_pos = np.asarray(agent_state["position"], dtype=float)
-                camera_offset = float(agent_state.get("camera_rotation_offset", 0.0))
-                camera_theta = float(agent_state["orientation"][0]) + camera_offset
-                to_point = np.asarray(point, dtype=float) - agent_pos
-                distance = float(np.linalg.norm(to_point))
-                if distance <= 1e-6 or distance > 72.0:
-                    continue
-                angle_to_point = float(np.arctan2(to_point[1], to_point[0]))
-                angle_delta = float(np.arctan2(np.sin(angle_to_point - camera_theta), np.cos(angle_to_point - camera_theta)))
-                if abs(angle_delta) <= float(FOV) / 2.0:
-                    max_probability = max(max_probability, float(self._visibility_probability(distance)))
+                max_probability = max(max_probability, self._visibility_probability(agent_state, point))
 
             return float(np.clip(max_probability, 0.0, 1.0))
 
-        def _visibility_style(color: str, visibility_probability: float, min_alpha: float = 0.45) -> tuple:
+        def _visibility_style(color: str, visibility_probability: float, min_alpha: float = 0.25) -> tuple:
             probability = float(np.clip(visibility_probability, 0.0, 1.0))
             rgb = np.array(mcolors.to_rgb(color), dtype=float)
             hue, lightness, saturation = colorsys.rgb_to_hls(rgb[0], rgb[1], rgb[2])
@@ -1911,14 +1964,14 @@ class PushBackGame(VexGame):
             return output_rgb, float(np.clip(alpha, 0.0, 1.0))
         
         # Park Zones
-        red_park_style, red_park_alpha = _visibility_style('red', _point_visibility_probability(np.array([-63.0, 0.0])))
+        red_park_style, red_park_alpha = _visibility_style('red', 1.0)
         rect_park_red = patches.Rectangle(
             (-72, -12), 18, 24,
             linewidth=1, edgecolor=red_park_style, facecolor=red_park_style, hatch='//', alpha=red_park_alpha * 0.22
         )
         ax.add_patch(rect_park_red)
         
-        blue_park_style, blue_park_alpha = _visibility_style('blue', _point_visibility_probability(np.array([63.0, 0.0])))
+        blue_park_style, blue_park_alpha = _visibility_style('blue', 1.0)
         rect_park_blue = patches.Rectangle(
             (54, -12), 18, 24,
             linewidth=1, edgecolor=blue_park_style, facecolor=blue_park_style, hatch='//', alpha=blue_park_alpha * 0.22
@@ -1926,7 +1979,7 @@ class PushBackGame(VexGame):
         ax.add_patch(rect_park_blue)
         
         # Long Goal 1 (top)
-        long_goal_top_prob = _point_visibility_probability(np.array([0.0, 48.0]))
+        long_goal_top_prob = 1.0
         long_goal_top_style, long_goal_top_alpha = _visibility_style('orange', long_goal_top_prob)
         rect_lg_1 = patches.Rectangle(
             (-24, 46), 48, 4, 
@@ -1938,7 +1991,7 @@ class PushBackGame(VexGame):
         ax.plot([6, 6], [46, 50], color='white', linewidth=2, linestyle='--', alpha=long_goal_top_alpha)
         
         # Long Goal 2 (bottom)
-        long_goal_bottom_prob = _point_visibility_probability(np.array([0.0, -48.0]))
+        long_goal_bottom_prob = 1.0
         long_goal_bottom_style, long_goal_bottom_alpha = _visibility_style('orange', long_goal_bottom_prob)
         rect_lg_2 = patches.Rectangle(
             (-24, -50), 48, 4, 
@@ -1951,7 +2004,7 @@ class PushBackGame(VexGame):
         
         # Center Structure (X shape)
         w, h = 24, 4
-        center_upper_style, center_upper_alpha = _visibility_style('green', _point_visibility_probability(np.array([0.0, 0.0])))
+        center_upper_style, center_upper_alpha = _visibility_style('green', 1.0)
         rect_center_upper = patches.Rectangle(
             (-w/2, -h/2), w, h, 
             facecolor=center_upper_style, alpha=center_upper_alpha * 0.55, edgecolor=center_upper_style,
@@ -1960,7 +2013,7 @@ class PushBackGame(VexGame):
         ax.add_patch(rect_center_upper)
         ax.text(-10, 10, 'Upper', fontsize=6, ha='center', va='center', color=center_upper_style, alpha=center_upper_alpha)
         
-        center_lower_style, center_lower_alpha = _visibility_style('purple', _point_visibility_probability(np.array([0.0, 0.0])))
+        center_lower_style, center_lower_alpha = _visibility_style('purple', 1.0)
         rect_center_lower = patches.Rectangle(
             (-w/2, -h/2), w, h, 
             facecolor=center_lower_style, alpha=center_lower_alpha * 0.55, edgecolor=center_lower_style,
@@ -1971,7 +2024,7 @@ class PushBackGame(VexGame):
         
         # Loaders
         for idx, loader in enumerate(LOADERS):
-            loader_probability = _point_visibility_probability(np.array([loader.position[0], loader.position[1]]))
+            loader_probability = 1.0
             loader_style, loader_alpha = _visibility_style('orange', loader_probability)
             circle = patches.Circle(
                 (loader.position[0], loader.position[1]),
@@ -2012,7 +2065,7 @@ class PushBackGame(VexGame):
                     
                     block_y = loader.position[1] + y_offset
                     block_color = block.get("team", "grey")
-                    block_probability = _point_visibility_probability(np.array([loader.position[0], block_y]))
+                    block_probability = 0.0
                     block_style, block_alpha = _visibility_style(block_color, block_probability)
                     
                     hexagon = patches.RegularPolygon(
@@ -2024,7 +2077,7 @@ class PushBackGame(VexGame):
         
         # Obstacles
         for obs in PERMANENT_OBSTACLES:
-            obstacle_style, obstacle_alpha = _visibility_style('black', _point_visibility_probability(np.array([obs.x, obs.y])))
+            obstacle_style, obstacle_alpha = _visibility_style('black', 1.0)
             circle = patches.Circle(
                 (obs.x, obs.y), obs.radius,
                 fill=False, edgecolor=obstacle_style, linestyle=':', linewidth=2, alpha=obstacle_alpha
@@ -2049,8 +2102,12 @@ class PushBackGame(VexGame):
                     edge_color = 'white'
                     edge_width = 2
 
-                block_probability = _point_visibility_probability(np.array([block["position"][0], block["position"][1]]))
-                face_style, block_alpha = _visibility_style(fill_color, block_probability, min_alpha=0.55)
+                if block["status"] in (BlockStatus.IN_LONG_1, BlockStatus.IN_LONG_2, 
+                                       BlockStatus.IN_CENTER_UPPER, BlockStatus.IN_CENTER_LOWER):
+                    block_probability = 0.0
+                else:
+                    block_probability = _point_visibility_probability(np.array([block["position"][0], block["position"][1]]))
+                face_style, block_alpha = _visibility_style(fill_color, block_probability)
                 edge_style, _ = _visibility_style(edge_color, block_probability)
                 
                 hexagon = patches.RegularPolygon(

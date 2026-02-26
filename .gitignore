@@ -11,3 +11,4 @@ grid.png
 /vex_model_*/
 /vex_env_*/
 .nfs*
+/old_jobs
