@@ -392,17 +392,17 @@ class PathPlanner:
             positions_inches, velocities_inches = self._positions_normalized_to_trajectory(positions_normalized, dt)
             self.status = 'Grid_Fallback_Succeeded'
 
-        positions_inches, velocities_inches = self._apply_start_end_connectors(
-            positions_inches,
-            velocities_inches,
-            dt,
-            start_point_inches,
-            end_point_inches,
-            start_point_norm,
-            end_point_norm,
-            planning_start_norm,
-            planning_end_norm,
-        )
+            positions_inches, velocities_inches = self._apply_start_end_connectors(
+                positions_inches,
+                velocities_inches,
+                dt,
+                start_point_inches,
+                end_point_inches,
+                start_point_norm,
+                end_point_norm,
+                planning_start_norm,
+                planning_end_norm,
+            )
 
         self.solve_time = time.time() - start_time
         
@@ -413,8 +413,8 @@ class PathPlanner:
         # Trajectory Output: Print details and save to a file
         # Positions are already in inches
         # -------------------------------------------------------------------------
-        print(f"{'Step':<5} {'Position (x, y)':<20}\t{'Velocity (vx, vy)':<20}\t{'Acceleration (ax, ay)':<25}")
-        print("-" * 70)
+        print(f"{'Step':<5} | {'Position (x, y)':<24} | {'Velocity (vx, vy)':<24} | {'Acceleration (ax, ay)':<24}")
+        print("-" * 100)
         lemlib_output_string = ""
         
         for i in range(len(positions)):
@@ -431,7 +431,7 @@ class PathPlanner:
             else:
                 ax = ay = 0
             
-            print(f"{i:<5} ({px:.2f}, {py:.2f})\t\t({vx:.2f}, {vy:.2f})\t\t({ax:.2f}, {ay:.2f})")
+            print(f"{i:<5} | ({px:<10.2f}, {py:<10.2f}) | ({vx:<10.2f}, {vy:<10.2f}) | ({ax:<10.2f}, {ay:<10.2f})")
             lemlib_output_string += f"{px:.3f}, {py:.3f}\n"
         
         print(f"\nTime step: {dt:.2f}")
