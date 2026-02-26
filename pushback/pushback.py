@@ -1121,7 +1121,7 @@ class PushBackGame(VexGame):
 
         probability = 1.0 / (
             (1.0 + np.exp(-near_steepness * (x - near_threshold)))
-            * (1.0 + np.exp(-half_steepness * (x - half_distance)))
+            * (1.0 + np.exp(half_steepness * (x - half_distance)))
         )
         return float(np.clip(probability, 0.0, 1.0))
 
