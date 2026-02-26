@@ -10,6 +10,8 @@ dependencies (ray, pandas, etc.) on lightweight runtime systems.
 Import it explicitly: from vex_core.base_env import VexMultiAgentEnv
 """
 
-from .base_game import VexGame, Robot, RobotSize, Team, ActionEvent, ActionStep
+from .base_game import VexGame, ActionEvent, ActionStep
+from .robot import Robot, RobotSize, Team
+from .path_planner import PathPlanner
 
-__all__ = ['VexGame', 'Robot', 'RobotSize', 'Team', 'ActionEvent', 'ActionStep']
+__all__ = ['VexGame', 'Robot', 'RobotSize', 'Team', 'ActionEvent', 'ActionStep', 'PathPlanner']

@@ -11,7 +11,7 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 
 from .pushback import PushBackGame, BlockStatus, LOADERS, NUM_BLOCKS_FIELD, GoalType, GOALS
-from vex_core.base_game import Robot, RobotSize, Team
+from vex_core.robot import Robot, RobotSize, Team
 
 class VexAICompGame(PushBackGame):
     """VEX AI Competition game variant."""

@@ -3,8 +3,10 @@ import numpy as np
 from math import sqrt, exp  # Added missing imports if needed
 from collections import deque
 import time
+import sys
 import os
-from vex_core.base_game import Robot, Team, RobotSize
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from vex_core.robot import Robot, Team, RobotSize
 
 # =============================================================================
 # Obstacle Definitions

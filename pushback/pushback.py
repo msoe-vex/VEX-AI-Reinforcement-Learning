@@ -21,9 +21,10 @@ from gymnasium import spaces
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from vex_core.base_game import Robot, VexGame, ActionEvent, ActionStep
+from vex_core.robot import Robot
+from vex_core.base_game import VexGame, ActionEvent, ActionStep
 from vex_core.base_env import MESSAGE_SIZE
-from path_planner import PathPlanner
+from vex_core.path_planner import PathPlanner
 
 # Forward declarations for get_game method
 def _get_game_class(game_name: str):

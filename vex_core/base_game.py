@@ -20,47 +20,8 @@ DEFAULT_REWARD_WEIGHT_INDIVIDUAL_DELTA = 1.0 # Positive weight for individual sc
 DEFAULT_REWARD_WEIGHT_INDIVIDUAL_PENALTY = -1.0 # Negative weight for individual penalties (e.g., losing held blocks, failed actions)
 DEFAULT_REWARD_WEIGHT_TEAM_PENALTY = -0.1 # Negative weight for team penalties (e.g., opponent scoring, collisions), encourages communication to avoid penalties but with a lower weight to prevent over-penalizing risky but potentially rewarding actions
 
-class RobotSize(Enum):
-    """Robot size categories."""
-    INCH_15 = 15
-    INCH_24 = 24
-
-class Team(Enum):
-    """Robot teams."""
-    RED = "red"
-    BLUE = "blue"
-
-@dataclass
-class Robot:
-    """Robot configuration."""
-    name: str  # Agent name, e.g., "red_robot_0"
-    team: Team  # 'red' or 'blue'
-    size: RobotSize
-    start_position: Optional[np.ndarray] = field(default_factory=lambda: np.array([0.0, 0.0], dtype=np.float32))
-    start_orientation: Optional[float] = None  # Radians, None = auto based on team
-    length: Optional[float] = None
-    width: Optional[float] = None
-    max_speed: Optional[float] = 85.0
-    max_acceleration: Optional[float] = 85.0
-    buffer: Optional[float] = 1.0
-    # Camera rotation is interpreted as an offset (radians) relative to the robot body orientation.
-    # Positive values rotate the camera counter-clockwise relative to the robot heading.
-    camera_rotation: Optional[float] = np.pi / 2  
-    
-    def __post_init__(self):
-        # Default dimensions based on size
-        if self.length is None:
-            self.length = float(self.size.value)
-        if self.width is None:
-            self.width = float(self.size.value)
-        # Default orientation: face toward center (red=0, blue=π)
-        if self.start_orientation is None:
-            self.start_orientation = np.float32(0.0) if self.team == Team.RED else np.float32(np.pi)
-        # Camera rotation is stored as an offset from the robot body orientation.
-        try:
-            self.camera_rotation_offset = float(self.camera_rotation)
-        except Exception:
-            self.camera_rotation_offset = 0.0
+from vex_core.robot import Robot, Team, RobotSize
+from vex_core.path_planner import PathPlanner
 
 
 @dataclass
@@ -100,7 +61,6 @@ class VexGame(ABC):
     
     def __init__(self, robots: list[Robot] = None, enable_communication: bool = False):
         """Initialize with robot configurations."""
-        from path_planner import PathPlanner  # Lazy import to avoid circular dependency
         self.robots = robots or []
         self._robot_map = {r.name: r for r in self.robots}
         self.path_planner = PathPlanner()
