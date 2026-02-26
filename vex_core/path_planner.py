@@ -68,7 +68,7 @@ class PathPlanner:
     
     def initialize(self, num_steps):
         self.num_steps = max(num_steps, 3)
-        self.initial_time_step = 0.1
+        self.initial_time_step = 0.5
 
         self.max_time = 30 # Maximum time for the path
         self.min_time = 0  # Minimum time for the path
@@ -151,7 +151,12 @@ class PathPlanner:
         cost = 0.0
 
         # Perform A* search to get an initial path (using normalized coordinates)
-        a_star_path = self.a_star_search(planning_start_norm, planning_end_norm, normalized_obstacles, total_radius_norm)
+        a_star_path = self.a_star_search(
+            planning_start_norm, 
+            planning_end_norm, 
+            normalized_obstacles, 
+            total_radius_norm * 1.2  # 20% safety margin for the guess
+        )
         if a_star_path:
             # Interpolate the A* path to match the number of steps
             a_star_path = np.array(a_star_path)
@@ -198,20 +203,21 @@ class PathPlanner:
         time_step = x[self.indexes.dt]
         cost += w_time_step * time_step * self.num_steps
 
-        # Add obstacle penalty to the cost function
-        for i in range(self.num_steps):
-            curr_px_index = i + self.indexes.px
-            curr_py_index = i + self.indexes.py
-            curr_px = x[curr_px_index]
-            curr_py = x[curr_py_index]
-            for obstacle in normalized_obstacles:
-                distance_squared = (curr_px - obstacle.x)**2 + (curr_py - obstacle.y)**2
-                penalty = w_obstacle_penalty / (distance_squared + 1e-6)  # Add a small value to avoid division by zero
-                cost += penalty/(1e4) #if not obstacle.ignore_collision else 0
+        # Skip obstacle penalty for since hard constraints are used instead
+        # # Add obstacle penalty to the cost function
+        # for i in range(self.num_steps):
+        #     curr_px_index = i + self.indexes.px
+        #     curr_py_index = i + self.indexes.py
+        #     curr_px = x[curr_px_index]
+        #     curr_py = x[curr_py_index]
+        #     for obstacle in normalized_obstacles:
+        #         distance_squared = (curr_px - obstacle.x)**2 + (curr_py - obstacle.y)**2
+        #         penalty = w_obstacle_penalty / (distance_squared + 1e-6)  # Add a small value to avoid division by zero
+        #         cost += penalty/(1e4) #if not obstacle.ignore_collision else 0
 
         # Define variable bounds
-        x_lowerbound_ = [-exp(10)] * self.num_of_x_
-        x_upperbound_ = [exp(10)] * self.num_of_x_
+        x_lowerbound_ = [-100.0] * self.num_of_x_
+        x_upperbound_ = [100.0] * self.num_of_x_
         for i in range(self.indexes.px, self.indexes.py + self.num_steps):
             x_lowerbound_[i] = total_radius_norm
             x_upperbound_[i] = 1 - total_radius_norm
@@ -245,8 +251,8 @@ class PathPlanner:
         x_upperbound_[self.indexes.dt] = self.time_step_max
 
         # Define constraint bounds
-        g_lowerbound_ = [exp(-10)] * self.num_of_g_
-        g_upperbound_ = [exp(10)] * self.num_of_g_
+        g_lowerbound_ = [-100.0] * self.num_of_g_
+        g_upperbound_ = [100.0] * self.num_of_g_
 
         g = [SX(0)] * self.num_of_g_
         g_index = 0
@@ -305,19 +311,38 @@ class PathPlanner:
             for obstacle in normalized_obstacles:
                 g[g_index] = (curr_px - obstacle.x)**2 + (curr_py - obstacle.y)**2
                 if obstacle.ignore_collision:
-                    g_lowerbound_[g_index] = exp(-10)
+                    g_lowerbound_[g_index] = -100.0
                 else:
                     g_lowerbound_[g_index] = (obstacle.radius + total_radius_norm)**2
-                g_upperbound_[g_index] = exp(10)
+                g_upperbound_[g_index] = 100.0
                 g_index += 1
 
         nlp = {'x': x, 'f': cost, 'g': vertcat(*g)}
-        opts = {"ipopt.print_level": 0, "print_time": 0, 'ipopt.tol': 1e-6, "ipopt.sb": "yes"}
+        opts = {
+            "ipopt.print_level": 0,
+            "print_time": 0,
+            'ipopt.tol': 1e-6,
+            "ipopt.sb": "yes",
+            # --- The Robustness Package ---
+            "ipopt.mu_strategy": "adaptive",           # Helps when the initial guess is near a constraint
+            "ipopt.bound_relax_factor": 1e-8,          # Allows tiny violations of bounds to prevent numerical trapping
+            "ipopt.fixed_variable_treatment": "make_parameter", # Handles start/end constraints better
+            # "ipopt.max_iter": 500,                     # Cap iterations so a failure doesn't lag your robot
+        }
         solver = nlpsol('solver', 'ipopt', nlp, opts)
         res = solver(x0=x_, lbx=x_lowerbound_, ubx=x_upperbound_, lbg=g_lowerbound_, ubg=g_upperbound_)
         solver_stats = solver.stats()
         self.optimizer_status = solver_stats['return_status']
         self.status = self.optimizer_status
+
+        # if self.status != 'Solve_Succeeded':
+        #     print(f"FAILED: Start {start_point}, End {end_point}")
+        #     opts['ipopt.print_level'] = 5
+        #     solver = nlpsol('solver', 'ipopt', nlp, opts)
+        #     res = solver(x0=x_, lbx=x_lowerbound_, ubx=x_upperbound_, lbg=g_lowerbound_, ubg=g_upperbound_)
+        #     solver_stats = solver.stats()
+        #     self.optimizer_status = solver_stats['return_status']
+        #     self.status = self.optimizer_status            
 
         # Extract solution components
         if self.optimizer_status == 'Solve_Succeeded':
@@ -851,7 +876,7 @@ if __name__ == "__main__":
         team=Team.RED,
         size=RobotSize.INCH_24,
         max_speed=60,
-        max_acceleration=60,
+        max_acceleration=120,
         buffer=1.0,
         length=18.0,
         width=18.0,
@@ -867,18 +892,9 @@ if __name__ == "__main__":
     unsuccessful_solve_time = 0
     successful_trials = 0
     unsuccessful_trials = 0
-    total_trials = 1000
+    total_trials = 100
 
-    for i in range(total_trials):
-        # All values should be in INCHES for the Solve() method
-        start_point = [np.random.uniform(-60, 60), np.random.uniform(-60, 60)]
-        end_point = [np.random.uniform(-60, 60), np.random.uniform(-60, 60)]
-
-        # start_point = [-7.2, -50.4]  # Converted from normalized (0.45, 0.15) to inches
-        # end_point = [0.0, 50.4]      # Converted from normalized (0.50, 0.85) to inches
-
-
-        obstacles = [
+    obstacles = [
             Obstacle(0.0, 0.0, 11.3, False),       # Center Goal Structure
             Obstacle(-21.0, 48.0, 3.0, False),     # Long Goal Top - Left End
             Obstacle(0.0, 48.0, 3.0, False),       # Long Goal Top - Center
@@ -891,6 +907,14 @@ if __name__ == "__main__":
             Obstacle(-58.0, -10.0, 0.0, False),    # Red Park Zone Bottom Corner
             Obstacle(-58.0, 10.0, 0.0, False),     # Red Park Zone Top Corner
                     ]
+
+    for i in range(total_trials):
+        # All values should be in INCHES for the Solve() method
+        start_point = [np.random.uniform(-60, 60), np.random.uniform(-60, 60)]
+        end_point = [np.random.uniform(-60, 60), np.random.uniform(-60, 60)]
+
+        # start_point = [-7.2, -50.4]  # Converted from normalized (0.45, 0.15) to inches
+        # end_point = [0.0, 50.4]      # Converted from normalized (0.50, 0.85) to inches
 
         positions, velocities, dt = planner.Solve(start_point=start_point, end_point=end_point, obstacles=obstacles, robot=robot, optimize=True)
 
