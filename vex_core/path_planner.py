@@ -70,8 +70,8 @@ class PathPlanner:
         self.num_steps = max(num_steps, 3)
         self.initial_time_step = 0.1
 
-        self.max_time = 30 # Maximum time for the path
-        self.min_time = 0  # Minimum time for the path
+        self.max_time = 15 # Maximum time for the path
+        self.min_time = 1  # Minimum time for the path
         self.time_step_min = self.min_time/self.num_steps  # Minimum time step
         self.time_step_max = self.max_time/self.num_steps  # Maximum time step
 
@@ -198,20 +198,20 @@ class PathPlanner:
         time_step = x[self.indexes.dt]
         cost += w_time_step * time_step * self.num_steps
 
-        # Add obstacle penalty to the cost function
-        for i in range(self.num_steps):
-            curr_px_index = i + self.indexes.px
-            curr_py_index = i + self.indexes.py
-            curr_px = x[curr_px_index]
-            curr_py = x[curr_py_index]
-            for obstacle in normalized_obstacles:
-                distance_squared = (curr_px - obstacle.x)**2 + (curr_py - obstacle.y)**2
-                penalty = w_obstacle_penalty / (distance_squared + 1e-6)  # Add a small value to avoid division by zero
-                cost += penalty/(1e4) #if not obstacle.ignore_collision else 0
+        # # Add obstacle penalty to the cost function
+        # for i in range(self.num_steps):
+        #     curr_px_index = i + self.indexes.px
+        #     curr_py_index = i + self.indexes.py
+        #     curr_px = x[curr_px_index]
+        #     curr_py = x[curr_py_index]
+        #     for obstacle in normalized_obstacles:
+        #         distance_squared = (curr_px - obstacle.x)**2 + (curr_py - obstacle.y)**2
+        #         penalty = w_obstacle_penalty / (distance_squared + 1e-6)  # Add a small value to avoid division by zero
+        #         cost += penalty/(1e4) #if not obstacle.ignore_collision else 0
 
         # Define variable bounds
-        x_lowerbound_ = [-exp(10)] * self.num_of_x_
-        x_upperbound_ = [exp(10)] * self.num_of_x_
+        x_lowerbound_ = [0] * self.num_of_x_
+        x_upperbound_ = [1] * self.num_of_x_
         for i in range(self.indexes.px, self.indexes.py + self.num_steps):
             x_lowerbound_[i] = total_radius_norm
             x_upperbound_[i] = 1 - total_radius_norm
@@ -245,8 +245,8 @@ class PathPlanner:
         x_upperbound_[self.indexes.dt] = self.time_step_max
 
         # Define constraint bounds
-        g_lowerbound_ = [exp(-10)] * self.num_of_g_
-        g_upperbound_ = [exp(10)] * self.num_of_g_
+        g_lowerbound_ = [0] * self.num_of_g_
+        g_upperbound_ = [1] * self.num_of_g_
 
         g = [SX(0)] * self.num_of_g_
         g_index = 0
@@ -305,19 +305,57 @@ class PathPlanner:
             for obstacle in normalized_obstacles:
                 g[g_index] = (curr_px - obstacle.x)**2 + (curr_py - obstacle.y)**2
                 if obstacle.ignore_collision:
-                    g_lowerbound_[g_index] = exp(-10)
+                    g_lowerbound_[g_index] = 0.0
                 else:
                     g_lowerbound_[g_index] = (obstacle.radius + total_radius_norm)**2
-                g_upperbound_[g_index] = exp(10)
+                g_upperbound_[g_index] = 2.0 # Max distance (sqrt2) squared
                 g_index += 1
 
         nlp = {'x': x, 'f': cost, 'g': vertcat(*g)}
-        opts = {"ipopt.print_level": 0, "print_time": 0, 'ipopt.tol': 1e-6, "ipopt.sb": "yes"}
+
+        opts = {
+            "ipopt.print_level": 0,
+            "ipopt.sb": "yes",
+            "print_time": False,
+            
+            # Precision Settings
+            "ipopt.tol": 1e-4,
+            "ipopt.max_iter": 250,
+            
+            # Early Exit (Speed Hack)
+            "ipopt.acceptable_tol": 1e-3,
+            "ipopt.acceptable_iter": 3,
+            
+            # Stability and Scaling
+            "ipopt.nlp_scaling_method": "gradient-based",
+            "ipopt.mu_strategy": "adaptive",
+
+            # Prevent slacks from getting too small and causing singularities
+            "ipopt.bound_relax_factor": 1e-8,
+
+            "ipopt.diverging_iterates_tol": 1e20,
+
+            # HSL Solver (If you have it on the MSOE cluster, use 'ma27')
+            "ipopt.linear_solver": "mumps", 
+        }
+
         solver = nlpsol('solver', 'ipopt', nlp, opts)
         res = solver(x0=x_, lbx=x_lowerbound_, ubx=x_upperbound_, lbg=g_lowerbound_, ubg=g_upperbound_)
         solver_stats = solver.stats()
         self.optimizer_status = solver_stats['return_status']
         self.status = self.optimizer_status
+
+        # if self.optimizer_status != 'Solve_Succeeded':
+        #     # Solve again with print_level 5
+        #     opts["ipopt.print_level"] = 5
+        #     solver = nlpsol('solver', 'ipopt', nlp, opts)
+        #     res = solver(x0=x_, lbx=x_lowerbound_, ubx=x_upperbound_, lbg=g_lowerbound_, ubg=g_upperbound_)
+        #     solver_stats = solver.stats()
+        #     self.optimizer_status = solver_stats['return_status']
+        #     self.status = self.optimizer_status
+
+        #     input()
+
 
         # Extract solution components
         if self.optimizer_status == 'Solve_Succeeded':
@@ -867,7 +905,7 @@ if __name__ == "__main__":
     unsuccessful_solve_time = 0
     successful_trials = 0
     unsuccessful_trials = 0
-    total_trials = 1000
+    total_trials = 100
 
     for i in range(total_trials):
         # All values should be in INCHES for the Solve() method
@@ -901,9 +939,11 @@ if __name__ == "__main__":
             unsuccessful_trials += 1
             unsuccessful_solve_time += planner.solve_time
 
-            planner.print_trajectory_details(positions, velocities, dt, None)
-            planner.plotResults(positions, velocities, start_point, end_point, obstacles, robot=robot)
-            input()
+            print(f"Unsuccessful trial: {planner.optimizer_status}")
+
+            # planner.print_trajectory_details(positions, velocities, dt, None)
+            # planner.plotResults(positions, velocities, start_point, end_point, obstacles, robot=robot)
+            # input()
 
         total_solve_time += planner.solve_time
 
