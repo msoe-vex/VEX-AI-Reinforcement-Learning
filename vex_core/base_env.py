@@ -15,6 +15,7 @@ from ray.rllib.env import MultiAgentEnv
 from typing import Dict, List, Tuple, Optional, Any
 
 from .base_game import VexGame, Robot, RobotSize, Team, ActionEvent, ActionStep
+from .config import VexEnvConfig
 
 DELTA_T = 0.1  # Discrete time step in seconds
 COMM_DELAY_TICKS = 4  # Message delivery delay in ticks (~0.375s, half of 0.75s RTT)
@@ -40,34 +41,27 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
     def __init__(
         self,
         game: VexGame,
-        render_mode: Optional[str] = None,
-        output_directory: str = "",
-        randomize: bool = True,
-        enable_communication: bool = False,
-        deterministic: bool = True,
+        config: VexEnvConfig,
     ):
         """
         Initialize the VEX environment.
         
         Args:
             game: VexGame instance defining game-specific mechanics (with robots)
-            render_mode: 'image' (render + print), 'terminal' (print only), or 'none' (silent)
-            output_directory: Directory for saving renders
-            randomize: Whether to randomize initial positions
-            enable_communication: Whether to enable agent-to-agent communication
-            deterministic: Whether environment/game stochastic mechanics are disabled
+            config: VexEnvConfig instance holding environment settings
         """
         super().__init__()
         
         self.game = game
-        self.enable_communication = enable_communication
-        self.deterministic = deterministic
+        self.config = config
+        self.enable_communication = config.enable_communication
+        self.deterministic = config.deterministic
         if hasattr(self.game, "deterministic"):
-            self.game.deterministic = deterministic
+            self.game.deterministic = config.deterministic
             
-        self.render_mode = render_mode
-        self.output_directory = output_directory
-        self.randomize = randomize
+        self.render_mode = config.render_mode
+        self.output_directory = config.experiment_path
+        self.randomize = config.randomize
         
         # Agent configuration from game
         self.possible_agents = game.possible_agents

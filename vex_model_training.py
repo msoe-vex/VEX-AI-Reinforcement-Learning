@@ -14,6 +14,7 @@ import glob
 
 # Import from new modular architecture
 from vex_core.base_env import VexMultiAgentEnv
+from vex_core.config import VexEnvConfig
 from pushback import PushBackGame
 from vex_custom_model import VexCustomPPO
 
@@ -212,17 +213,25 @@ def env_creator(config=None):
     config = config or {}
     enable_communication = config.get("enable_communication", True)
     deterministic = config.get("deterministic", True)
+    game_name = config.get("game", "vexai_skills")
+    
+    env_config = VexEnvConfig(
+        game_name=game_name,
+        render_mode=None,
+        experiment_path=config.get("experiment_path", "vex_model_training"),
+        randomize=config.get("randomize", True),
+        enable_communication=enable_communication,
+        deterministic=deterministic
+    )
+    
     game = PushBackGame.get_game(
-        config.get("game", "vexai_skills"),
+        game_name,
         enable_communication=enable_communication,
         deterministic=deterministic,
     )
     return VexMultiAgentEnv(
         game=game,
-        render_mode=None,
-        randomize=config.get("randomize", True),
-        enable_communication=enable_communication,
-        deterministic=deterministic,
+        config=env_config,
     )
 
 
@@ -302,6 +311,11 @@ if __name__ == "__main__":
     
     # Get parameters from command line arguments
     parser = argparse.ArgumentParser(description="Train multiple agents concurrently.")
+    VexEnvConfig.add_cli_args(
+        parser,
+        communication=True,
+        experiment_path=""
+    )
     parser.add_argument('--learning-rate', type=float, default=0.0005, help='Learning rate')  # Default: 0.0005
     parser.add_argument('--learning-rate-final', type=float, default=0.00005,
                         help='Final learning rate for linear schedule (if not set, learning rate is constant)')
@@ -312,24 +326,17 @@ if __name__ == "__main__":
     parser.add_argument('--num-iters', type=int, default=10, help='Number of training iterations')  # Default: 10
     parser.add_argument('--cpus-per-task', type=int, default=1, help='Number of CPUs per task')  # Default: 1
     parser.add_argument('--job-id', type=str, default="", help='SLURM job ID')  # Job ID for logging
-    parser.add_argument('--randomize', action=argparse.BooleanOptionalAction, default=True,
-                        help='Enable or disable environment randomization (use --no-randomize to explicitly disable)')
     parser.add_argument('--num-gpus', type=int, default=0, help='Number of GPUs to use')
     parser.add_argument('--partition', type=str, default="teaching", help='SLURM partition to use')
     parser.add_argument('--algorithm', type=str, default="PPO", help='Algorithm to use for training')
-    parser.add_argument('--experiment-path', type=str, default="", help='Path to an existing experiment directory to restore from')
     parser.add_argument('--verbose', type=int, default=1, help='Verbosity mode: 0 = silent, 1 = default, 2 = verbose')
-    parser.add_argument('--game', type=str, default="vexai_skills", help='Game variant to train')
-    parser.add_argument('--communication', action=argparse.BooleanOptionalAction, default=True,
-                        help='Enable or disable agent communication (use --no-communication to explicitly disable)')
-    parser.add_argument('--deterministic', action=argparse.BooleanOptionalAction, default=False,
-                        help='Enable deterministic environment mechanics (use --no-deterministic for stochastic outcomes)')
 
     explicit_cli_flags = get_explicit_cli_flags(sys.argv[1:])
     args = parser.parse_args()
+    env_config_obj = VexEnvConfig.from_args(args)
 
     restore_path = None
-    restore_experiment_directory = args.experiment_path
+    restore_experiment_directory = env_config_obj.experiment_path
     if restore_experiment_directory:
         restore_experiment_directory = os.path.abspath(restore_experiment_directory)
         metadata_path = os.path.join(restore_experiment_directory, "training_metadata.json")
@@ -338,6 +345,8 @@ if __name__ == "__main__":
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
             apply_training_metadata_overrides(args, metadata, explicit_cli_flags)
+            # Recreate config obj in case args were updated
+            env_config_obj = VexEnvConfig.from_args(args)
             print(f"Loaded and applied metadata overrides from: {metadata_path}")
         else:
             print(f"Warning: No training metadata found at {metadata_path}; using CLI/default parameters.")
@@ -358,10 +367,10 @@ if __name__ == "__main__":
 
     # Create a temporary instance to retrieve observation and action spaces for a sample agent.
     temp_env = env_creator({
-        "game": args.game,
-        "randomize": args.randomize,
-        "enable_communication": args.communication,
-        "deterministic": args.deterministic,
+        "game": env_config_obj.game_name,
+        "randomize": env_config_obj.randomize,
+        "enable_communication": env_config_obj.enable_communication,
+        "deterministic": env_config_obj.deterministic,
     })
 
     # Get observation and action spaces for module spec
@@ -415,10 +424,10 @@ if __name__ == "__main__":
         .environment(
             env="VEX_Multi_Agent_Env",
             env_config={
-                "randomize": args.randomize,
-                "game": args.game,
-                "enable_communication": args.communication,
-                "deterministic": args.deterministic,
+                "randomize": env_config_obj.randomize,
+                "game": env_config_obj.game_name,
+                "enable_communication": env_config_obj.enable_communication,
+                "deterministic": env_config_obj.deterministic,
             }
         )
         .framework("torch")  # change to "tf" for TensorFlow
@@ -444,7 +453,7 @@ if __name__ == "__main__":
                 module_class=VexCustomPPO,  # Use custom model with clean architecture
                 observation_space=obs_space,
                 action_space=act_space,
-                model_config={"enable_communication": args.communication}  # Model architecture defined in vex_custom_model.py
+                model_config={"enable_communication": env_config_obj.enable_communication}  # Model architecture defined in vex_custom_model.py
             )
         )
         .fault_tolerance(
@@ -478,15 +487,15 @@ if __name__ == "__main__":
 
     # Save game metadata early (before training starts)
     metadata = {
-        "game": args.game,
+        "game": env_config_obj.game_name,
         "training_phases": TRAINING_PHASES,
         "discount_factor": args.discount_factor,
-        "randomize": args.randomize,
+        "randomize": env_config_obj.randomize,
         "num_iters": args.num_iters,
         "source_experiment_directory": restore_experiment_directory,
         "restored_checkpoint_path": restore_path,
-        "enable_communication": args.communication,
-        "deterministic": args.deterministic,
+        "enable_communication": env_config_obj.enable_communication,
+        "deterministic": env_config_obj.deterministic,
         "start_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()),
     }
     metadata_path = os.path.join(experiment_dir, "training_metadata.json")
@@ -550,15 +559,19 @@ if __name__ == "__main__":
     # Run the test script automatically via imported function
     print(f"Running automated testing for 1000 iterations...")
     try:
+        test_config = VexEnvConfig(
+            game_name=env_config_obj.game_name,
+            render_mode=None,
+            experiment_path=experiment_dir,
+            randomize=env_config_obj.randomize,
+            enable_communication=env_config_obj.enable_communication,
+            deterministic=env_config_obj.deterministic
+        )
         run_simulation(
-            model_dir=experiment_dir,
-            game_name=args.game,
-            output_dir=experiment_dir,
+            config=test_config,
             iterations=1000,
             export_gif=False,
-            render_mode="none",
-            deterministic=args.deterministic,
-            communication_override=args.communication
+            communication_override=env_config_obj.enable_communication
         )
         print("Automated testing complete.")
     except Exception as e:

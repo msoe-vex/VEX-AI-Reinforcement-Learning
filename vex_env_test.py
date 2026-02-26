@@ -14,76 +14,38 @@ import argparse
 import numpy as np
 
 from vex_core.base_env import VexMultiAgentEnv
+from vex_core.config import VexEnvConfig
 from pushback import PushBackGame, Actions
 
 
 def main():
     parser = argparse.ArgumentParser(description="VEX Push Back Environment Test")
-    parser.add_argument(
-        "--game", 
-        type=str, 
-        default="vexai_skills",
-        help="Game variant to test"
-    )
+    VexEnvConfig.add_cli_args(parser, experiment_path="vex_env_test")
     parser.add_argument(
         "--steps",
         type=int,
         default=20,
         help="Number of steps to run"
     )
-    parser.add_argument(
-        "--render-mode",
-        type=str,
-        choices=["terminal", "image", "none"],
-        default="image",
-        help="Rendering mode: 'image' (saves frames & GIF), 'terminal' (prints text only), 'none' (silent)"
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="vex_env_test",
-        help="Output directory for renders"
-    )
-    parser.add_argument(
-        "--randomize",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Randomize initial agent positions and orientations"
-    )
-    parser.add_argument(
-        "--deterministic",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Enable deterministic environment mechanics (use --no-deterministic for stochastic outcomes)"
-    )
-    parser.add_argument(
-        "--communication",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Enable agent communication (use --communication to enable)"
-    )
     args = parser.parse_args()
+    config = VexEnvConfig.from_args(args)
     
     # Create game instance using factory method
     game = PushBackGame.get_game(
-        args.game,
-        enable_communication=args.communication,
-        deterministic=args.deterministic,
+        config.game_name,
+        enable_communication=config.enable_communication,
+        deterministic=config.deterministic,
     )
     
     print(f"Testing VEX Push Back environment...")
-    print(f"Game: {args.game}")
+    print(f"Game: {config.game_name}")
     print(f"Game class: {game.__class__.__name__}")
-    print(f"Communication: {args.communication}")
+    print(f"Communication: {config.enable_communication}")
     
     # Create environment
     env = VexMultiAgentEnv(
         game=game,
-        render_mode=args.render_mode if args.render_mode != "none" else None,
-        output_directory=args.output_dir,
-        randomize=args.randomize,
-        enable_communication=args.communication,
-        deterministic=args.deterministic,
+        config=config,
     )
     
     # Reset environment
@@ -124,7 +86,7 @@ def main():
     
     if args.render_mode == "image":
         env.createGIF()
-        print(f"GIF saved to {args.output_dir}/simulation.gif")
+        print(f"GIF saved to {config.experiment_path}/simulation.gif")
 
 
 if __name__ == "__main__":
