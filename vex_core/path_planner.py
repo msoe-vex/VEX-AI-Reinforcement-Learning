@@ -248,7 +248,7 @@ class PathPlanner:
         g_lowerbound_ = [0] * self.num_of_g_
         g_upperbound_ = [1] * self.num_of_g_
 
-        g = [SX(0)] * self.num_of_g_
+        g = [SX(0) for _ in range(self.num_of_g_)]
         g_index = 0
 
         # Speed constraints
@@ -268,11 +268,11 @@ class PathPlanner:
             curr_vy_index = self.indexes.vy + i
             next_vx_index = curr_vx_index + 1
             next_vy_index = curr_vy_index + 1
-            ax = (x[next_vx_index] - x[curr_vx_index]) / time_step
-            ay = (x[next_vy_index] - x[curr_vy_index]) / time_step
-            g[g_index] = ax**2 + ay**2
-            g_lowerbound_[g_index] = 0
-            g_upperbound_[g_index] = max_accel_norm**2
+            dvx = x[next_vx_index] - x[curr_vx_index]
+            dvy = x[next_vy_index] - x[curr_vy_index]
+            g[g_index] = dvx**2 + dvy**2 - (max_accel_norm * time_step)**2
+            g_lowerbound_[g_index] = -1e10
+            g_upperbound_[g_index] = 0
             g_index += 1
 
         # Dynamics (position update) constraints
@@ -340,9 +340,18 @@ class PathPlanner:
         }
 
         solver = nlpsol('solver', 'ipopt', nlp, opts)
-        res = solver(x0=x_, lbx=x_lowerbound_, ubx=x_upperbound_, lbg=g_lowerbound_, ubg=g_upperbound_)
+        res = solver(
+            x0=DM(x_), 
+            lbx=DM(x_lowerbound_), 
+            ubx=DM(x_upperbound_), 
+            lbg=DM(g_lowerbound_), 
+            ubg=DM(g_upperbound_)
+        )
         solver_stats = solver.stats()
+
         self.optimizer_status = solver_stats['return_status']
+        if self.optimizer_status == 'Solved_To_Acceptable_Level':
+            self.optimizer_status = 'Solve_Succeeded' # Treat acceptable as solved
         self.status = self.optimizer_status
 
         # if self.optimizer_status != 'Solve_Succeeded':
