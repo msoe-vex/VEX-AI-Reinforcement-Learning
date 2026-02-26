@@ -32,7 +32,7 @@ class VexAICompGame(PushBackGame):
         super().__init__(robots, enable_communication=enable_communication, deterministic=deterministic)
     
     @property
-    def total_time(self) -> float:
+    def default_total_time(self) -> float:
         return 120.0
 
     def _can_park_in_zone(self, agent_state: Dict, park_zone_color: str) -> bool:

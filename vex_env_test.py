@@ -45,9 +45,10 @@ def main():
         help="Output directory for renders"
     )
     parser.add_argument(
-        "--no-randomize",
-        action="store_true",
-        help="Disable randomization of initial agent positions and orientations"
+        "--randomize",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Randomize initial agent positions and orientations"
     )
     parser.add_argument(
         "--deterministic",
@@ -80,7 +81,7 @@ def main():
         game=game,
         render_mode=args.render_mode if args.render_mode != "none" else None,
         output_directory=args.output_dir,
-        randomize=not args.no_randomize,
+        randomize=args.randomize,
         enable_communication=args.communication,
         deterministic=args.deterministic,
     )

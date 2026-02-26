@@ -72,6 +72,7 @@ def run_simulation(
     render_mode="image",
     deterministic=True,
     communication_override=None,
+    randomize=False,
 ):
     """
     Loads trained models and runs one or more simulations in the VEX environment.
@@ -119,7 +120,7 @@ def run_simulation(
         game=game,
         render_mode=render_mode,
         output_directory=output_dir,
-        randomize=False,
+        randomize=randomize,
         enable_communication=enable_communication,
         deterministic=deterministic,
     )
@@ -357,6 +358,12 @@ if __name__ == "__main__":
         default=None,
         help="Enable communication (overrides metadata if provided)"
     )
+    parser.add_argument(
+        "--randomize",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Randomize initial agent positions and orientations"
+    )
     
     args = parser.parse_args()
     
@@ -386,4 +393,5 @@ if __name__ == "__main__":
         render_mode = args.render_mode if args.render_mode != "none" else None,
         deterministic=args.deterministic,
         communication_override=args.communication,
+        randomize=args.randomize,
     )
