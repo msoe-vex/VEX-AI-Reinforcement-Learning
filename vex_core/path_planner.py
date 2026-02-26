@@ -25,6 +25,8 @@ class FirstStateIndex:
         self.vx = self.py + n
         self.vy = self.vx + n - 1
         self.dt = self.vy + n - 1
+        self.slacks = self.dt + 1
+        self.obs_slacks = self.slacks + n - 2
 
 INCHES_PER_FIELD = 144
 GRID_SIZE = 128
@@ -136,15 +138,23 @@ class PathPlanner:
         # -------------------------------------------------------------------------
         # Initialization: Define indexes and problem dimensions
         # -------------------------------------------------------------------------
+        # -------------------------------------------------------------------------
+        # Dimensions: 2*N (pos) + 2*(N-1) (vel) + 1 (dt) + (N-2) (accel slacks) + (N*obs) (obs slacks)
+        # -------------------------------------------------------------------------
+        num_accel_constraints = self.num_steps - 2
+        num_obs_constraints = self.num_steps * len(obstacles)
         self.indexes = FirstStateIndex(self.num_steps)
-        self.num_of_x_ = (self.num_steps)*self.NUM_OF_STATES + (self.num_steps - 1)*self.NUM_OF_ACTS + 1  # plus one for time step variable
-        self.num_of_g_ = (self.num_steps)*len(obstacles)  + (self.num_steps-1)*(self.NUM_OF_ACTS+1) + (self.num_steps - 2)
+        self.num_of_x_ = (self.num_steps * 2) + ((self.num_steps - 1) * 2) + 1 + num_accel_constraints + num_obs_constraints
+        
+        # num_of_g: 
+        # (N-1)*2 (dynamics) + (N-1) (speed limit) + (N-2) (soft accel) + (N*obs) (obstacles)
+        self.num_of_g_ = ((self.num_steps - 1) * 2) + (self.num_steps - 1) + (self.num_steps - 2) + num_obs_constraints
 
         # -------------------------------------------------------------------------
         # Solve Optimization Problem: Set up variables, constraints, and solve NLP
         # -------------------------------------------------------------------------
         x = SX.sym('x', self.num_of_x_)
-        self.indexes.dt = self.num_of_x_ - 1
+        # Note: self.indexes.dt is set in FirstStateIndex constructor based on num_steps, it's correct for the initial num_of_x_
 
         w_time_step = 100.0  # Cost weight on time step
         w_obstacle_penalty = 1000.0  # Weight for obstacle penalty
@@ -198,10 +208,24 @@ class PathPlanner:
         # Build initial guess using the A* path and zero velocity
         init_v = [max_velocity_norm / 2] * ((self.num_steps - 1) * self.NUM_OF_ACTS)
         init_time_step = self.initial_time_step
-        x_ = np.concatenate((init_x, init_y, init_v, [init_time_step]))
+        init_slacks = [10.0] * num_accel_constraints
+        init_obs_slacks = [10.0] * num_obs_constraints
+        o_x_ = np.concatenate((init_x, init_y, init_v, [init_time_step], init_slacks, init_obs_slacks)) # Initial guess
+        x_ = o_x_
+        w_accel_slack = 1e4
+        w_obs_slack = 1e4
 
+        # 1. Objective: Minimize time + penalize slack
         time_step = x[self.indexes.dt]
         cost += w_time_step * time_step * self.num_steps
+        
+        for i in range(num_accel_constraints):
+            slack_var = x[self.indexes.slacks + i]
+            cost += w_accel_slack * slack_var
+
+        for i in range(num_obs_constraints):
+            slack_var = x[self.indexes.obs_slacks + i]
+            cost += w_obs_slack * slack_var
 
         # Skip obstacle penalty for since hard constraints are used instead
         # # Add obstacle penalty to the cost function
@@ -246,13 +270,18 @@ class PathPlanner:
         # x_upperbound_[self.indexes.vx + self.num_steps - 2] = 0
         # x_upperbound_[self.indexes.vy + self.num_steps - 2] = 0
 
-        # Constrain time step
-        x_lowerbound_[self.indexes.dt] = self.time_step_min
-        x_upperbound_[self.indexes.dt] = self.time_step_max
+        # Ensure dt is strictly positive to avoid division by zero!
+        x_lowerbound_[self.indexes.dt] = max(0.01, self.time_step_min)
+        
+        # Slacks must be non-negative
+        for i in range(num_accel_constraints):
+            x_lowerbound_[self.indexes.slacks + i] = 0.0
+        for i in range(num_obs_constraints):
+            x_lowerbound_[self.indexes.obs_slacks + i] = 0.0
 
         # Define constraint bounds
-        g_lowerbound_ = [-100.0] * self.num_of_g_
-        g_upperbound_ = [100.0] * self.num_of_g_
+        g_lowerbound_ = [0.0] * self.num_of_g_
+        g_upperbound_ = [0.0] * self.num_of_g_
 
         g = [SX(0)] * self.num_of_g_
         g_index = 0
@@ -268,16 +297,15 @@ class PathPlanner:
             g_upperbound_[g_index] = max_velocity_norm**2
             g_index += 1
         
-        # Acceleration constraints
+        # ACCELERATION (Soft with Slacks)
         for i in range(self.num_steps - 2):
-            curr_vx_index = self.indexes.vx + i
-            curr_vy_index = self.indexes.vy + i
-            next_vx_index = curr_vx_index + 1
-            next_vy_index = curr_vy_index + 1
-            ax = (x[next_vx_index] - x[curr_vx_index]) / time_step
-            ay = (x[next_vy_index] - x[curr_vy_index]) / time_step
-            g[g_index] = ax**2 + ay**2
-            g_lowerbound_[g_index] = 0
+            ax = (x[self.indexes.vx + i + 1] - x[self.indexes.vx + i]) / time_step
+            ay = (x[self.indexes.vy + i + 1] - x[self.indexes.vy + i]) / time_step
+            slack = x[self.indexes.slacks + i]
+            
+            # Constraint: ax^2 + ay^2 - slack <= max_accel^2
+            g[g_index] = ax**2 + ay**2 - slack
+            g_lowerbound_[g_index] = -1e10 # Effectively no lower bound
             g_upperbound_[g_index] = max_accel_norm**2
             g_index += 1
 
@@ -303,31 +331,35 @@ class PathPlanner:
             g_index += 1
 
         # Obstacle constraints
+        obs_slack_index = 0
         for i in range(self.num_steps):
-            curr_px_index = i + self.indexes.px
-            curr_py_index = i + self.indexes.py
+            curr_px_index = self.indexes.px + i
+            curr_py_index = self.indexes.py + i
             curr_px = x[curr_px_index]
             curr_py = x[curr_py_index]
             for obstacle in normalized_obstacles:
-                g[g_index] = (curr_px - obstacle.x)**2 + (curr_py - obstacle.y)**2
+                slack = x[self.indexes.obs_slacks + obs_slack_index]
+                g[g_index] = (curr_px - obstacle.x)**2 + (curr_py - obstacle.y)**2 + slack
                 if obstacle.ignore_collision:
-                    g_lowerbound_[g_index] = -100.0
+                    g_lowerbound_[g_index] = 0.0
                 else:
-                    g_lowerbound_[g_index] = (obstacle.radius + total_radius_norm)**2
+                    g_lowerbound_[g_index] = ((obstacle.radius + total_radius_norm) * 0.99)**2
                 g_upperbound_[g_index] = 100.0
                 g_index += 1
+                obs_slack_index += 1
 
         nlp = {'x': x, 'f': cost, 'g': vertcat(*g)}
+        # 4. Solver Options (The 'MSOE Cluster' Stability Pack)
         opts = {
+            "print_time": False,
             "ipopt.print_level": 0,
-            "print_time": 0,
-            'ipopt.tol': 1e-6,
             "ipopt.sb": "yes",
-            # --- The Robustness Package ---
-            "ipopt.mu_strategy": "adaptive",           # Helps when the initial guess is near a constraint
-            "ipopt.bound_relax_factor": 1e-8,          # Allows tiny violations of bounds to prevent numerical trapping
-            "ipopt.fixed_variable_treatment": "make_parameter", # Handles start/end constraints better
-            # "ipopt.max_iter": 500,                     # Cap iterations so a failure doesn't lag your robot
+            "ipopt.tol": 1e-6,
+            "ipopt.mu_strategy": "adaptive",
+            "ipopt.max_iter": 500,
+            "ipopt.nlp_scaling_method": "gradient-based",
+            "ipopt.bound_relax_factor": 1e-6,
+            "ipopt.check_derivatives_for_naninf": "yes",
         }
         solver = nlpsol('solver', 'ipopt', nlp, opts)
         res = solver(x0=x_, lbx=x_lowerbound_, ubx=x_upperbound_, lbg=g_lowerbound_, ubg=g_upperbound_)
@@ -335,14 +367,14 @@ class PathPlanner:
         self.optimizer_status = solver_stats['return_status']
         self.status = self.optimizer_status
 
-        # if self.status != 'Solve_Succeeded':
-        #     print(f"FAILED: Start {start_point}, End {end_point}")
-        #     opts['ipopt.print_level'] = 5
-        #     solver = nlpsol('solver', 'ipopt', nlp, opts)
-        #     res = solver(x0=x_, lbx=x_lowerbound_, ubx=x_upperbound_, lbg=g_lowerbound_, ubg=g_upperbound_)
-        #     solver_stats = solver.stats()
-        #     self.optimizer_status = solver_stats['return_status']
-        #     self.status = self.optimizer_status            
+        if self.status != 'Solve_Succeeded':
+            print(f"FAILED: Start {start_point}, End {end_point}")
+            opts['ipopt.print_level'] = 5
+            solver = nlpsol('solver', 'ipopt', nlp, opts)
+            res = solver(x0=x_, lbx=x_lowerbound_, ubx=x_upperbound_, lbg=g_lowerbound_, ubg=g_upperbound_)
+            solver_stats = solver.stats()
+            self.optimizer_status = solver_stats['return_status']
+            self.status = self.optimizer_status            
 
         # Extract solution components
         if self.optimizer_status == 'Solve_Succeeded':
@@ -931,9 +963,9 @@ if __name__ == "__main__":
 
         total_solve_time += planner.solve_time
 
-        # planner.print_trajectory_details(positions, velocities, dt, None)
-        # planner.plotResults(positions, velocities, start_point, end_point, obstacles, robot=robot)
-        # input()
+        planner.print_trajectory_details(positions, velocities, dt, None)
+        planner.plotResults(positions, velocities, start_point, end_point, obstacles, robot=robot)
+        input()
 
     print(f"Average solve time (successful): {successful_solve_time / successful_trials:.3f} seconds" if successful_trials > 0 else "No successful trials")
     print(f"Average solve time (unsuccessful): {unsuccessful_solve_time / unsuccessful_trials:.3f} seconds" if unsuccessful_trials > 0 else "No unsuccessful trials")
