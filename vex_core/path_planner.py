@@ -174,7 +174,6 @@ class PathPlanner:
             positions_inches, velocities_inches = self._positions_normalized_to_trajectory(positions_normalized, dt)
             self.optimizer_status = 'NLP_Disabled'
             self.status = 'AStar_Only_Succeeded'
-            self.solve_time = time.time() - start_time
 
             positions_inches, velocities_inches = self._apply_start_end_connectors(
                 positions_inches,
@@ -187,6 +186,7 @@ class PathPlanner:
                 planning_start_norm,
                 planning_end_norm,
             )
+            self.solve_time = time.time() - start_time
 
             return positions_inches, velocities_inches, dt
 
@@ -318,8 +318,6 @@ class PathPlanner:
         solver_stats = solver.stats()
         self.optimizer_status = solver_stats['return_status']
         self.status = self.optimizer_status
-        
-        self.solve_time = time.time() - start_time
 
         # Extract solution components
         if self.optimizer_status == 'Solve_Succeeded':
@@ -358,6 +356,8 @@ class PathPlanner:
             planning_start_norm,
             planning_end_norm,
         )
+
+        self.solve_time = time.time() - start_time
         
         return positions_inches, velocities_inches, dt
 
