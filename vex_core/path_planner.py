@@ -181,6 +181,7 @@ class PathPlanner:
                 end_point,
                 planning_start,
                 planning_end,
+                robot,
             )
             self.solve_time = time.time() - start_time
             return positions, velocities, dt, grid
@@ -233,6 +234,29 @@ class PathPlanner:
         x_upperbound_[self.indexes.py] = planning_start_normalized[1]
         x_upperbound_[self.indexes.px + self.num_steps - 1] = planning_end_normalized[0]
         x_upperbound_[self.indexes.py + self.num_steps - 1] = planning_end_normalized[1]
+
+        # Constrain initial and end velocity if they are connected to a connector
+        start_dist = np.linalg.norm(planning_start - start_point)
+        if start_dist > 0.5:
+            start_dir = (planning_start - start_point) / start_dist
+            start_vx = 0.25 * max_velocity_normalized * start_dir[0]
+            start_vy = 0.25 * max_velocity_normalized * start_dir[1]
+            x_lowerbound_[self.indexes.vx] = start_vx
+            x_upperbound_[self.indexes.vx] = start_vx
+            x_lowerbound_[self.indexes.vy] = start_vy
+            x_upperbound_[self.indexes.vy] = start_vy
+
+        end_dist = np.linalg.norm(end_point - planning_end)
+        if end_dist > 0.5:
+            end_dir = (end_point - planning_end) / end_dist
+            end_vx = 0.25 * max_velocity_normalized * end_dir[0]
+            end_vy = 0.25 * max_velocity_normalized * end_dir[1]
+            end_vx_idx = self.indexes.vx + self.num_steps - 2
+            end_vy_idx = self.indexes.vy + self.num_steps - 2
+            x_lowerbound_[end_vx_idx] = end_vx
+            x_upperbound_[end_vx_idx] = end_vx
+            x_lowerbound_[end_vy_idx] = end_vy
+            x_upperbound_[end_vy_idx] = end_vy
 
         # Constrain time step
         x_lowerbound_[self.indexes.dt] = self.time_step_min
@@ -386,6 +410,7 @@ class PathPlanner:
             end_point,
             planning_start,
             planning_end,
+            robot,
         )
 
         self.solve_time = time.time() - start_time
@@ -612,15 +637,24 @@ class PathPlanner:
                 total_radius,
             )
 
-        snapped_start = self._find_nearest_valid_cell_bfs(grid, start, validator=nlp_validator)
-        snapped_end = self._find_nearest_valid_cell_bfs(grid, end, validator=nlp_validator)
+        start_pt = self._grid_to(start, grid_size)
+        end_pt = self._grid_to(end, grid_size)
+        
+        # Check if the exact points are acceptable
+        start_valid = self._is_point_valid_for_nlp(start_pt, obstacles, total_radius)
+        end_valid = self._is_point_valid_for_nlp(end_pt, obstacles, total_radius)
 
-        if snapped_start is None:
-            snapped_start = start
-        if snapped_end is None:
-            snapped_end = end
+        if not start_valid:
+            snapped_start = self._find_nearest_valid_cell_bfs(grid, start, validator=nlp_validator)
+            if snapped_start is not None:
+                start_pt = self._grid_to(snapped_start, grid_size)
 
-        return self._grid_to(snapped_start, grid_size), self._grid_to(snapped_end, grid_size)
+        if not end_valid:
+            snapped_end = self._find_nearest_valid_cell_bfs(grid, end, validator=nlp_validator)
+            if snapped_end is not None:
+                end_pt = self._grid_to(snapped_end, grid_size)
+
+        return start_pt, end_pt
 
     def _build_straight_line_points(self, start, end):
         step = 6.0
@@ -642,20 +676,26 @@ class PathPlanner:
         end_point,
         planning_start,
         planning_end,
+        robot,
     ):
         connectors_added = False
         self.pseudo_start = planning_start
         self.pseudo_end = planning_end
 
+        num_start_points = 0
+        num_end_points = 0
+
         if not np.allclose(planning_start, start_point, atol=0.5):
             start_connector = self._build_straight_line_points(start_point, planning_start)
             positions = np.vstack((start_connector[:-1], positions))
             connectors_added = True
+            num_start_points = len(start_connector) - 1
 
         if not np.allclose(planning_end, end_point, atol=0.5):
             end_connector = self._build_straight_line_points(planning_end, end_point)
             positions = np.vstack((positions, end_connector[1:]))
             connectors_added = True
+            num_end_points = len(end_connector) - 1
 
         if connectors_added:
             if len(positions) >= 2:
@@ -670,7 +710,19 @@ class PathPlanner:
                 speeds[speeds == 0] = 1.0 
                 # Scale down velocities that exceed max_speed
                 scale = np.where(speeds > max_speed, max_speed / speeds, 1.0)
-                velocities = velocities_new * scale
+                velocities_new = velocities_new * scale
+
+                if num_start_points > 0:
+                    start_dist = np.linalg.norm(planning_start - start_point)
+                    start_dir = (planning_start - start_point) / start_dist
+                    velocities_new[:num_start_points] = 0.25 * max_speed * start_dir
+
+                if num_end_points > 0:
+                    end_dist = np.linalg.norm(end_point - planning_end)
+                    end_dir = (end_point - planning_end) / end_dist
+                    velocities_new[-num_end_points:] = 0.25 * max_speed * end_dir
+
+                velocities = velocities_new
             else:
                 velocities = np.zeros((0, 2), dtype=np.float64)
 
