@@ -626,7 +626,7 @@ class PathPlanner:
         step = 6.0
         distance = np.linalg.norm(end - start)
 
-        if distance <= 1e-9:
+        if distance <= 0.5: # If the distance is less than 0.5, just return the start point
             return np.array([start], dtype=np.float64)
 
         num_segments = max(1, int(np.ceil(distance / step)))
@@ -647,19 +647,30 @@ class PathPlanner:
         self.pseudo_start = planning_start
         self.pseudo_end = planning_end
 
-        if not np.allclose(planning_start, start_point):
+        if not np.allclose(planning_start, start_point, atol=0.5):
             start_connector = self._build_straight_line_points(start_point, planning_start)
             positions = np.vstack((start_connector[:-1], positions))
             connectors_added = True
 
-        if not np.allclose(planning_end, end_point):
+        if not np.allclose(planning_end, end_point, atol=0.5):
             end_connector = self._build_straight_line_points(planning_end, end_point)
             positions = np.vstack((positions, end_connector[1:]))
             connectors_added = True
 
         if connectors_added:
             if len(positions) >= 2:
-                velocities = np.diff(positions, axis=0) / dt
+                # Calculate velocities across all positions
+                velocities_new = np.diff(positions, axis=0) / dt
+                
+                # We need to make sure we don't apply an arbitrary velocity limit but keep acceleration reasonable
+                # If we have too much velocity abruptly, we cap it using max speed
+                max_speed = robot.max_speed
+                speeds = np.linalg.norm(velocities_new, axis=1, keepdims=True)
+                # Avoid division by zero
+                speeds[speeds == 0] = 1.0 
+                # Scale down velocities that exceed max_speed
+                scale = np.where(speeds > max_speed, max_speed / speeds, 1.0)
+                velocities = velocities_new * scale
             else:
                 velocities = np.zeros((0, 2), dtype=np.float64)
 
