@@ -28,6 +28,7 @@ class FirstStateIndex:
 
 INCHES_PER_FIELD = 144
 GRID_SIZE = 144
+CELL_SIZE = INCHES_PER_FIELD / GRID_SIZE
 
 # =============================================================================
 # PathPlanner Class Definitions
@@ -228,29 +229,6 @@ class PathPlanner:
         x_upperbound_[self.indexes.px + self.num_steps - 1] = planning_end_normalized[0]
         x_upperbound_[self.indexes.py + self.num_steps - 1] = planning_end_normalized[1]
 
-        # Constrain initial and end velocity if they are connected to a connector
-        start_dist = np.linalg.norm(planning_start - start_point)
-        if start_dist > 0.5:
-            start_dir = (planning_start - start_point) / start_dist
-            start_vx = 0.25 * max_velocity_normalized * start_dir[0]
-            start_vy = 0.25 * max_velocity_normalized * start_dir[1]
-            x_lowerbound_[self.indexes.vx] = start_vx
-            x_upperbound_[self.indexes.vx] = start_vx
-            x_lowerbound_[self.indexes.vy] = start_vy
-            x_upperbound_[self.indexes.vy] = start_vy
-
-        end_dist = np.linalg.norm(end_point - planning_end)
-        if end_dist > 0.5:
-            end_dir = (end_point - planning_end) / end_dist
-            end_vx = 0.25 * max_velocity_normalized * end_dir[0]
-            end_vy = 0.25 * max_velocity_normalized * end_dir[1]
-            end_vx_idx = self.indexes.vx + self.num_steps - 2
-            end_vy_idx = self.indexes.vy + self.num_steps - 2
-            x_lowerbound_[end_vx_idx] = end_vx
-            x_upperbound_[end_vx_idx] = end_vx
-            x_lowerbound_[end_vy_idx] = end_vy
-            x_upperbound_[end_vy_idx] = end_vy
-
         # Constrain time step
         x_lowerbound_[self.indexes.dt] = self.time_step_min
         x_upperbound_[self.indexes.dt] = self.time_step_max
@@ -418,7 +396,11 @@ class PathPlanner:
         print(f"{'Step':<5} | {'Position (x, y)':<20} | {'Velocity (vx, vy, speed)':<30} | {'Acceleration (ax, ay, magnitude)':<30}")
         print("-" * 100)
         
-        for i in range(len(positions)):
+        num_start_points = getattr(self, 'num_start_points', 0)
+        num_end_points = getattr(self, 'num_end_points', 0)
+        total_points = len(positions)
+        
+        for i in range(total_points):
             px, py = positions[i]  # Already in inches
             if i < len(velocities):
                 vx, vy = velocities[i]
@@ -431,8 +413,14 @@ class PathPlanner:
                 ay = (next_vy - vy) / dt
             else:
                 ax = ay = 0
+                
+            connector_str = ""
+            if i < num_start_points:
+                connector_str = " (Start Connector)"
+            elif i >= total_points - num_end_points:
+                connector_str = " (End Connector)"
             
-            print(f"{i:<5} | ({px:>8.2f}, {py:>8.2f}) | ({vx:>8.2f}, {vy:>8.2f}, {np.sqrt(vx**2 + vy**2):>8.2f}) | ({ax:>8.2f}, {ay:>8.2f}, {np.sqrt(ax**2 + ay**2):>8.2f})")
+            print(f"{i:<5} | ({px:>8.2f}, {py:>8.2f}) | ({vx:>8.2f}, {vy:>8.2f}, {np.sqrt(vx**2 + vy**2):>8.2f}) | ({ax:>8.2f}, {ay:>8.2f}, {np.sqrt(ax**2 + ay**2):>8.2f}){connector_str}")
         
         print(f"\nTime step: {dt:.2f}")
         print(f"Path time: {dt * len(positions):.2f}")
@@ -441,7 +429,7 @@ class PathPlanner:
             print(f"Optimizer status: {self.optimizer_status}")
         print(f"Solve time: {self.solve_time:.3f} seconds")
 
-    def plotResults(self, positions, velocities, start_point, end_point, obstacles, robot: Robot, grid=None):
+    def plot_results(self, positions, velocities, start_point, end_point, obstacles, robot: Robot, grid=None):
         # -------------------------------------------------------------------------
         # Plot Results: Display trajectory, obstacles, and robot boundaries
         # All inputs are in inches
@@ -450,8 +438,9 @@ class PathPlanner:
         import matplotlib.pyplot as plt
         from matplotlib.transforms import Affine2D
 
-        fig, ax = plt.subplots(figsize=(8, 8))
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
         
+        # --- SUBPLOT 1: Field Path ---
         planned_px = positions[:, 0]
         planned_py = positions[:, 1]
         planned_vx = velocities[:, 0]
@@ -462,8 +451,8 @@ class PathPlanner:
         # Calculate marker points in inches
         start, end, pseudo_start, pseudo_end = self._get_marker_points(start_point, end_point)
         
-        ax.plot(self.init_x, self.init_y, linestyle=':', color='gray', alpha=0.7, label='initial path')
-        ax.plot(planned_px, planned_py, '-o', label='path', color="blue", alpha=0.5)
+        ax1.plot(self.init_x, self.init_y, linestyle=':', color='gray', alpha=0.7, label='initial path')
+        ax1.plot(planned_px, planned_py, '-o', label='path', color="blue", alpha=0.5)
         
         theta_list = np.linspace(0, 2 * np.pi, 100)
         num_outlines = 3
@@ -477,21 +466,21 @@ class PathPlanner:
             rotation = Affine2D().rotate_around(px, py, theta)
             rectangle = plt.Rectangle((px - robot.length / 2, py - robot.width / 2), robot.length, robot.width,
                                       edgecolor='blue', facecolor='none', alpha=1)
-            rectangle.set_transform(rotation + ax.transData)
+            rectangle.set_transform(rotation + ax1.transData)
             if index % mod == 0 or index == self.num_steps - 1:
                 robot_circle_x = px + robot_radius * np.cos(theta_list)
                 robot_circle_y = py + robot_radius * np.sin(theta_list)
-                ax.plot(robot_circle_x, robot_circle_y, '--', color='blue', alpha=0.5, label='robot radius' if index == 0 else None)
-                ax.add_patch(rectangle)
+                ax1.plot(robot_circle_x, robot_circle_y, '--', color='blue', alpha=0.5, label='robot radius' if index == 0 else None)
+                ax1.add_patch(rectangle)
             index += 1
             
-        ax.plot(start[0], start[1], '*', color='orange', markersize=12, label='start')
-        ax.plot(end[0], end[1], '*', color='green', markersize=12, label='end')
+        ax1.plot(start[0], start[1], '*', color='orange', markersize=12, label='start')
+        ax1.plot(end[0], end[1], '*', color='green', markersize=12, label='end')
 
-        ax.plot(
+        ax1.plot(
             pseudo_start[0], pseudo_start[1], 'o', markerfacecolor='none', markeredgecolor='orange', markersize=8, label='pseudo start'
         )
-        ax.plot(
+        ax1.plot(
             pseudo_end[0], pseudo_end[1], 'o', markerfacecolor='none', markeredgecolor='green', markersize=8, label='pseudo end'
         )
         first_obstacle = True
@@ -501,23 +490,65 @@ class PathPlanner:
             buffer_x = obstacle.x + (obstacle.radius + buffer_radius) * np.cos(theta_list)
             buffer_y = obstacle.y + (obstacle.radius + buffer_radius) * np.sin(theta_list)
             if first_obstacle:
-                ax.plot(danger_x, danger_y, 'r-', label='obstacle')
-                ax.plot(buffer_x, buffer_y, 'r--', label='buffer zone', alpha=0.5)
+                ax1.plot(danger_x, danger_y, 'r-', label='obstacle')
+                ax1.plot(buffer_x, buffer_y, 'r--', label='buffer zone', alpha=0.5)
                 first_obstacle = False
             else:
-                ax.plot(danger_x, danger_y, 'r-')
-                ax.plot(buffer_x, buffer_y, 'r--', alpha=0.5)
+                ax1.plot(danger_x, danger_y, 'r-')
+                ax1.plot(buffer_x, buffer_y, 'r--', alpha=0.5)
                 
-        ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), borderaxespad=0., frameon=False)
-        ax.set_aspect('equal', adjustable='box')
+        ax1.legend(loc='center left', bbox_to_anchor=(1, 0.5), borderaxespad=0., frameon=False)
+        ax1.set_aspect('equal', adjustable='box')
         half_field = self.field_size / 2
-        ax.set_xlim(-half_field, half_field); ax.set_ylim(-half_field, half_field); ax.grid()
+        ax1.set_xlim(-half_field, half_field)
+        ax1.set_ylim(-half_field, half_field)
+        
+        import matplotlib.ticker as ticker
+        ax1.xaxis.set_major_locator(ticker.MultipleLocator(24))
+        ax1.yaxis.set_major_locator(ticker.MultipleLocator(24))
+        ax1.grid(True)
+        ax1.set_title("Planned Path")
+
+        # --- SUBPLOT 2: Grid Visualization ---
+        grid_size = GRID_SIZE
+        total_radius = robot.total_radius
+        
+        # Use existing grid or generate it
+        if grid is None:
+            grid, _, _ = self._generate_obstacle_grid(obstacles, start, end, total_radius, grid_size)
+        else:
+            # Need to copy to avoid mutating the shared object with the inversion step later
+            grid = np.copy(grid)
+            
+        # Invert the grid (0=white, 1=black for display)
+        grid = 1 - grid
+
+        extent = [-half_field, half_field, -half_field, half_field]
+        ax2.imshow(grid, cmap="gray", origin="lower", extent=extent)
+
+        # Add requested start/end as stars and pseudo start/end as circles
+        ax2.plot(start[0], start[1], '*', color='orange', markersize=12, label='start')
+        ax2.plot(end[0], end[1], '*', color='green', markersize=12, label='end')
+        ax2.plot(
+            pseudo_start[0], pseudo_start[1],
+            'o', markerfacecolor='none', markeredgecolor='orange', markersize=9, label='pseudo start',
+        )
+        ax2.plot(
+            pseudo_end[0], pseudo_end[1],
+            'o', markerfacecolor='none', markeredgecolor='green', markersize=9, label='pseudo end',
+        )
+        ax2.legend(loc='center left', bbox_to_anchor=(1, 0.5), borderaxespad=0., frameon=False)
+
+        ax2.xaxis.set_major_locator(ticker.MultipleLocator(24))
+        ax2.yaxis.set_major_locator(ticker.MultipleLocator(24))
+        ax2.grid(True)
+        ax2.set_title("Obstacle Grid")
+
+        plt.tight_layout()
         plt.savefig(f'{self.output_dir}/path.png', bbox_inches='tight')
         plt.close(fig)  # Close the figure to free memory
 
-        print(f"Path saved to {self.output_dir}/path.png")
-        # Ensure we use an existing grid if not passed explicitly in `plotResults`
-        self.generate_grid_png(obstacles, start_point, end_point, robot, grid)
+        print(f"Visualization saved to {self.output_dir}/path.png")
         
     
     def getPath(self, positions, dt):
@@ -653,7 +684,7 @@ class PathPlanner:
         step = 6.0
         distance = np.linalg.norm(end - start)
 
-        if distance <= 0.5: # If the distance is less than 0.5, just return the start point
+        if distance <= CELL_SIZE: # If the distance is less than a grid cell, just return the start point
             return np.array([start], dtype=np.float64)
 
         num_segments = max(1, int(np.ceil(distance / step)))
@@ -678,13 +709,13 @@ class PathPlanner:
         num_start_points = 0
         num_end_points = 0
 
-        if not np.allclose(planning_start, start_point, atol=0.5):
+        if not np.allclose(planning_start, start_point, atol=CELL_SIZE):
             start_connector = self._build_straight_line_points(start_point, planning_start)
             positions = np.vstack((start_connector[:-1], positions))
             connectors_added = True
             num_start_points = len(start_connector) - 1
 
-        if not np.allclose(planning_end, end_point, atol=0.5):
+        if not np.allclose(planning_end, end_point, atol=CELL_SIZE):
             end_connector = self._build_straight_line_points(planning_end, end_point)
             positions = np.vstack((positions, end_connector[1:]))
             connectors_added = True
@@ -692,32 +723,13 @@ class PathPlanner:
 
         if connectors_added:
             if len(positions) >= 2:
-                # Calculate velocities across all positions
-                velocities_new = np.diff(positions, axis=0) / dt
-                
-                # We need to make sure we don't apply an arbitrary velocity limit but keep acceleration reasonable
-                # If we have too much velocity abruptly, we cap it using max speed
-                max_speed = robot.max_speed
-                speeds = np.linalg.norm(velocities_new, axis=1, keepdims=True)
-                # Avoid division by zero
-                speeds[speeds == 0] = 1.0 
-                # Scale down velocities that exceed max_speed
-                scale = np.where(speeds > max_speed, max_speed / speeds, 1.0)
-                velocities_new = velocities_new * scale
-
-                if num_start_points > 0:
-                    start_dist = np.linalg.norm(planning_start - start_point)
-                    start_dir = (planning_start - start_point) / start_dist
-                    velocities_new[:num_start_points] = 0.25 * max_speed * start_dir
-
-                if num_end_points > 0:
-                    end_dist = np.linalg.norm(end_point - planning_end)
-                    end_dir = (end_point - planning_end) / end_dist
-                    velocities_new[-num_end_points:] = 0.25 * max_speed * end_dir
-
-                velocities = velocities_new
+                # Calculate exact velocities based on position differences
+                velocities = np.diff(positions, axis=0) / dt
             else:
                 velocities = np.zeros((0, 2), dtype=np.float64)
+
+        self.num_start_points = num_start_points
+        self.num_end_points = num_end_points
 
         return positions, velocities
 
@@ -836,63 +848,6 @@ class PathPlanner:
             path.append((inch_x, inch_y))
         return path
 
-    def generate_grid_png(self, obstacles, start_point, end_point, robot: Robot, grid=None):
-        """
-        Generate a PNG of the grid based on obstacles, swap black/white, and add dots for start and end points.
-        All inputs are in inches.
-        """
-        import matplotlib.pyplot as plt
-
-        grid_size = GRID_SIZE
-        
-        total_radius = robot.total_radius
-        
-        start, end, pseudo_start, pseudo_end = self._get_marker_points(start_point, end_point)
-        
-        # Use existing grid or generate it
-        if grid is None:
-            grid, start_grid, end_grid = self._generate_obstacle_grid(obstacles, start, end, total_radius, grid_size)
-        else:
-            # Recreate just the endpoints for this context if passing grid directly
-            start_grid = self._to_grid(start, grid_size)
-            end_grid = self._to_grid(end, grid_size)
-            # Need to copy to avoid mutating the shared object with the inversion step later
-            grid = np.copy(grid)
-            
-        pseudo_start_grid = self._to_grid(pseudo_start, grid_size)
-        pseudo_end_grid = self._to_grid(pseudo_end, grid_size)
-        
-        # Invert the grid (0=white, 1=black for display)
-        grid = 1 - grid
-
-        # Plot the grid
-        fig, ax = plt.subplots(figsize=(6, 6))
-        # Extend bounds from -72 to 72
-        half_field = self.field_size / 2
-        extent = [-half_field, half_field, -half_field, half_field]
-        ax.imshow(grid, cmap="gray", origin="lower", extent=extent)
-        ax.set_title("Grid Visualization")
-        ax.set_xticks([]); ax.set_yticks([])
-
-        # Add requested start/end as stars and pseudo start/end as circles
-        ax.plot(start[0], start[1], '*', color='orange', markersize=12, label='start')
-        ax.plot(end[0], end[1], '*', color='green', markersize=12, label='end')
-        ax.plot(
-            pseudo_start[0], pseudo_start[1],
-            'o', markerfacecolor='none', markeredgecolor='orange', markersize=9, label='pseudo start',
-        )
-        ax.plot(
-            pseudo_end[0], pseudo_end[1],
-            'o', markerfacecolor='none', markeredgecolor='green', markersize=9, label='pseudo end',
-        )
-        ax.legend(loc="upper right")
-
-        plt.tight_layout()
-
-        # Save the grid as a PNG
-        plt.savefig(f"{self.output_dir}/grid.png")
-        plt.close(fig)
-        print(f"Grid PNG saved as {self.output_dir}/grid.png")
 
 # =============================================================================
 # Main Execution
@@ -952,7 +907,7 @@ if __name__ == "__main__":
 
             print(f"Unsuccessful trial: {planner.optimizer_status}")
 
-        planner.plotResults(positions, velocities, start_point, end_point, obstacles, robot)
+        planner.plot_results(positions, velocities, start_point, end_point, obstacles, robot, grid)
         planner.print_trajectory_details(positions, velocities, dt)
         input()
 
