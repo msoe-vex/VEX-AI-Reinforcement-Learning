@@ -2118,14 +2118,27 @@ class PushBackGame(VexGame):
             fov_radius = 72
             fov_start_angle = np.degrees(theta - FOV/2)
             fov_end_angle = np.degrees(theta + FOV/2)
-            fov_wedge = patches.Wedge(
-                (x, y), fov_radius, fov_start_angle, fov_end_angle,
-                facecolor='yellow',
-                alpha=0.15,
-                edgecolor='none',
-                linewidth=0.0
-            )
-            ax.add_patch(fov_wedge)
+            num_segments = 15
+            for seg_idx in range(num_segments):
+                inner_radius = (seg_idx / num_segments) * fov_radius
+                outer_radius = ((seg_idx + 1) / num_segments) * fov_radius
+                # Calculate alpha mapping from 0.25 (inner) to 0.0 (outer)
+                radial_alpha = 0.25 * (1.0 - (seg_idx / (num_segments - 1.0)))
+                
+                width = outer_radius - inner_radius
+                # Matplotlib throws errors if width or alpha are practically zero
+                if radial_alpha <= 0.001 or width <= 0.001:
+                    continue
+                    
+                fov_wedge = patches.Wedge(
+                    (x, y), outer_radius, fov_start_angle, fov_end_angle,
+                    width=width,
+                    facecolor='yellow',
+                    alpha=radial_alpha,
+                    edgecolor='none',
+                    linewidth=0.0
+                )
+                ax.add_patch(fov_wedge)
     
     def action_to_name(self, action: int) -> str:
         """
