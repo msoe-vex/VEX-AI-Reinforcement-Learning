@@ -42,10 +42,6 @@ class PathPlanner:
         self.NUM_OF_ACTS = 2   # Number of MPC actions (vx, vy)
         self.NUM_OF_STATES = 2  # Number of MPC states (px, py)
 
-        default_steps = 30
-
-        self.initialize(default_steps)
-
         # Field coordinate system parameters
         self.field_size = field_size
         self.field_center = np.array(field_center, dtype=np.float64)
@@ -66,12 +62,14 @@ class PathPlanner:
         pos_array = np.array(pos_normalized, dtype=np.float64)
         return pos_array * self.field_size - self.field_size / 2 + self.field_center
     
-    def initialize(self, num_steps):
-        self.num_steps = max(num_steps, 3)
+    def initialize(self, planning_start, planning_end, robot: Robot):
+        inches_per_step = 6.0
+        distance = float(np.linalg.norm(planning_end - planning_start))
+        self.num_steps = max(3, int(distance / inches_per_step))
         self.initial_time_step = 0.1
 
-        self.max_time = 15 # Maximum time for the path
-        self.min_time = 1  # Minimum time for the path
+        self.max_time = distance / (0.5 * robot.max_speed)
+        self.min_time = 1e-2
         self.time_step_min = self.min_time/self.num_steps  # Minimum time step
         self.time_step_max = self.max_time/self.num_steps  # Maximum time step
 
@@ -117,13 +115,8 @@ class PathPlanner:
         planning_start, planning_end = self._snap_endpoints_to_valid_cells(
             grid, start_grid, end_grid, obstacles, robot.total_radius
         )
-
-        # Calculate steps based on distance in inches
-        inches_per_step = 6.0
-        distance = float(np.linalg.norm(planning_end - planning_start))
-        steps = max(3, int(distance / inches_per_step))
         
-        self.initialize(steps)
+        self.initialize(planning_start, planning_end, robot)
         # -------------------------------------------------------------------------
         # Initialization: Define indexes and problem dimensions
         # -------------------------------------------------------------------------
@@ -910,8 +903,8 @@ if __name__ == "__main__":
         name="TestRobot",
         team=Team.RED,
         size=RobotSize.INCH_24,
-        max_speed=60,
-        max_acceleration=60,
+        max_speed=25,
+        max_acceleration=25,
         buffer=1.0,
         length=18.0,
         width=18.0,
