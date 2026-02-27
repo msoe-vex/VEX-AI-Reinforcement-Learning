@@ -115,15 +115,17 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
     def _setup_path_planner(self):
         """Set up path planner if available."""
         try:
-            from path_planner import PathPlanner
+            from vex_core.path_planner import PathPlanner
             
             field_size = self.game.field_size_inches
             
             self.path_planner = PathPlanner(
-                field_size_inches=field_size,
-                field_center=(0, 0)
+                field_size=field_size,
+                field_center=(0, 0),
+                output_dir=self.config.experiment_path
             )
         except (ImportError, Exception):
+            print("Path planner is not available")
             self.path_planner = None
     
     @functools.lru_cache(maxsize=None)
@@ -995,17 +997,17 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                     )
 
                 obstacles = self.game.get_permanent_obstacles()
-                positions_inches, _, _ = self.path_planner.Solve(
+                positions, _, _, _ = self.path_planner.Solve(
                     start_point=start_pos,
                     end_point=end_pos,
                     obstacles=obstacles,
                     robot=robot_config
                 )
                 ax.plot(
-                    positions_inches[:, 0], positions_inches[:, 1],
+                    positions[:, 0], positions[:, 1],
                     linestyle=':', linewidth=1.5, color=color, alpha=0.4
                 )
-            except Exception:
+            except Exception as e:
                 ax.plot(
                     [start_pos[0], end_pos[0]], [start_pos[1], end_pos[1]],
                     linestyle=':', linewidth=1.5, color=color, alpha=0.4

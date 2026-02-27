@@ -270,16 +270,12 @@ def find_latest_checkpoint(experiment_directory: str):
 def apply_training_metadata_overrides(args, metadata, explicit_cli_flags):
     """Override CLI args with values from training_metadata.json unless explicitly set via CLI."""
     metadata_to_arg = {
-        "game": ("game", ["--game"]),
         "learning_rate": ("learning_rate", ["--learning-rate"]),
         "learning_rate_final": ("learning_rate_final", ["--learning-rate-final"]),
         "discount_factor": ("discount_factor", ["--discount-factor"]),
         "entropy": ("entropy", ["--entropy"]),
         "entropy_final": ("entropy_final", ["--entropy-final"]),
-        "randomize": ("randomize", ["--randomize", "--no-randomize"]),
         "num_iters": ("num_iters", ["--num-iters"]),
-        "enable_communication": ("communication", ["--communication", "--no-communication"]),
-        "deterministic": ("deterministic", ["--deterministic", "--no-deterministic"]),
     }
 
     for metadata_key, (arg_name, cli_flags) in metadata_to_arg.items():

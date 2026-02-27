@@ -89,23 +89,9 @@ def run_simulation(
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
 
-    # Read enable_communication from metadata
-    enable_communication = False
-    metadata_path = os.path.join(model_dir, "training_metadata.json")
-    if os.path.exists(metadata_path):
-        try:
-            with open(metadata_path, 'r') as f:
-                metadata = json.load(f)
-                enable_communication = metadata.get("enable_communication", False)
-            print(f"Read enable_communication={enable_communication} from metadata")
-        except Exception as e:
-            print(f"Warning: Could not read enable_communication from metadata: {e}")
-
     if communication_override is not None:
-        print(f"Overridden enable_communication={enable_communication} from arguments")
-        enable_communication = communication_override
-
-    config.enable_communication = enable_communication
+        print(f"Overridden enable_communication={config.enable_communication} from arguments")
+        config.enable_communication = communication_override
 
     # Initialize the game/environment with matching communication configuration
     game = PushBackGame.get_game(
@@ -191,7 +177,7 @@ def run_simulation(
 
                     message_vector = None
                     remaining = model_output.shape[1] - num_actions
-                    if not communication_override: # If communication is disabled, set message vector to zeros
+                    if not config.enable_communication and not communication_override: # If communication is disabled, and communication override is False
                         message_vector = np.zeros(MESSAGE_SIZE, dtype=np.float32)
                     elif remaining >= MESSAGE_SIZE:
                         message_mean = model_output[:, num_actions:num_actions + MESSAGE_SIZE]
@@ -328,22 +314,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     config = VexEnvConfig.from_args(args)
     
-    # Try to read game from metadata if not provided
-    if config.game_name is None:
-        # Look for metadata in the model directory
-        metadata_path = os.path.join(config.experiment_path, "training_metadata.json")
-        if os.path.exists(metadata_path):
-            with open(metadata_path, 'r') as f:
-                metadata = json.load(f)
-                config.game_name = metadata.get("game", "vexai_skills")
-            print(f"Read game variant from metadata: {config.game_name}")
-        else:
-            config.game_name = "vexai_skills"
-            print(f"No metadata found, using default game: {config.game_name}")
-    
-    if args.iterations < 1:
-        raise ValueError("--iterations must be at least 1")
-
     run_simulation(
         config=config,
         iterations=args.iterations,

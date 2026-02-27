@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from vex_core.robot import Robot
 from vex_core.base_game import VexGame, ActionEvent, ActionStep
 from vex_core.base_env import MESSAGE_SIZE
-from vex_core.path_planner import PathPlanner
+from vex_core.path_planner import PathPlanner, Obstacle
 
 # Forward declarations for get_game method
 def _get_game_class(game_name: str):
@@ -236,15 +236,6 @@ PARK_ZONES = {
         bounds=(54.0, 72.0, -12.0, 12.0),
     ),
 }
-
-
-@dataclass
-class Obstacle:
-    """Obstacle for path planning."""
-    x: float
-    y: float
-    radius: float
-    ignore_collision: bool = False
 
 
 PERMANENT_OBSTACLES: List[Obstacle] = [
@@ -1952,7 +1943,7 @@ class PushBackGame(VexGame):
 
             return float(np.clip(max_probability, 0.0, 1.0))
 
-        def _visibility_style(color: str, visibility_probability: float, min_alpha: float = 0.25) -> tuple:
+        def _visibility_style(color: str, visibility_probability: float, min_alpha: float = 0.5) -> tuple:
             probability = float(np.clip(visibility_probability, 0.0, 1.0))
             rgb = np.array(mcolors.to_rgb(color), dtype=float)
             hue, lightness, saturation = colorsys.rgb_to_hls(rgb[0], rgb[1], rgb[2])
@@ -2127,23 +2118,14 @@ class PushBackGame(VexGame):
             fov_radius = 72
             fov_start_angle = np.degrees(theta - FOV/2)
             fov_end_angle = np.degrees(theta + FOV/2)
-            num_segments = 12
-            for seg_idx in range(num_segments):
-                inner_radius = (seg_idx / num_segments) * fov_radius
-                outer_radius = ((seg_idx + 1) / num_segments) * fov_radius
-                mid_radius = 0.5 * (inner_radius + outer_radius)
-                radial_alpha = 0.25 * max(0.0, 1.0 - (mid_radius / fov_radius))
-                if radial_alpha <= 0.001:
-                    continue
-                fov_wedge = patches.Wedge(
-                    (x, y), outer_radius, fov_start_angle, fov_end_angle,
-                    width=(outer_radius - inner_radius),
-                    facecolor='yellow',
-                    alpha=radial_alpha,
-                    edgecolor='none',
-                    linewidth=0.0
-                )
-                ax.add_patch(fov_wedge)
+            fov_wedge = patches.Wedge(
+                (x, y), fov_radius, fov_start_angle, fov_end_angle,
+                facecolor='yellow',
+                alpha=0.15,
+                edgecolor='none',
+                linewidth=0.0
+            )
+            ax.add_patch(fov_wedge)
     
     def action_to_name(self, action: int) -> str:
         """
@@ -2183,7 +2165,7 @@ class PushBackGame(VexGame):
         start_pos = [robot_pos[0], robot_pos[1]]
 
         def get_path(start_pos, end_pos):
-            positions, velocities, dt = self.path_planner.Solve(start_point=start_pos, end_point=end_pos, obstacles=[], robot=robot)
+            positions, _, _, _ = self.path_planner.Solve(start_point=start_pos, end_point=end_pos, obstacles=self.get_permanent_obstacles(), robot=robot)
             points_str = ",".join([f"({pos[0]:.3f}, {pos[1]:.3f})" for pos in positions])
             return points_str
         

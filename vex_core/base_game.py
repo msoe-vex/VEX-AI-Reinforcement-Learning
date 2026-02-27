@@ -21,7 +21,6 @@ DEFAULT_REWARD_WEIGHT_INDIVIDUAL_PENALTY = -1.0 # Negative weight for individual
 DEFAULT_REWARD_WEIGHT_TEAM_PENALTY = -0.1 # Negative weight for team penalties (e.g., opponent scoring, collisions), encourages communication to avoid penalties but with a lower weight to prevent over-penalizing risky but potentially rewarding actions
 
 from vex_core.robot import Robot, Team, RobotSize
-from vex_core.path_planner import PathPlanner
 
 
 @dataclass
@@ -63,7 +62,6 @@ class VexGame(ABC):
         """Initialize with robot configurations."""
         self.robots = robots or []
         self._robot_map = {r.name: r for r in self.robots}
-        self.path_planner = PathPlanner()
         self.enable_communication = enable_communication
         self.state: Dict = None  # Game state, initialized by get_initial_state()
         self.reward_weight_team_delta = DEFAULT_REWARD_WEIGHT_TEAM_DELTA
