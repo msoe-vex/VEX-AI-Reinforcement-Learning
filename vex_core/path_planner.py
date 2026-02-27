@@ -70,9 +70,9 @@ class PathPlanner:
         self.initial_time_step = 0.1
 
         self.max_time = distance / (0.5 * robot.max_speed)
-        self.min_time = 1e-2
+        self.min_time = 1e-8
         self.time_step_min = self.min_time/self.num_steps  # Minimum time step
-        self.time_step_max = self.max_time/self.num_steps  # Maximum time step
+        self.time_step_max = max(self.time_step_min, self.max_time/self.num_steps)  # Maximum time step
 
 
     def get_initial_path(self, x1, y1, x2, y2):
@@ -114,7 +114,7 @@ class PathPlanner:
 
         # Snap start/end to nearest valid grid cells if either is invalid
         planning_start, planning_end = self._snap_endpoints_to_valid_cells(
-            grid, start_grid, end_grid, obstacles, robot.total_radius
+            grid, start_grid, end_grid, start_point, end_point, obstacles, robot.total_radius
         )
         
         self.initialize(planning_start, planning_end, robot)
@@ -651,7 +651,7 @@ class PathPlanner:
 
         return True
 
-    def _snap_endpoints_to_valid_cells(self, grid, start, end, obstacles, total_radius, grid_size=GRID_SIZE):
+    def _snap_endpoints_to_valid_cells(self, grid, start_grid, end_grid, start_raw, end_raw, obstacles, total_radius, grid_size=GRID_SIZE):
 
         def nlp_validator(grid_point):
             point = self._grid_to(grid_point, grid_size)
@@ -661,20 +661,20 @@ class PathPlanner:
                 total_radius,
             )
 
-        start_pt = self._grid_to(start, grid_size)
-        end_pt = self._grid_to(end, grid_size)
-        
-        # Check if the exact points are acceptable
-        start_valid = self._is_point_valid_for_nlp(start_pt, obstacles, total_radius)
-        end_valid = self._is_point_valid_for_nlp(end_pt, obstacles, total_radius)
+        # Check if the exact continuous points are acceptable
+        start_valid = self._is_point_valid_for_nlp(start_raw, obstacles, total_radius)
+        end_valid = self._is_point_valid_for_nlp(end_raw, obstacles, total_radius)
+
+        start_pt = start_raw if start_valid else self._grid_to(start_grid, grid_size)
+        end_pt = end_raw if end_valid else self._grid_to(end_grid, grid_size)
 
         if not start_valid:
-            snapped_start = self._find_nearest_valid_cell_bfs(grid, start, validator=nlp_validator)
+            snapped_start = self._find_nearest_valid_cell_bfs(grid, start_grid, validator=nlp_validator)
             if snapped_start is not None:
                 start_pt = self._grid_to(snapped_start, grid_size)
 
         if not end_valid:
-            snapped_end = self._find_nearest_valid_cell_bfs(grid, end, validator=nlp_validator)
+            snapped_end = self._find_nearest_valid_cell_bfs(grid, end_grid, validator=nlp_validator)
             if snapped_end is not None:
                 end_pt = self._grid_to(snapped_end, grid_size)
 
@@ -907,9 +907,9 @@ if __name__ == "__main__":
 
             print(f"Unsuccessful trial: {planner.optimizer_status}")
 
-        planner.plot_results(positions, velocities, start_point, end_point, obstacles, robot, grid)
-        planner.print_trajectory_details(positions, velocities, dt)
-        input()
+        # planner.plot_results(positions, velocities, start_point, end_point, obstacles, robot, grid)
+        # planner.print_trajectory_details(positions, velocities, dt)
+        # input()
 
         total_solve_time += planner.solve_time
 
