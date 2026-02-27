@@ -11,6 +11,7 @@ import torch.nn as nn
 # Import from new modular architecture
 from vex_core.base_game import VexGame
 from vex_core.base_env import VexMultiAgentEnv
+from vex_core.config import VexEnvConfig
 from pushback import PushBackGame
 # Import your custom model class to ensure pickle can find it
 from vex_custom_model import VexCustomPPO
@@ -41,13 +42,11 @@ def find_latest_checkpoint(experiment_path: str):
 
     return max(checkpoint_dirs, key=checkpoint_sort_key)
 
-def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, output_path: str = None, enable_communication: bool = True):
+def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, output_path: str = None, env_config: VexEnvConfig = None):
     def env_creator(config=None):
-        config = config or {}
         return VexMultiAgentEnv(
             game=game, 
-            render_mode=None,
-            enable_communication=config.get("enable_communication", enable_communication)
+            config=env_config
         )
 
     # Normalize the checkpoint URI to an absolute path (Ray may expect a file:// or absolute path)
@@ -205,33 +204,24 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--experiment-path", type=str, required=True)
+    VexEnvConfig.add_cli_args(parser, experiment_path=None)
     args = parser.parse_args()
 
     experiment_path = os.path.abspath(args.experiment_path)
     if not os.path.exists(experiment_path):
         raise FileNotFoundError(f"Experiment path does not exist: {experiment_path}")
 
-    metadata_path = os.path.join(experiment_path, "training_metadata.json")
-    game_name = "vexai_skills"
-    enable_communication = False
-
-    if os.path.exists(metadata_path):
-        try:
-            with open(metadata_path, 'r') as f:
-                metadata = json.load(f)
-                game_name = metadata.get("game", game_name)
-                enable_communication = metadata.get("enable_communication", False)
-            print(f"Read metadata: game={game_name}, enable_communication={enable_communication}")
-        except Exception as e:
-            print(f"Warning: Could not read metadata: {e}")
-    else:
-        print(f"Warning: No training metadata found at {metadata_path}. Using defaults.")
+    env_config = VexEnvConfig.from_args(args)
+    env_config.experiment_path = experiment_path
+    env_config.render_mode = None
+    env_config.randomize = False
+    env_config.deterministic = True
 
     checkpoint_path = find_latest_checkpoint(experiment_path)
     if checkpoint_path is None:
         raise FileNotFoundError(f"No checkpoint directories found under: {experiment_path}")
 
     print(f"Using checkpoint: {checkpoint_path}")
-    game = PushBackGame.get_game(game_name, enable_communication=enable_communication)
-    compile_checkpoint_to_torchscript(game, checkpoint_path, experiment_path, enable_communication)
+    game = PushBackGame.get_game(env_config.game_name, enable_communication=env_config.enable_communication)
+    
+    compile_checkpoint_to_torchscript(game, checkpoint_path, experiment_path, env_config)

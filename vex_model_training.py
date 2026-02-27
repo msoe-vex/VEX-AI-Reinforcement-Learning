@@ -237,8 +237,8 @@ def env_creator(config=None):
 
 # Policy mapping function to assign agents to policies.
 def policy_mapping_fn(agent_id, episode):
-    return "shared_policy" # Use the same policy for all agents
-    # return agent_id # Change to agent_id if you want to use different policies for each agent
+    # return "shared_policy" # Use the same policy for all agents
+    return agent_id # Change to agent_id if you want to use different policies for each agent
 
 
 def find_latest_checkpoint(experiment_directory: str):
@@ -547,7 +547,7 @@ if __name__ == "__main__":
     
     print(f"Saving results to: {experiment_dir}")
 
-    compile_checkpoint_to_torchscript(temp_env.game, best_checkpoint_path, experiment_dir)
+    compile_checkpoint_to_torchscript(temp_env.game, best_checkpoint_path, experiment_dir, env_config=env_config_obj)
 
     # Shutdown Ray
     ray.shutdown()
