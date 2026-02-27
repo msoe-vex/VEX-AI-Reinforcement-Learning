@@ -67,7 +67,7 @@ def load_agent_models(model_dir, agents, device):
 def run_simulation(
     config: VexEnvConfig,
     iterations=1,
-    communication_override=None,
+    test_communication=None,
 ):
     """
     Loads trained models and runs one or more simulations in the VEX environment.
@@ -75,7 +75,7 @@ def run_simulation(
     Args:
         config (VexEnvConfig): Configuration object containing parameters.
         iterations (int): Number of episodes to run.
-        communication_override (bool): Override for communication setting.
+        test_communication (bool): Whether to test communication. Only used if config.enable_communication is True.
     """
     model_dir = config.experiment_path
     output_dir = config.experiment_path
@@ -88,10 +88,6 @@ def run_simulation(
     # Device Awareness: Automatically use GPU (CUDA) if available
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
-
-    if communication_override is not None:
-        print(f"Overridden enable_communication={config.enable_communication} from arguments")
-        config.enable_communication = communication_override
 
     # Initialize the game/environment with matching communication configuration
     game = PushBackGame.get_game(
@@ -177,7 +173,7 @@ def run_simulation(
 
                     message_vector = None
                     remaining = model_output.shape[1] - num_actions
-                    if not config.enable_communication and not communication_override: # If communication is disabled, and communication override is False
+                    if not test_communication: # If communication is explicitly disabled
                         message_vector = np.zeros(MESSAGE_SIZE, dtype=np.float32)
                     elif remaining >= MESSAGE_SIZE:
                         message_mean = model_output[:, num_actions:num_actions + MESSAGE_SIZE]
@@ -310,6 +306,12 @@ if __name__ == "__main__":
         default=1,
         help="Number of simulation iterations to run"
     )
+    parser.add_argument(
+        "--test-communication",
+        action=argparse.BooleanOptionalAction,
+        help="Enable testing communication between agents",
+        default=True
+    )
     
     args = parser.parse_args()
     config = VexEnvConfig.from_args(args)
@@ -317,5 +319,5 @@ if __name__ == "__main__":
     run_simulation(
         config=config,
         iterations=args.iterations,
-        communication_override=args.communication if hasattr(args, "communication") else None,
+        test_communication=args.test_communication if hasattr(args, "test_communication") else None,
     )
