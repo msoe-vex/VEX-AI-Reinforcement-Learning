@@ -34,7 +34,7 @@ GRID_SIZE = 144
 # =============================================================================
 class PathPlanner:
     # All values are based on a scale from 0 to 1, where 1 is the length of the field
-    def __init__(self, field_size_inches=144, field_center=(0, 0), output_dir="path_planner"):
+    def __init__(self, field_size=144, field_center=(0, 0), output_dir="path_planner"):
         # -------------------------------------------------------------------------
         # Initialization: Field parameters
         # -------------------------------------------------------------------------
@@ -47,24 +47,24 @@ class PathPlanner:
         self.initialize(default_steps)
 
         # Field coordinate system parameters
-        self.field_size_inches = field_size_inches
+        self.field_size = field_size
         self.field_center = np.array(field_center, dtype=np.float64)
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
     
-    def inches_to_normalized(self, pos_inches):
+    def _normalize(self, pos):
         """Convert position from inches (field coordinates) to normalized scale (0-1)."""
-        if isinstance(pos_inches, np.ndarray):
-            return (pos_inches - self.field_center + self.field_size_inches / 2) / self.field_size_inches
-        pos_array = np.array(pos_inches, dtype=np.float64)
-        return (pos_array - self.field_center + self.field_size_inches / 2) / self.field_size_inches
+        if isinstance(pos, np.ndarray):
+            return (pos - self.field_center + self.field_size / 2) / self.field_size
+        pos_array = np.array(pos, dtype=np.float64)
+        return (pos_array - self.field_center + self.field_size / 2) / self.field_size
     
-    def normalized_to_inches(self, pos_normalized):
+    def _denormalize(self, pos_normalized):
         """Convert position from normalized scale (0-1) to inches (field coordinates)."""
         if isinstance(pos_normalized, np.ndarray):
-            return pos_normalized * self.field_size_inches - self.field_size_inches / 2 + self.field_center
+            return pos_normalized * self.field_size - self.field_size / 2 + self.field_center
         pos_array = np.array(pos_normalized, dtype=np.float64)
-        return pos_array * self.field_size_inches - self.field_size_inches / 2 + self.field_center
+        return pos_array * self.field_size - self.field_size / 2 + self.field_center
     
     def initialize(self, num_steps):
         self.num_steps = max(num_steps, 3)
@@ -97,31 +97,31 @@ class PathPlanner:
             optimize: When False, skip NLP and return BFS+A*-based path
         """
         # Calculate robot parameters locally
-        robot_radius_norm, buffer_radius_norm, total_radius_norm = self._get_robot_norms(robot)
+        robot_radius_normalized, buffer_radius_normalized, total_radius_normalized = self._get_robot_norms(robot)
         
-        max_velocity_norm = robot.max_speed / self.field_size_inches
-        max_accel_norm = robot.max_acceleration / self.field_size_inches
+        max_velocity_normalized = robot.max_speed / self.field_size
+        max_accel_normalized = robot.max_acceleration / self.field_size
 
         start_time = time.time()
         
-        start_point_inches = np.array(start_point, dtype=np.float64)
-        end_point_inches = np.array(end_point, dtype=np.float64)
+        start_point = np.array(start_point, dtype=np.float64)
+        end_point = np.array(end_point, dtype=np.float64)
 
         # Convert input positions from inches to normalized coordinates
         # Generate the obstacle grid ONCE per solve using inches directly
-        grid, start_grid_in, end_grid_in = self._generate_obstacle_grid(
-            obstacles, start_point_inches, end_point_inches, robot.buffer + max(robot.length, robot.width) / 2
+        grid, start_grid, end_grid = self._generate_obstacle_grid(
+            obstacles, start_point, end_point, robot.total_radius
         )
 
         # Snap start/end to nearest valid grid cells if either is invalid
-        planning_start_inches, planning_end_inches = self._snap_endpoints_to_valid_cells(
-            grid, start_grid_in, end_grid_in, obstacles, robot.buffer + max(robot.length, robot.width) / 2
+        planning_start, planning_end = self._snap_endpoints_to_valid_cells(
+            grid, start_grid, end_grid, obstacles, robot.total_radius
         )
 
         # Calculate steps based on distance in inches
         inches_per_step = 6.0
-        distance_inches = float(np.linalg.norm(planning_end_inches - planning_start_inches))
-        steps = max(3, int(distance_inches / inches_per_step))
+        distance = float(np.linalg.norm(planning_end - planning_start))
+        steps = max(3, int(distance / inches_per_step))
         
         self.initialize(steps)
         # -------------------------------------------------------------------------
@@ -142,7 +142,7 @@ class PathPlanner:
         cost = 0.0
 
         # Perform A* search to get an initial path in inches
-        a_star_path = self.a_star_search(grid, planning_start_inches, planning_end_inches, obstacles, robot.buffer + max(robot.length, robot.width) / 2)
+        a_star_path = self.a_star_search(grid, planning_start, planning_end, obstacles, robot.total_radius)
         if a_star_path:
             # Interpolate the A* path to match the number of steps
             a_star_path = np.array(a_star_path)
@@ -150,40 +150,40 @@ class PathPlanner:
             init_y = np.interp(np.linspace(0, 1, self.num_steps), np.linspace(0, 1, len(a_star_path)), a_star_path[:, 1])
         else:
             # Fall back to the default initial path if A* fails
-            init_x, init_y = self.get_initial_path(planning_start_inches[0], planning_start_inches[1], planning_end_inches[0], planning_end_inches[1])
+            init_x, init_y = self.get_initial_path(planning_start[0], planning_start[1], planning_end[0], planning_end[1])
 
-        init_x[0], init_y[0] = planning_start_inches[0], planning_start_inches[1]
-        init_x[-1], init_y[-1] = planning_end_inches[0], planning_end_inches[1]
+        init_x[0], init_y[0] = planning_start[0], planning_start[1]
+        init_x[-1], init_y[-1] = planning_end[0], planning_end[1]
 
         self.init_x = init_x.copy()  # For plotting
         self.init_y = init_y.copy()
 
         if not optimize:
-            positions_inches = self._build_fallback_positions_inches(
+            positions = self._build_fallback_positions(
                 a_star_path,
-                planning_start_inches,
-                planning_end_inches,
+                planning_start,
+                planning_end,
             )
             dt = self.initial_time_step
             self.optimizer_status = 'NLP_Disabled'
             self.status = 'AStar_Only_Succeeded'
 
-            if len(positions_inches) >= 2:
-                velocities_inches = np.diff(positions_inches, axis=0) / dt
+            if len(positions) >= 2:
+                velocities = np.diff(positions, axis=0) / dt
             else:
-                velocities_inches = np.zeros((0, 2), dtype=np.float64)
+                velocities = np.zeros((0, 2), dtype=np.float64)
 
-            positions_inches, velocities_inches = self._apply_start_end_connectors(
-                positions_inches,
-                velocities_inches,
+            positions, velocities = self._apply_start_end_connectors(
+                positions,
+                velocities,
                 dt,
-                start_point_inches,
-                end_point_inches,
-                planning_start_inches,
-                planning_end_inches,
+                start_point,
+                end_point,
+                planning_start,
+                planning_end,
             )
             self.solve_time = time.time() - start_time
-            return positions_inches, velocities_inches, dt, grid
+            return positions, velocities, dt, grid
 
         # Build initial guess using the A* path and zero velocity
         init_time_step = self.initial_time_step
@@ -193,20 +193,20 @@ class PathPlanner:
         init_vy = np.diff(init_y) / init_time_step
 
         # Clip to ensure they don't violate your strict velocity bounds (in inches/s)
-        max_vel_inches = robot.max_speed
-        init_vx = np.clip(init_vx, -max_vel_inches, max_vel_inches)
-        init_vy = np.clip(init_vy, -max_vel_inches, max_vel_inches)
+        max_vel = robot.max_speed
+        init_vx = np.clip(init_vx, -max_vel, max_vel)
+        init_vy = np.clip(init_vy, -max_vel, max_vel)
 
         init_v = np.concatenate((init_vx, init_vy))
 
         # Convert the guesses to normalized space exactly for the solver
         init_xy = np.column_stack((init_x, init_y))
-        init_xy_norm = self.inches_to_normalized(init_xy)
-        init_x_norm = init_xy_norm[:, 0]
-        init_y_norm = init_xy_norm[:, 1]
-        init_v_norm = init_v / self.field_size_inches
+        init_xy_normalized = self._normalize(init_xy)
+        init_x_normalized = init_xy_normalized[:, 0]
+        init_y_normalized = init_xy_normalized[:, 1]
+        init_v_normalized = init_v / self.field_size
         
-        x_ = np.concatenate((init_x_norm, init_y_norm, init_v_norm, [init_time_step]))
+        x_ = np.concatenate((init_x_normalized, init_y_normalized, init_v_normalized, [init_time_step]))
 
         time_step = x[self.indexes.dt]
         cost += w_time_step * time_step * self.num_steps
@@ -215,24 +215,24 @@ class PathPlanner:
         x_lowerbound_ = [0] * self.num_of_x_
         x_upperbound_ = [1] * self.num_of_x_
         for i in range(self.indexes.px, self.indexes.py + self.num_steps):
-            x_lowerbound_[i] = total_radius_norm
-            x_upperbound_[i] = 1 - total_radius_norm
+            x_lowerbound_[i] = total_radius_normalized
+            x_upperbound_[i] = 1 - total_radius_normalized
         for i in range(self.indexes.vx, self.indexes.vy + self.num_steps - 1):
-            x_lowerbound_[i] = -max_velocity_norm
-            x_upperbound_[i] = max_velocity_norm
+            x_lowerbound_[i] = -max_velocity_normalized
+            x_upperbound_[i] = max_velocity_normalized
 
         # Constrain start and final positions (using normalized coordinates)
-        planning_start_norm = self.inches_to_normalized(planning_start_inches)
-        planning_end_norm = self.inches_to_normalized(planning_end_inches)
+        planning_start_normalized = self._normalize(planning_start)
+        planning_end_normalized = self._normalize(planning_end)
 
-        x_lowerbound_[self.indexes.px] = planning_start_norm[0]
-        x_lowerbound_[self.indexes.py] = planning_start_norm[1]
-        x_lowerbound_[self.indexes.px + self.num_steps - 1] = planning_end_norm[0]
-        x_lowerbound_[self.indexes.py + self.num_steps - 1] = planning_end_norm[1]
-        x_upperbound_[self.indexes.px] = planning_start_norm[0]
-        x_upperbound_[self.indexes.py] = planning_start_norm[1]
-        x_upperbound_[self.indexes.px + self.num_steps - 1] = planning_end_norm[0]
-        x_upperbound_[self.indexes.py + self.num_steps - 1] = planning_end_norm[1]
+        x_lowerbound_[self.indexes.px] = planning_start_normalized[0]
+        x_lowerbound_[self.indexes.py] = planning_start_normalized[1]
+        x_lowerbound_[self.indexes.px + self.num_steps - 1] = planning_end_normalized[0]
+        x_lowerbound_[self.indexes.py + self.num_steps - 1] = planning_end_normalized[1]
+        x_upperbound_[self.indexes.px] = planning_start_normalized[0]
+        x_upperbound_[self.indexes.py] = planning_start_normalized[1]
+        x_upperbound_[self.indexes.px + self.num_steps - 1] = planning_end_normalized[0]
+        x_upperbound_[self.indexes.py + self.num_steps - 1] = planning_end_normalized[1]
 
         # Constrain time step
         x_lowerbound_[self.indexes.dt] = self.time_step_min
@@ -253,7 +253,7 @@ class PathPlanner:
             vy = x[curr_vy_index]
             g[g_index] = vx**2 + vy**2
             g_lowerbound_[g_index] = 0
-            g_upperbound_[g_index] = max_velocity_norm**2
+            g_upperbound_[g_index] = max_velocity_normalized**2
             g_index += 1
         
         # Acceleration constraints
@@ -264,7 +264,7 @@ class PathPlanner:
             next_vy_index = curr_vy_index + 1
             dvx = x[next_vx_index] - x[curr_vx_index]
             dvy = x[next_vy_index] - x[curr_vy_index]
-            g[g_index] = dvx**2 + dvy**2 - (max_accel_norm * time_step)**2
+            g[g_index] = dvx**2 + dvy**2 - (max_accel_normalized * time_step)**2
             g_lowerbound_[g_index] = -1e10
             g_upperbound_[g_index] = 0
             g_index += 1
@@ -297,12 +297,12 @@ class PathPlanner:
             curr_px = x[curr_px_index]
             curr_py = x[curr_py_index]
             for obstacle in obstacles:
-                obstacle_norm = self.inches_to_normalized(np.array([obstacle.x, obstacle.y]))
-                g[g_index] = (curr_px - obstacle_norm[0])**2 + (curr_py - obstacle_norm[1])**2
+                obstacle_normalized = self._normalize(np.array([obstacle.x, obstacle.y]))
+                g[g_index] = (curr_px - obstacle_normalized[0])**2 + (curr_py - obstacle_normalized[1])**2
                 if obstacle.ignore_collision:
                     g_lowerbound_[g_index] = 0.0
                 else:
-                    g_lowerbound_[g_index] = ((obstacle.radius / self.field_size_inches) + total_radius_norm)**2
+                    g_lowerbound_[g_index] = ((obstacle.radius / self.field_size) + total_radius_normalized)**2
                 g_upperbound_[g_index] = 2.0 # Max distance (sqrt2) squared
                 g_index += 1
 
@@ -352,45 +352,45 @@ class PathPlanner:
         # Extract solution components
         if self.optimizer_status == 'Solve_Succeeded':
             x_opt = res['x'].full().flatten()
-            pos_x_norm = x_opt[self.indexes.px:self.indexes.py]
-            pos_y_norm = x_opt[self.indexes.py:self.indexes.vx]
-            vel_x_norm = x_opt[self.indexes.vx:self.indexes.vy]
-            vel_y_norm = x_opt[self.indexes.vy:self.indexes.dt]
+            pos_x_normalized = x_opt[self.indexes.px:self.indexes.py]
+            pos_y_normalized = x_opt[self.indexes.py:self.indexes.vx]
+            vel_x_normalized = x_opt[self.indexes.vx:self.indexes.vy]
+            vel_y_normalized = x_opt[self.indexes.vy:self.indexes.dt]
             dt = x_opt[self.indexes.dt]
 
             # Convert positions from normalized coordinates back to inches
-            positions_normalized = np.column_stack((pos_x_norm, pos_y_norm))
-            positions_inches = np.array([self.normalized_to_inches(pos) for pos in positions_normalized])
+            positions_normalized = np.column_stack((pos_x_normalized, pos_y_normalized))
+            positions = np.array([self._denormalize(pos) for pos in positions_normalized])
 
             # Convert velocities from normalized units back to inches per second
-            velocities_normalized = np.column_stack((vel_x_norm, vel_y_norm))
-            velocities_inches = velocities_normalized * self.field_size_inches
+            velocities_normalized = np.column_stack((vel_x_normalized, vel_y_normalized))
+            velocities = velocities_normalized * self.field_size
         else:
-            positions_inches = self._build_fallback_positions_inches(
+            positions = self._build_fallback_positions(
                 a_star_path,
-                planning_start_inches,
-                planning_end_inches,
+                planning_start,
+                planning_end,
             )
             dt = self.initial_time_step
             self.status = 'Grid_Fallback_Succeeded'
-            if len(positions_inches) >= 2:
-                velocities_inches = np.diff(positions_inches, axis=0) / dt
+            if len(positions) >= 2:
+                velocities = np.diff(positions, axis=0) / dt
             else:
-                velocities_inches = np.zeros((0, 2), dtype=np.float64)
+                velocities = np.zeros((0, 2), dtype=np.float64)
 
-        positions_inches, velocities_inches = self._apply_start_end_connectors(
-            positions_inches,
-            velocities_inches,
+        positions, velocities = self._apply_start_end_connectors(
+            positions,
+            velocities,
             dt,
-            start_point_inches,
-            end_point_inches,
-            planning_start_inches,
-            planning_end_inches,
+            start_point,
+            end_point,
+            planning_start,
+            planning_end,
         )
 
         self.solve_time = time.time() - start_time
 
-        return positions_inches, velocities_inches, dt, grid
+        return positions, velocities, dt, grid
 
     def print_trajectory_details(self, positions, velocities, dt, save_path=None):
         # -------------------------------------------------------------------------
@@ -448,7 +448,7 @@ class PathPlanner:
         planned_theta = np.concatenate(([planned_theta[0]], planned_theta, [planned_theta[-1]]))
         
         # Calculate marker points in inches
-        start_inches, end_inches, pseudo_start_inches, pseudo_end_inches = self._get_marker_points_inches(start_point, end_point)
+        start, end, pseudo_start, pseudo_end = self._get_marker_points(start_point, end_point)
         
         ax.plot(self.init_x, self.init_y, linestyle=':', color='gray', alpha=0.7, label='initial path')
         ax.plot(planned_px, planned_py, '-o', label='path', color="blue", alpha=0.5)
@@ -458,8 +458,8 @@ class PathPlanner:
         mod = max(1, round(self.num_steps / (num_outlines - 1)))
         index = 0
         
-        robot_radius_inches = sqrt(robot.length**2 + robot.width**2) / 2
-        buffer_radius_inches = robot.buffer
+        robot_radius = robot.radius
+        buffer_radius = robot.buffer
         
         for px, py, theta in zip(planned_px, planned_py, planned_theta):
             rotation = Affine2D().rotate_around(px, py, theta)
@@ -467,27 +467,27 @@ class PathPlanner:
                                       edgecolor='blue', facecolor='none', alpha=1)
             rectangle.set_transform(rotation + ax.transData)
             if index % mod == 0 or index == self.num_steps - 1:
-                robot_circle_x = px + robot_radius_inches * np.cos(theta_list)
-                robot_circle_y = py + robot_radius_inches * np.sin(theta_list)
+                robot_circle_x = px + robot_radius * np.cos(theta_list)
+                robot_circle_y = py + robot_radius * np.sin(theta_list)
                 ax.plot(robot_circle_x, robot_circle_y, '--', color='blue', alpha=0.5, label='robot radius' if index == 0 else None)
                 ax.add_patch(rectangle)
             index += 1
             
-        ax.plot(start_inches[0], start_inches[1], '*', color='orange', markersize=12, label='start')
-        ax.plot(end_inches[0], end_inches[1], '*', color='green', markersize=12, label='end')
+        ax.plot(start[0], start[1], '*', color='orange', markersize=12, label='start')
+        ax.plot(end[0], end[1], '*', color='green', markersize=12, label='end')
 
         ax.plot(
-            pseudo_start_inches[0], pseudo_start_inches[1], 'o', markerfacecolor='none', markeredgecolor='orange', markersize=8, label='pseudo start'
+            pseudo_start[0], pseudo_start[1], 'o', markerfacecolor='none', markeredgecolor='orange', markersize=8, label='pseudo start'
         )
         ax.plot(
-            pseudo_end_inches[0], pseudo_end_inches[1], 'o', markerfacecolor='none', markeredgecolor='green', markersize=8, label='pseudo end'
+            pseudo_end[0], pseudo_end[1], 'o', markerfacecolor='none', markeredgecolor='green', markersize=8, label='pseudo end'
         )
         first_obstacle = True
         for obstacle in obstacles:
             danger_x = obstacle.x + obstacle.radius * np.cos(theta_list)
             danger_y = obstacle.y + obstacle.radius * np.sin(theta_list)
-            buffer_x = obstacle.x + (obstacle.radius + buffer_radius_inches) * np.cos(theta_list)
-            buffer_y = obstacle.y + (obstacle.radius + buffer_radius_inches) * np.sin(theta_list)
+            buffer_x = obstacle.x + (obstacle.radius + buffer_radius) * np.cos(theta_list)
+            buffer_y = obstacle.y + (obstacle.radius + buffer_radius) * np.sin(theta_list)
             if first_obstacle:
                 ax.plot(danger_x, danger_y, 'r-', label='obstacle')
                 ax.plot(buffer_x, buffer_y, 'r--', label='buffer zone', alpha=0.5)
@@ -498,7 +498,7 @@ class PathPlanner:
                 
         ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), borderaxespad=0., frameon=False)
         ax.set_aspect('equal', adjustable='box')
-        half_field = self.field_size_inches / 2
+        half_field = self.field_size / 2
         ax.set_xlim(-half_field, half_field); ax.set_ylim(-half_field, half_field); ax.grid()
         plt.savefig(f'{self.output_dir}/path.png', bbox_inches='tight')
         plt.close(fig)  # Close the figure to free memory
@@ -515,7 +515,7 @@ class PathPlanner:
         total_path_time = dt * len(positions)
         return planned_px, planned_py, total_path_time
 
-    def _generate_obstacle_grid(self, obstacles, start_point, end_point, total_radius_inches, grid_size=GRID_SIZE):
+    def _generate_obstacle_grid(self, obstacles, start_point, end_point, total_radius, grid_size=GRID_SIZE):
         """
         Helper method to generate an obstacle grid for A* search and visualization in inches.
         """
@@ -523,25 +523,25 @@ class PathPlanner:
         
         # Helper to convert physical inch to grid index
         def in_to_grid(inch_val):
-            norm_val = (inch_val - (-self.field_size_inches / 2)) / self.field_size_inches
+            norm_val = (inch_val - (-self.field_size / 2)) / self.field_size
             return int(np.clip(norm_val * grid_size, 0, grid_size - 1))
             
         def in_to_grid_radius(inch_radius):
-            return int((inch_radius / self.field_size_inches) * grid_size)
+            return int((inch_radius / self.field_size) * grid_size)
 
         # Block grid cells based on obstacles
         for obstacle in obstacles:
             if obstacle.ignore_collision:
                 continue
             cx, cy = in_to_grid(obstacle.x), in_to_grid(obstacle.y)
-            radius = in_to_grid_radius(obstacle.radius + total_radius_inches)
+            radius = in_to_grid_radius(obstacle.radius + total_radius)
             for x in range(max(0, cx - radius), min(grid_size, cx + radius + 1)):
                 for y in range(max(0, cy - radius), min(grid_size, cy + radius + 1)):
                     if (x - cx)**2 + (y - cy)**2 <= radius**2:
                         grid[y, x] = 1  # Mark as blocked (grid is [row=y, col=x])
         
         # Block any cell within robot radius of the field boundary
-        robot_radius_cells = in_to_grid_radius(total_radius_inches)
+        robot_radius_cells = in_to_grid_radius(total_radius)
         for i in range(grid_size):
             for j in range(grid_size):
                 if i < robot_radius_cells or i >= grid_size - robot_radius_cells or j < robot_radius_cells or j >= grid_size - robot_radius_cells:
@@ -552,18 +552,18 @@ class PathPlanner:
         
         return grid, start, end
 
-    def _inches_to_grid(self, point, grid_size=GRID_SIZE):
-        norm_val_x = (point[0] - (-self.field_size_inches / 2)) / self.field_size_inches
-        norm_val_y = (point[1] - (-self.field_size_inches / 2)) / self.field_size_inches
+    def _to_grid(self, point, grid_size=GRID_SIZE):
+        norm_val_x = (point[0] - (-self.field_size / 2)) / self.field_size
+        norm_val_y = (point[1] - (-self.field_size / 2)) / self.field_size
         x = int(np.clip(norm_val_x * grid_size, 0, grid_size - 1))
         y = int(np.clip(norm_val_y * grid_size, 0, grid_size - 1))
         return (x, y)
 
-    def _grid_to_inches(self, grid_point, grid_size=GRID_SIZE):
+    def _grid_to(self, grid_point, grid_size=GRID_SIZE):
         norm_x = (grid_point[0] + 0.5) / grid_size # Centering it
         norm_y = (grid_point[1] + 0.5) / grid_size
-        inch_x = norm_x * self.field_size_inches - (self.field_size_inches / 2)
-        inch_y = norm_y * self.field_size_inches - (self.field_size_inches / 2)
+        inch_x = norm_x * self.field_size - (self.field_size / 2)
+        inch_y = norm_y * self.field_size - (self.field_size / 2)
         return np.array([inch_x, inch_y], dtype=np.float64)
 
     def _is_grid_cell_valid(self, grid, point):
@@ -589,33 +589,33 @@ class PathPlanner:
 
         return None
 
-    def _is_normalized_point_valid_for_nlp(self, point_inches, obstacles, total_radius_inches):
-        px, py = float(point_inches[0]), float(point_inches[1])
+    def _is_point_valid_for_nlp(self, point, obstacles, total_radius):
+        px, py = float(point[0]), float(point[1])
 
         # Keep robot center inside field with boundary margin.
-        half_field = self.field_size_inches / 2
-        if px < -half_field + total_radius_inches or px > half_field - total_radius_inches:
+        half_field = self.field_size / 2
+        if px < -half_field + total_radius or px > half_field - total_radius:
             return False
-        if py < -half_field + total_radius_inches or py > half_field - total_radius_inches:
+        if py < -half_field + total_radius or py > half_field - total_radius:
             return False
 
         for obstacle in obstacles:
             if obstacle.ignore_collision:
                 continue
-            min_dist = obstacle.radius + total_radius_inches
+            min_dist = obstacle.radius + total_radius
             if (px - obstacle.x) ** 2 + (py - obstacle.y) ** 2 < min_dist ** 2:
                 return False
 
         return True
 
-    def _snap_endpoints_to_valid_cells(self, grid, start, end, obstacles, total_radius_inches, grid_size=GRID_SIZE):
+    def _snap_endpoints_to_valid_cells(self, grid, start, end, obstacles, total_radius, grid_size=GRID_SIZE):
 
         def nlp_validator(grid_point):
-            point_inches = self._grid_to_inches(grid_point, grid_size)
-            return self._is_normalized_point_valid_for_nlp(
-                point_inches,
+            point = self._grid_to(grid_point, grid_size)
+            return self._is_point_valid_for_nlp(
+                point,
                 obstacles,
-                total_radius_inches,
+                total_radius,
             )
 
         snapped_start = self._find_nearest_valid_cell_bfs(grid, start, validator=nlp_validator)
@@ -626,52 +626,52 @@ class PathPlanner:
         if snapped_end is None:
             snapped_end = end
 
-        return self._grid_to_inches(snapped_start, grid_size), self._grid_to_inches(snapped_end, grid_size)
+        return self._grid_to(snapped_start, grid_size), self._grid_to(snapped_end, grid_size)
 
-    def _build_straight_line_points(self, start_inches, end_inches):
-        step_inches = 6.0
-        distance = np.linalg.norm(end_inches - start_inches)
+    def _build_straight_line_points(self, start, end):
+        step = 6.0
+        distance = np.linalg.norm(end - start)
 
         if distance <= 1e-9:
-            return np.array([start_inches], dtype=np.float64)
+            return np.array([start], dtype=np.float64)
 
-        num_segments = max(1, int(np.ceil(distance / step_inches)))
+        num_segments = max(1, int(np.ceil(distance / step)))
         alpha = np.linspace(0.0, 1.0, num_segments + 1)
-        return np.array([start_inches + a * (end_inches - start_inches) for a in alpha], dtype=np.float64)
+        return np.array([start + a * (end - start) for a in alpha], dtype=np.float64)
 
     def _apply_start_end_connectors(
         self,
-        positions_inches,
-        velocities_inches,
+        positions,
+        velocities,
         dt,
-        start_point_inches,
-        end_point_inches,
-        planning_start_inches,
-        planning_end_inches,
+        start_point,
+        end_point,
+        planning_start,
+        planning_end,
     ):
         connectors_added = False
-        self.pseudo_start_inches = planning_start_inches
-        self.pseudo_end_inches = planning_end_inches
+        self.pseudo_start = planning_start
+        self.pseudo_end = planning_end
 
-        if not np.allclose(planning_start_inches, start_point_inches):
-            start_connector = self._build_straight_line_points(start_point_inches, planning_start_inches)
-            positions_inches = np.vstack((start_connector[:-1], positions_inches))
+        if not np.allclose(planning_start, start_point):
+            start_connector = self._build_straight_line_points(start_point, planning_start)
+            positions = np.vstack((start_connector[:-1], positions))
             connectors_added = True
 
-        if not np.allclose(planning_end_inches, end_point_inches):
-            end_connector = self._build_straight_line_points(planning_end_inches, end_point_inches)
-            positions_inches = np.vstack((positions_inches, end_connector[1:]))
+        if not np.allclose(planning_end, end_point):
+            end_connector = self._build_straight_line_points(planning_end, end_point)
+            positions = np.vstack((positions, end_connector[1:]))
             connectors_added = True
 
         if connectors_added:
-            if len(positions_inches) >= 2:
-                velocities_inches = np.diff(positions_inches, axis=0) / dt
+            if len(positions) >= 2:
+                velocities = np.diff(positions, axis=0) / dt
             else:
-                velocities_inches = np.zeros((0, 2), dtype=np.float64)
+                velocities = np.zeros((0, 2), dtype=np.float64)
 
-        return positions_inches, velocities_inches
+        return positions, velocities
 
-    def _build_fallback_positions_inches(self, a_star_path, planning_start_inches, planning_end_inches):
+    def _build_fallback_positions(self, a_star_path, planning_start, planning_end):
         if a_star_path is not None and len(a_star_path) >= 2:
             fallback_path = np.array(a_star_path, dtype=np.float64)
             if len(fallback_path) == self.num_steps:
@@ -684,47 +684,34 @@ class PathPlanner:
             return np.column_stack((fallback_x, fallback_y))
 
         fallback_x, fallback_y = self.get_initial_path(
-            planning_start_inches[0],
-            planning_start_inches[1],
-            planning_end_inches[0],
-            planning_end_inches[1],
+            planning_start[0],
+            planning_start[1],
+            planning_end[0],
+            planning_end[1],
         )
         return np.column_stack((fallback_x, fallback_y))
 
     def _get_robot_norms(self, robot: Robot):
-        buffer_radius_norm = robot.buffer / self.field_size_inches
-        robot_radius = sqrt(robot.length**2 + robot.width**2) / 2
-        robot_radius_norm = robot_radius / self.field_size_inches
-        total_radius_norm = robot_radius_norm + buffer_radius_norm
-        return robot_radius_norm, buffer_radius_norm, total_radius_norm
+        buffer_radius_normalized = robot.buffer / self.field_size
+        robot_radius_normalized = robot.radius / self.field_size
+        total_radius_normalized = robot.total_radius / self.field_size
+        return robot_radius_normalized, buffer_radius_normalized, total_radius_normalized
 
-    def _normalize_obstacles(self, obstacles):
-        normalized_obstacles = []
-        for obs in obstacles:
-            obs_pos_norm = self.inches_to_normalized(np.array([obs.x, obs.y]))
-            normalized_obstacles.append(Obstacle(
-                obs_pos_norm[0],
-                obs_pos_norm[1],
-                obs.radius / self.field_size_inches,
-                obs.ignore_collision,
-            ))
-        return normalized_obstacles
+    def _get_marker_points(self, start_point, end_point):
+        start = np.array(start_point, dtype=np.float64)
+        end = np.array(end_point, dtype=np.float64)
+        pseudo_start = getattr(self, 'pseudo_start', start)
+        pseudo_end = getattr(self, 'pseudo_end', end)
+        return start, end, pseudo_start, pseudo_end
 
-    def _get_marker_points_inches(self, start_point, end_point):
-        start_inches = np.array(start_point, dtype=np.float64)
-        end_inches = np.array(end_point, dtype=np.float64)
-        pseudo_start_inches = getattr(self, 'pseudo_start_inches', start_inches)
-        pseudo_end_inches = getattr(self, 'pseudo_end_inches', end_inches)
-        return start_inches, end_inches, pseudo_start_inches, pseudo_end_inches
-
-    def a_star_search(self, grid, start_point_inches, end_point_inches, obstacles, total_radius_inches):
+    def a_star_search(self, grid, start_point, end_point, obstacles, total_radius):
         """
         Perform A* search on the planning grid. Inputs are entirely in inches.
         """
         grid_size = GRID_SIZE
         # grid already passed in, just need to parse the start/end points to grid indices
-        start = self._inches_to_grid(start_point_inches, grid_size)
-        end = self._inches_to_grid(end_point_inches, grid_size)
+        start = self._to_grid(start_point, grid_size)
+        end = self._to_grid(end_point, grid_size)
 
         start = self._find_nearest_valid_cell_bfs(grid, start)
         end = self._find_nearest_valid_cell_bfs(grid, end)
@@ -791,11 +778,11 @@ class PathPlanner:
         
         path = []
         # Center the point inside the inch-based cell
-        offset = self.field_size_inches / grid_size * 0.5
+        offset = self.field_size / grid_size * 0.5
         for point in original_path:
             norm_x, norm_y = point[0] / grid_size, point[1] / grid_size
-            inch_x = norm_x * self.field_size_inches - (self.field_size_inches / 2) + offset
-            inch_y = norm_y * self.field_size_inches - (self.field_size_inches / 2) + offset
+            inch_x = norm_x * self.field_size - (self.field_size / 2) + offset
+            inch_y = norm_y * self.field_size - (self.field_size / 2) + offset
             path.append((inch_x, inch_y))
         return path
 
@@ -808,23 +795,22 @@ class PathPlanner:
 
         grid_size = GRID_SIZE
         
-        _, _, total_radius_inches = self._get_robot_norms(robot)
-        total_radius_inches = robot.buffer + max(robot.length, robot.width) / 2
+        total_radius = robot.total_radius
         
-        start_inches, end_inches, pseudo_start_inches, pseudo_end_inches = self._get_marker_points_inches(start_point, end_point)
+        start, end, pseudo_start, pseudo_end = self._get_marker_points(start_point, end_point)
         
         # Use existing grid or generate it
         if grid is None:
-            grid, start_grid, end_grid = self._generate_obstacle_grid(obstacles, start_inches, end_inches, total_radius_inches, grid_size)
+            grid, start_grid, end_grid = self._generate_obstacle_grid(obstacles, start, end, total_radius, grid_size)
         else:
             # Recreate just the endpoints for this context if passing grid directly
-            start_grid = self._inches_to_grid(start_inches, grid_size)
-            end_grid = self._inches_to_grid(end_inches, grid_size)
+            start_grid = self._to_grid(start, grid_size)
+            end_grid = self._to_grid(end, grid_size)
             # Need to copy to avoid mutating the shared object with the inversion step later
             grid = np.copy(grid)
             
-        pseudo_start_grid = self._inches_to_grid(pseudo_start_inches, grid_size)
-        pseudo_end_grid = self._inches_to_grid(pseudo_end_inches, grid_size)
+        pseudo_start_grid = self._to_grid(pseudo_start, grid_size)
+        pseudo_end_grid = self._to_grid(pseudo_end, grid_size)
         
         # Invert the grid (0=white, 1=black for display)
         grid = 1 - grid
@@ -832,21 +818,21 @@ class PathPlanner:
         # Plot the grid
         fig, ax = plt.subplots(figsize=(6, 6))
         # Extend bounds from -72 to 72
-        half_field = self.field_size_inches / 2
+        half_field = self.field_size / 2
         extent = [-half_field, half_field, -half_field, half_field]
         ax.imshow(grid, cmap="gray", origin="lower", extent=extent)
         ax.set_title("Grid Visualization")
         ax.set_xticks([]); ax.set_yticks([])
 
         # Add requested start/end as stars and pseudo start/end as circles
-        ax.plot(start_inches[0], start_inches[1], '*', color='orange', markersize=12, label='start')
-        ax.plot(end_inches[0], end_inches[1], '*', color='green', markersize=12, label='end')
+        ax.plot(start[0], start[1], '*', color='orange', markersize=12, label='start')
+        ax.plot(end[0], end[1], '*', color='green', markersize=12, label='end')
         ax.plot(
-            pseudo_start_inches[0], pseudo_start_inches[1],
+            pseudo_start[0], pseudo_start[1],
             'o', markerfacecolor='none', markeredgecolor='orange', markersize=9, label='pseudo start',
         )
         ax.plot(
-            pseudo_end_inches[0], pseudo_end_inches[1],
+            pseudo_end[0], pseudo_end[1],
             'o', markerfacecolor='none', markeredgecolor='green', markersize=9, label='pseudo end',
         )
         ax.legend(loc="upper right")
@@ -875,7 +861,7 @@ if __name__ == "__main__":
     )
 
     planner = PathPlanner(
-        field_size_inches=INCHES_PER_FIELD,
+        field_size=INCHES_PER_FIELD,
         field_center=(0, 0)
     )
 
@@ -913,6 +899,10 @@ if __name__ == "__main__":
         else:
             unsuccessful_trials += 1
             unsuccessful_solve_time += planner.solve_time
+
+            planner.plotResults(positions, velocities, start_point, end_point, obstacles, robot)
+            planner.print_trajectory_details(positions, velocities, dt)
+            input()
 
             print(f"Unsuccessful trial: {planner.optimizer_status}")
 

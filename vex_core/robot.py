@@ -28,7 +28,7 @@ class Robot:
     buffer: Optional[float] = 1.0
     # Camera rotation is interpreted as an offset (radians) relative to the robot body orientation.
     # Positive values rotate the camera counter-clockwise relative to the robot heading.
-    camera_rotation: Optional[float] = np.pi / 2  
+    camera_rotation: Optional[float] = np.pi / 2
     
     def __post_init__(self):
         # Default dimensions based on size
@@ -44,3 +44,6 @@ class Robot:
             self.camera_rotation_offset = float(self.camera_rotation)
         except Exception:
             self.camera_rotation_offset = 0.0
+        
+        self.radius = np.sqrt((self.length/2)**2 + (self.width/2)**2)
+        self.total_radius = self.radius + self.buffer
