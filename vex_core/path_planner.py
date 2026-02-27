@@ -392,14 +392,13 @@ class PathPlanner:
 
         return positions, velocities, dt, grid
 
-    def print_trajectory_details(self, positions, velocities, dt, save_path=None):
+    def print_trajectory_details(self, positions, velocities, dt):
         # -------------------------------------------------------------------------
         # Trajectory Output: Print details and save to a file
         # Positions are already in inches
         # -------------------------------------------------------------------------
-        print(f"{'Step':<5} | {'Position (x, y)':<24} | {'Velocity (vx, vy)':<24} | {'Acceleration (ax, ay)':<24}")
+        print(f"{'Step':<5} | {'Position (x, y)':<20} | {'Velocity (vx, vy, speed)':<30} | {'Acceleration (ax, ay, magnitude)':<30}")
         print("-" * 100)
-        lemlib_output_string = ""
         
         for i in range(len(positions)):
             px, py = positions[i]  # Already in inches
@@ -415,8 +414,7 @@ class PathPlanner:
             else:
                 ax = ay = 0
             
-            print(f"{i:<5} | ({px:<10.2f}, {py:<10.2f}) | ({vx:<10.2f}, {vy:<10.2f}) | ({ax:<10.2f}, {ay:<10.2f})")
-            lemlib_output_string += f"{px:.3f}, {py:.3f}\n"
+            print(f"{i:<5} | ({px:>8.2f}, {py:>8.2f}) | ({vx:>8.2f}, {vy:>8.2f}, {np.sqrt(vx**2 + vy**2):>8.2f}) | ({ax:>8.2f}, {ay:>8.2f}, {np.sqrt(ax**2 + ay**2):>8.2f})")
         
         print(f"\nTime step: {dt:.2f}")
         print(f"Path time: {dt * len(positions):.2f}")
@@ -424,10 +422,6 @@ class PathPlanner:
         if hasattr(self, 'optimizer_status') and self.optimizer_status != self.status:
             print(f"Optimizer status: {self.optimizer_status}")
         print(f"Solve time: {self.solve_time:.3f} seconds")
-        lemlib_output_string += "endData"
-        if save_path:
-            with open(save_path, 'w') as file:
-                file.write(lemlib_output_string)
 
     def plotResults(self, positions, velocities, start_point, end_point, obstacles, robot: Robot, grid=None):
         # -------------------------------------------------------------------------
@@ -900,11 +894,11 @@ if __name__ == "__main__":
             unsuccessful_trials += 1
             unsuccessful_solve_time += planner.solve_time
 
-            planner.plotResults(positions, velocities, start_point, end_point, obstacles, robot)
-            planner.print_trajectory_details(positions, velocities, dt)
-            input()
-
             print(f"Unsuccessful trial: {planner.optimizer_status}")
+
+        planner.plotResults(positions, velocities, start_point, end_point, obstacles, robot)
+        planner.print_trajectory_details(positions, velocities, dt)
+        input()
 
         total_solve_time += planner.solve_time
 
