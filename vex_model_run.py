@@ -30,11 +30,10 @@ class VexModelRunner:
 
             env_config = VexEnvConfig(
                 game=game,
-                enable_communication=False,
+                enable_communication=True,
                 render_mode='none',
                 experiment_path="",
                 randomize=False,
-                enable_communication=True,
                 deterministic=False
             )
             dummy_env = VexMultiAgentEnv(game=game, config=env_config)
