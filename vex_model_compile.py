@@ -124,27 +124,32 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
             pi_head = rl_module.pi
             message_head = getattr(rl_module, "message_head", None)
             msg_log_std = getattr(rl_module, "msg_log_std", None)
+            attention_unit = getattr(rl_module, "attention_unit", None)
 
             class CombinedHead(nn.Module):
                 """Wrapper that returns concatenated [logits, msg_mean, msg_log_std]
                 when the ATOC message head exists; otherwise returns logits only.
                 """
-                def __init__(self, pi, msg_head=None, msg_log_std=None):
+                def __init__(self, pi, msg_head=None, msg_log_std=None, attention_unit=None):
                     super().__init__()
                     self.pi = pi
                     self.msg_head = msg_head
                     self.msg_log_std = msg_log_std
+                    self.attention_unit = attention_unit
 
                 def forward(self, feats: torch.Tensor) -> torch.Tensor:
                     logits = self.pi(feats)
-                    if (self.msg_head is None) or (self.msg_log_std is None):
+                    if (self.msg_head is None) or (self.msg_log_std is None) or (self.attention_unit is None):
                         return logits
                     batch_size = feats.shape[0]
                     msg_mean = self.msg_head(feats)
+                    attention_logits = self.attention_unit(feats)
+                    gate = torch.sigmoid(attention_logits)
+                    msg_mean = msg_mean * gate
                     msg_log_std_exp = self.msg_log_std.expand(batch_size, -1)
                     return torch.cat([logits, msg_mean, msg_log_std_exp], dim=1)
 
-            clean_head = CombinedHead(pi_head, message_head, msg_log_std)
+            clean_head = CombinedHead(pi_head, message_head, msg_log_std, attention_unit)
             
             # CRITICAL: Convert any numpy types to Python native types
             # This is necessary for torch.jit.script compatibility

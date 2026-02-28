@@ -566,8 +566,7 @@ if __name__ == "__main__":
         run_simulation(
             config=test_config,
             iterations=1000,
-            export_gif=False,
-            communication_override=env_config_obj.enable_communication
+            test_communication=env_config_obj.enable_communication
         )
         print("Automated testing complete.")
     except Exception as e:

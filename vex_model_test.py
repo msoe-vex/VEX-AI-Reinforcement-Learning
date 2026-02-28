@@ -177,35 +177,53 @@ def run_simulation(
                         message_vector = np.zeros(MESSAGE_SIZE, dtype=np.float32)
                     elif remaining >= MESSAGE_SIZE:
                         message_mean = model_output[:, num_actions:num_actions + MESSAGE_SIZE]
-                        message_vector = message_mean.cpu().numpy()[0]
+                        
+                        if not config.deterministic and remaining >= 2 * MESSAGE_SIZE:
+                            msg_log_std = model_output[:, num_actions + MESSAGE_SIZE:num_actions + 2 * MESSAGE_SIZE]
+                            msg_std = torch.exp(msg_log_std)
+                            msg_dist = torch.distributions.Normal(message_mean, msg_std)
+                            message_vector = msg_dist.sample().cpu().numpy()[0]
+                        else:
+                            message_vector = message_mean.cpu().numpy()[0]
                     elif remaining > 0:
                         mm = np.zeros(MESSAGE_SIZE, dtype=np.float32)
                         mm[:remaining] = model_output[:, num_actions:].cpu().numpy()[0]
                         message_vector = mm
                     else:
                         message_vector = np.zeros(MESSAGE_SIZE, dtype=np.float32)
+                    probs = torch.softmax(action_logits, dim=-1)
                 else:
                     num_actions = action_space.n
                     action_logits = model_output[:, :num_actions]
+                    probs = torch.softmax(action_logits, dim=-1)
                     message_vector = None
+                
+                action_dim = num_actions
 
-                probs = torch.softmax(action_logits, dim=-1)
-                dist = torch.distributions.Categorical(probs)
-
-                action = None
-                for _ in range(20):
-                    sampled_action = dist.sample().item()
-                    if env.is_valid_action(sampled_action, obs_np, last_actions[agent_id]):
-                        action = sampled_action
-                        break
-
-                if action is None:
+                if not config.deterministic:
+                    # Filter invalid actions probabilities and re-normalize
+                    action_probs = probs.squeeze(0).cpu().numpy().copy()
+                    
+                    # Zero out invalid actions
+                    # for i in range(action_dim):
+                    #     if not env.is_valid_action(i, obs_np, last_actions[agent_id]):
+                    #         action_probs[i] = 0.0
+                    
+                    prob_sum = action_probs.sum()
+                    if prob_sum > 0:
+                        action_probs = action_probs / prob_sum
+                        action = np.random.choice(action_dim, p=action_probs)
+                    else:
+                        action = env.game.fallback_action()
+                else:
+                    # Deterministic: take highest probability valid action
                     sorted_actions = torch.argsort(action_logits, dim=1, descending=True).squeeze(0).tolist()
+                    action = None
                     for candidate_action in sorted_actions:
                         if env.is_valid_action(candidate_action, obs_np, last_actions[agent_id]):
                             action = candidate_action
                             break
-                    else:
+                    if action is None:
                         action = env.game.fallback_action()
 
                 actions_to_take[agent_id] = (action, message_vector) if message_vector is not None else action

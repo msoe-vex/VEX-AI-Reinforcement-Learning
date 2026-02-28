@@ -80,24 +80,42 @@ class VexModelRunner:
         remaining = model_output.shape[1] - action_dim
         if remaining >= MESSAGE_SIZE:
             # Message mean is the first MESSAGE_SIZE values after action logits
-            message_vector = model_output[:, action_dim:action_dim + MESSAGE_SIZE].cpu().numpy()[0]
+            message_mean = model_output[:, action_dim:action_dim + MESSAGE_SIZE]
+            
+            # If stochastic and log_std is available, sample from Normal distribution
+            # Otherwise use mean.
+            is_deterministic = hasattr(self.game, 'deterministic') and self.game.deterministic
+            if not is_deterministic and remaining >= 2 * MESSAGE_SIZE:
+                msg_log_std = model_output[:, action_dim + MESSAGE_SIZE:action_dim + 2 * MESSAGE_SIZE]
+                msg_std = torch.exp(msg_log_std)
+                msg_dist = torch.distributions.Normal(message_mean, msg_std)
+                message_vector = msg_dist.sample().cpu().numpy()[0]
+            else:
+                message_vector = message_mean.cpu().numpy()[0]
         
         # Use stochastic sampling like RLlib does during training
         # The model outputs logits; convert to probabilities and sample
         probs = torch.softmax(action_logits, dim=-1)
-        dist = torch.distributions.Categorical(probs)
         
-        # Sample action and retry if invalid (up to 20 attempts)
-        action = None
-        for _ in range(20):
-            sampled_action = dist.sample().item()
-            if self.game.is_valid_action(sampled_action, observation):
-                action = sampled_action
-                break
-        
-        # Fallback: if no valid action found via sampling, use highest valid logit
-        if action is None:
+        # In deployment, we filter invalid actions by zeroing their probabilities and renormalizing.
+        is_deterministic = hasattr(self.game, 'deterministic') and self.game.deterministic
+        if not is_deterministic:
+            action_probs = probs.squeeze(0).cpu().numpy().copy()
+            
+            # Zero out invalid actions
+            for i in range(action_dim):
+                if not self.game.is_valid_action(i, observation):
+                    action_probs[i] = 0.0
+            
+            prob_sum = action_probs.sum()
+            if prob_sum > 0:
+                action_probs = action_probs / prob_sum
+                action = np.random.choice(action_dim, p=action_probs)
+            else:
+                action = self.game.fallback_action()
+        else:
             sorted_actions = torch.argsort(action_logits, dim=1, descending=True).squeeze(0).tolist()
+            action = None
             for candidate_action in sorted_actions:
                 if self.game.is_valid_action(candidate_action, observation):
                     action = candidate_action
