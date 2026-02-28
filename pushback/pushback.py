@@ -2170,6 +2170,9 @@ class PushBackGame(VexGame):
         STOP_TRANSFER
         CLEAR_LOADER
         """
+
+        if self.path_planner is None:
+            self.path_planner = PathPlanner()
         
         actions = []
         
