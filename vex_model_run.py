@@ -3,7 +3,8 @@ import numpy as np
 
 # Import from new modular architecture
 from vex_core.base_game import VexGame
-from vex_core.base_env import MESSAGE_SIZE
+from vex_core.config import VexEnvConfig
+from vex_core.base_env import MESSAGE_SIZE, VexMultiAgentEnv
 from typing import Dict
 
 class VexModelRunner:
@@ -26,9 +27,20 @@ class VexModelRunner:
             self.model = torch.jit.optimize_for_inference(self.model)
             
             print(f"Successfully loaded and optimized model from {self.model_path}")
+
+            env_config = VexEnvConfig(
+                game=game,
+                enable_communication=False,
+                render_mode='none',
+                experiment_path="",
+                randomize=False,
+                enable_communication=True,
+                deterministic=False
+            )
+            dummy_env = VexMultiAgentEnv(game=game, config=env_config)
             
             sample_agent = game.possible_agents[0]
-            obs_shape = game.get_game_observation_space(sample_agent).shape
+            obs_shape = dummy_env.observation_space(sample_agent).shape
             dummy_input = torch.randn(1, *obs_shape, device=self.device)
             with torch.no_grad():
                 _ = self.model(dummy_input)
@@ -66,7 +78,7 @@ class VexModelRunner:
         
         # Handle both Discrete and Tuple action spaces.
         # Tuple structure is (Discrete(action), Box(message)).
-        action_space = self.game.action_space(self.game.possible_agents[0])
+        action_space = self.game.get_game_action_space(self.game.possible_agents[0])
         if hasattr(action_space, 'n'):
             action_dim = action_space.n
         elif hasattr(action_space, 'spaces') and len(action_space.spaces) > 0 and hasattr(action_space.spaces[0], 'n'):
