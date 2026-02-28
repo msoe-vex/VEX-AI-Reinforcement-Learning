@@ -28,7 +28,7 @@ class VexModelRunner:
             print(f"Successfully loaded and optimized model from {self.model_path}")
             
             sample_agent = game.possible_agents[0]
-            obs_shape = game.observation_space(sample_agent).shape
+            obs_shape = game.get_game_observation_space(sample_agent).shape
             dummy_input = torch.randn(1, *obs_shape, device=self.device)
             with torch.no_grad():
                 _ = self.model(dummy_input)
