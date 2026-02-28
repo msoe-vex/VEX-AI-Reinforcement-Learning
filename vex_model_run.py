@@ -29,12 +29,11 @@ class VexModelRunner:
             print(f"Successfully loaded and optimized model from {self.model_path}")
 
             env_config = VexEnvConfig(
-                game=game,
-                enable_communication=False,
+                game_name=game.get_game_name(),
+                enable_communication=True,
                 render_mode='none',
                 experiment_path="",
                 randomize=False,
-                enable_communication=True,
                 deterministic=False
             )
             dummy_env = VexMultiAgentEnv(game=game, config=env_config)

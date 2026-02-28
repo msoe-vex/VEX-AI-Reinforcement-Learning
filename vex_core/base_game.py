@@ -88,6 +88,9 @@ class VexGame(ABC):
             VexGame instance
         """
         pass
+
+    def get_game_name(self) -> str:
+        return self.__class__.__name__.lower()
     
     # =========================================================================
     # Configuration Properties
