@@ -134,10 +134,10 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         game_space = self.game.get_game_observation_space(agent)
         
         if self.communication_mode == CommunicationOption.NONE:
-            return game_space
+            obs_space = game_space
             
         # Append MESSAGE_SIZE dimensions to the observation space
-        if isinstance(game_space, spaces.Box):
+        elif isinstance(game_space, spaces.Box):
             orig_shape = game_space.shape[0]
             
             if self.communication_mode == CommunicationOption.ATTENTION:
@@ -152,9 +152,15 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 
             low = np.full(new_shape, -1e10, dtype=np.float32)
             high = np.full(new_shape, 1e10, dtype=np.float32)
-            return spaces.Box(low=low, high=high, dtype=np.float32)
+            obs_space = spaces.Box(low=low, high=high, dtype=np.float32)
         else:
             raise ValueError(f"Expected Box observation space from game, got {type(game_space)}")
+            
+        num_actions = self.game.num_actions
+        return spaces.Dict({
+            "action_mask": spaces.Box(0.0, 1.0, shape=(num_actions,), dtype=np.float32),
+            "observations": obs_space
+        })
     
     @functools.lru_cache(maxsize=None)
     def action_space(self, agent: str) -> spaces.Space:
@@ -173,7 +179,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self, 
         seed: Optional[int] = None, 
         options: Optional[Dict] = None
-    ) -> Tuple[Dict[str, np.ndarray], Dict[str, Dict]]:
+    ) -> Tuple[Dict[str, Any], Dict[str, Dict]]:
         """Reset the environment to initial state."""
         self.agents = self.possible_agents[:]
         self.num_ticks = 0
@@ -295,6 +301,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         for agent in self.possible_agents:
             if agent in self.env_agent_states and agent not in self._terminated_agents:
                 self.env_agent_states[agent]["tick"] += 1
+                    
         self._update_messages(list(self.possible_agents))
 
     def _get_agent_time(self, agent: str) -> float:
@@ -414,7 +421,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 agents_to_remove.add(agent)
         return terminations, agents_to_remove
 
-    def _build_env_observation(self, agent: str, game_time: float) -> np.ndarray:
+    def _build_env_observation(self, agent: str, game_time: float) -> Dict[str, np.ndarray]:
         """Builds the full environment observation for an agent.
         
         Delegates to the game for the core state observation, and if
@@ -443,7 +450,16 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 msgs = np.zeros(core_obs_size * num_teammates, dtype=np.float32)
             obs = np.concatenate([obs, msgs]).astype(np.float32)
             
-        return obs
+        num_actions = self.game.num_actions
+        action_mask = np.zeros(num_actions, dtype=np.float32)
+        for i in range(num_actions):
+            if self.game.is_valid_action(i, obs):
+                action_mask[i] = 1.0
+                
+        return {
+            "action_mask": action_mask,
+            "observations": obs,
+        }
 
     def step(
         self, 
@@ -530,14 +546,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 agent_state["emitted_message"] = arr  # Store latest for debugging
                 
             elif self.communication_mode == CommunicationOption.COPY:
-                # We emit our internal game observation directly
-                game_time = self._get_agent_time(agent)
-                obs_to_emit = self.game.get_game_observation(agent, game_time=game_time)
-                arr = np.array(obs_to_emit, dtype=np.float32).ravel()
-                
-                current_tick = int(self.env_agent_states.get(agent, {}).get("tick", 0))
-                self._message_buffer[agent].append((current_tick + COMM_DELAY_TICKS, arr))
-                agent_state["emitted_message"] = arr
+                # COPY mode updates observations per tick in `_update_messages`, no buffering needed here
+                agent_state["emitted_message"] = np.zeros(0, dtype=np.float32)
                 
             else:
                 agent_state["emitted_message"] = np.zeros(MESSAGE_SIZE, dtype=np.float32)
@@ -756,6 +766,16 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             agent: int(self.env_agent_states.get(agent, {}).get("tick", 0))
             for agent in active_agents
         }
+        
+        # In COPY mode, push a new message frame per tick before reading them
+        if getattr(self, "communication_mode", CommunicationOption.NONE) == CommunicationOption.COPY:
+            for agent in active_agents:
+                game_time = self._get_agent_time(agent)
+                obs_to_emit = self.game.get_game_observation(agent, game_time=game_time)
+                arr = np.array(obs_to_emit, dtype=np.float32).ravel()
+                current_tick = ticks_map.get(agent, 0)
+                self._message_buffer[agent].append((current_tick + COMM_DELAY_TICKS, arr))
+                self.environment_state["agents"][agent]["emitted_message"] = arr
 
         # Snapshot message buffers so we can both compute per-recipient deliveries
         # and then purge any fully-delivered packets up to the max tick.
@@ -802,8 +822,6 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 self.environment_state["agents"][recipient]["received_messages"] = received_sum
                 
         elif self.communication_mode == CommunicationOption.COPY:
-            # Concatenate teammate observations
-            # Determine base observation length (which is consistent)
             arbitrary_agent = self.possible_agents[0]
             core_obs_size = self.game.get_game_observation(arbitrary_agent).shape[0]
             

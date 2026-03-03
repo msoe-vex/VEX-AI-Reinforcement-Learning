@@ -39,10 +39,23 @@ class VexModelRunner:
             dummy_env = VexMultiAgentEnv(game=game, config=env_config)
             
             sample_agent = game.possible_agents[0]
-            obs_shape = dummy_env.observation_space(sample_agent).shape
+            obs_space = dummy_env.observation_space(sample_agent)
+            if hasattr(obs_space, "spaces") and "observations" in obs_space.spaces:
+                obs_shape = obs_space["observations"].shape
+            else:
+                obs_shape = obs_space.shape
             dummy_input = torch.randn(1, *obs_shape, device=self.device)
+            # Determine action mask dim
+            action_space = game.get_game_action_space(game.possible_agents[0])
+            if hasattr(action_space, 'spaces') and len(action_space.spaces) > 0 and hasattr(action_space.spaces[0], 'n'):
+                mask_dim = action_space.spaces[0].n
+            elif hasattr(action_space, 'n'):
+                mask_dim = action_space.n
+            else:
+                mask_dim = obs_shape[0]
+            dummy_mask = torch.ones(1, mask_dim, device=self.device)
             with torch.no_grad():
-                _ = self.model(dummy_input)
+                _ = self.model(dummy_input, dummy_mask)
             print("Model warmed up and ready for inference")
             
         except Exception as e:
@@ -72,8 +85,23 @@ class VexModelRunner:
         obs_np = observation.astype(np.float32) if observation.dtype != np.float32 else observation
         obs_tensor = torch.from_numpy(obs_np).unsqueeze(0).to(self.device)
 
+        # Compute action mask using is_valid_action for all actions
+        action_space = self.game.get_game_action_space(self.game.possible_agents[0])
+        if hasattr(action_space, 'spaces') and len(action_space.spaces) > 0 and hasattr(action_space.spaces[0], 'n'):
+            num_actions = action_space.spaces[0].n
+        elif hasattr(action_space, 'n'):
+            num_actions = action_space.n
+        else:
+            num_actions = 14  # fallback
+        
+        action_mask = np.array(
+            [1.0 if self.game.is_valid_action(i, observation) else 0.0 for i in range(num_actions)],
+            dtype=np.float32
+        )
+        mask_tensor = torch.from_numpy(action_mask).unsqueeze(0).to(self.device)
+
         with torch.no_grad():
-            model_output = self.model(obs_tensor)
+            model_output = self.model(obs_tensor, mask_tensor)
         
         # Handle both Discrete and Tuple action spaces.
         # Tuple structure is (Discrete(action), Box(message)).
@@ -105,24 +133,21 @@ class VexModelRunner:
                 message_vector = message_mean.cpu().numpy()[0]
         
         # Use stochastic sampling like RLlib does during training
-        # The model outputs logits; convert to probabilities and sample
         probs = torch.softmax(action_logits, dim=-1)
         
-        # In deployment, we filter invalid actions by zeroing their probabilities and renormalizing.
         is_deterministic = hasattr(self.game, 'deterministic') and self.game.deterministic
         if not is_deterministic:
             action_probs = probs.squeeze(0).cpu().numpy().copy()
-            
-            # Zero out invalid actions
-            for i in range(action_dim):
-                if not self.game.is_valid_action(i, observation):
-                    action_probs[i] = 0.0
             
             prob_sum = action_probs.sum()
             if prob_sum > 0:
                 action_probs = action_probs / prob_sum
                 action = np.random.choice(action_dim, p=action_probs)
             else:
+                action = self.game.fallback_action()
+                
+            # If the model still somehow chooses an invalid action, fallback gracefully
+            if not self.game.is_valid_action(action, observation):
                 action = self.game.fallback_action()
         else:
             sorted_actions = torch.argsort(action_logits, dim=1, descending=True).squeeze(0).tolist()

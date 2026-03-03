@@ -127,8 +127,9 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
             attention_unit = getattr(rl_module, "attention_unit", None)
 
             class CombinedHead(nn.Module):
-                """Wrapper that returns concatenated [logits, msg_mean, msg_log_std]
-                when the ATOC message head exists; otherwise returns logits only.
+                """Wrapper that returns concatenated [masked_logits, msg_mean, msg_log_std]
+                when the ATOC message head exists; otherwise returns masked logits only.
+                Applies action masking to logits to match training behavior.
                 """
                 def __init__(self, pi, msg_head=None, msg_log_std=None, attention_unit=None):
                     super().__init__()
@@ -137,8 +138,11 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
                     self.msg_log_std = msg_log_std
                     self.attention_unit = attention_unit
 
-                def forward(self, feats: torch.Tensor) -> torch.Tensor:
+                def forward(self, feats: torch.Tensor, action_mask: torch.Tensor) -> torch.Tensor:
                     logits = self.pi(feats)
+                    # Apply action masking (same as training)
+                    inf_mask = torch.clamp(torch.log(action_mask + 1e-10), min=-1e8)
+                    logits = logits + inf_mask
                     if (self.msg_head is None) or (self.msg_log_std is None) or (self.attention_unit is None):
                         return logits
                     batch_size = feats.shape[0]
@@ -176,18 +180,29 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
                     self.encoder = encoder
                     self.head = head
                 
-                def forward(self, obs):
-                    # Pure Tensor operations!
+                def forward(self, obs: torch.Tensor, action_mask: torch.Tensor) -> torch.Tensor:
                     feats = self.encoder(obs)
-                    return self.head(feats)
+                    return self.head(feats, action_mask)
             
             export_model = ExportModel(clean_encoder, clean_head)
             export_model.eval()
             
             # Save using JIT SCRIPT (Best for C++)
             save_path = os.path.join(output_path, f"{policy_id}.pt")
-            obs_shape = obs_space.shape
+            # Handle Dict observation spaces (with "observations" + "action_mask")
+            if hasattr(obs_space, 'spaces') and "observations" in obs_space.spaces:
+                obs_shape = obs_space["observations"].shape
+            else:
+                obs_shape = obs_space.shape
             dummy_obs = torch.randn(1, *obs_shape)
+            # Determine action mask shape from action space
+            if hasattr(act_space, 'spaces') and len(act_space.spaces) > 0 and hasattr(act_space.spaces[0], 'n'):
+                mask_dim = act_space.spaces[0].n
+            elif hasattr(act_space, 'n'):
+                mask_dim = act_space.n
+            else:
+                mask_dim = obs_shape[0]  # fallback
+            dummy_mask = torch.ones(1, mask_dim)
             
             try:
                 # We can script this directly because it has no dicts/kwargs!
@@ -197,7 +212,7 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
             except Exception as e:
                 print(f"Scripting failed ({e}), trying trace...")
                 # Fallback to trace if needed
-                traced = torch.jit.trace(export_model, dummy_obs)
+                traced = torch.jit.trace(export_model, (dummy_obs, dummy_mask))
                 traced.save(save_path)
                 print(f"✓ SUCCESS: Saved JIT Traced model to {save_path}")
 

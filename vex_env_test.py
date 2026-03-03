@@ -10,8 +10,10 @@ Usage:
 """
 
 import argparse
+import random
 
 import numpy as np
+from gymnasium import spaces
 
 from vex_core.base_env import VexMultiAgentEnv
 from vex_core.config import VexEnvConfig
@@ -20,11 +22,11 @@ from pushback import PushBackGame, Actions
 
 def main():
     parser = argparse.ArgumentParser(description="VEX Push Back Environment Test")
-    VexEnvConfig.add_cli_args(parser, experiment_path="vex_env_test")
+    VexEnvConfig.add_cli_args(parser, experiment_path="vex_env_test", render_mode="terminal")
     parser.add_argument(
         "--steps",
         type=int,
-        default=20,
+        default=0,
         help="Number of steps to run"
     )
     args = parser.parse_args()
@@ -67,11 +69,28 @@ def main():
     done = False
     step_count = 0
     
-    while not done and step_count < args.steps:        
-        # Sample random actions from action space
-        actions = {agent: env.action_space(agent).sample() for agent in env.agents}
-        
-        # Step the environment
+    while not done and (args.steps == 0 or step_count < args.steps):        
+        # Sample random valid actions
+        actions = {}
+        for agent in env.agents:
+            obs = observations[agent]
+            action_space = env.action_space(agent)
+            
+            # Use action mask from observation dict
+            action_mask = obs["action_mask"] if isinstance(obs, dict) and "action_mask" in obs else None
+            
+            if action_mask is not None:
+                valid_indices = np.where(action_mask > 0)[0]
+                action = random.choice(valid_indices) if len(valid_indices) > 0 else env.game.fallback_action()
+            else:
+                action = env.game.fallback_action()
+             
+            # Wrap to match space if needed
+            if isinstance(action_space, spaces.Tuple):
+                msg_sample = action_space[1].sample()
+                actions[agent] = (action, msg_sample)
+            else:
+                actions[agent] = action
         step_count += 1
         observations, rewards, terminations, truncations, infos = env.step(actions)
         done = terminations.get("__all__", False) or truncations.get("__all__", False)

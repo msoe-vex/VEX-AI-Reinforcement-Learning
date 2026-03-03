@@ -96,7 +96,10 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
     
     def setup(self):
         # Get dimensions from environment spaces
-        obs_dim = self.observation_space.shape[0]
+        if hasattr(self.observation_space, "spaces") and "observations" in self.observation_space.spaces:
+            obs_dim = self.observation_space["observations"].shape[0]
+        else:
+            obs_dim = self.observation_space.shape[0]
         
         # Determine enable_communication from action space type.
         # When communication is enabled, action space is Tuple(Discrete, Box).
@@ -138,11 +141,34 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
             
             def forward(self, x):
                 if isinstance(x, dict):
-                    x = x[Columns.OBS]
-                features = self.net(x)
+                    if "observations" in x:
+                        obs = x["observations"]
+                    elif Columns.OBS in x:
+                        obs = x[Columns.OBS]
+                        if isinstance(obs, dict) and "observations" in obs:
+                            obs = obs["observations"]
+                    else:
+                        obs = x
+                else:
+                    obs = x
+                features = self.net(obs)
                 return {ENCODER_OUT: features}
         
         self.encoder_bridge = EncoderBridge(self._encoder_net)
+
+        # Set action distribution class for Tuple action spaces (Discrete + Box)
+        # The default TorchRLModule only handles Discrete/Box, not Tuple.
+        if enable_communication:
+            from ray.rllib.core.models.catalog import Catalog
+            import gymnasium as gym
+            # Use a dummy obs space — Catalog can't handle Dict obs spaces,
+            # but we only need it to resolve the action distribution class.
+            catalog = Catalog(
+                observation_space=gym.spaces.Box(-1.0, 1.0, (1,)),
+                action_space=self.action_space,
+                model_config_dict={},
+            )
+            self.action_dist_cls = catalog.get_action_dist_cls(framework="torch")
 
     @override(RLModule)
     def _forward_train(self, batch, **kwargs):
@@ -152,6 +178,14 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
         
         # Heads
         intention_logits = self.pi(features)
+        
+        # Action masking
+        if isinstance(batch, dict):
+            obs_dict = batch.get(Columns.OBS, batch)
+            if isinstance(obs_dict, dict) and "action_mask" in obs_dict:
+                action_mask = obs_dict["action_mask"]
+                inf_mask = torch.clamp(torch.log(action_mask + 1e-10), min=-1e8)
+                intention_logits = intention_logits + inf_mask
         
         if self.attention_unit is not None and self.message_head is not None:
             # ATOC Outputs - Communication enabled (Tuple action space)
@@ -190,6 +224,14 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
         
         intention_logits = self.pi(features)
         
+        # Action masking
+        if isinstance(batch, dict):
+            obs_dict = batch.get(Columns.OBS, batch)
+            if isinstance(obs_dict, dict) and "action_mask" in obs_dict:
+                action_mask = obs_dict["action_mask"]
+                inf_mask = torch.clamp(torch.log(action_mask + 1e-10), min=-1e8)
+                intention_logits = intention_logits + inf_mask
+        
         if self.attention_unit is not None and self.message_head is not None:
             # ATOC Outputs - Communication enabled (Tuple action space)
             attention_logits = self.attention_unit(features)
@@ -222,7 +264,12 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
         return self._forward_inference(batch, **kwargs)
 
     def compute_values(self, batch, embeddings=None):
-        obs = batch[Columns.OBS]
+        if isinstance(batch, dict):
+            obs = batch.get(Columns.OBS, batch)
+            if isinstance(obs, dict) and "observations" in obs:
+                obs = obs["observations"]
+        else:
+            obs = batch
         features = self._encoder_net(obs)
         return self.value_head(features).squeeze(-1)
     

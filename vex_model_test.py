@@ -113,14 +113,27 @@ def run_simulation(
     # Get observation and action space shapes for a sample agent
     # These are used to correctly shape tensors for the model
     sample_agent = env.possible_agents[0]
-    obs_shape = env.observation_space(sample_agent).shape
+    obs_space = env.observation_space(sample_agent)
+    if hasattr(obs_space, 'spaces') and 'observations' in obs_space.spaces:
+        obs_shape = obs_space['observations'].shape
+    else:
+        obs_shape = obs_space.shape
     
     # Warmup Pass: Initialize CUDA context before simulation starts
     print("Warming up models...")
     dummy_input = torch.randn(1, *obs_shape, device=device)
+    # Determine action mask dim for warmup
+    sample_act_space = env.action_space(sample_agent)
+    if isinstance(sample_act_space, spaces.Tuple):
+        mask_dim = sample_act_space[0].n
+    elif hasattr(sample_act_space, 'n'):
+        mask_dim = sample_act_space.n
+    else:
+        mask_dim = obs_shape[0]
+    dummy_mask = torch.ones(1, mask_dim, device=device)
     with torch.no_grad():
         for agent_id, model in models.items():
-            _ = model(dummy_input)
+            _ = model(dummy_input, dummy_mask)
     print("Models warmed up")
 
     team_score_totals = {}
@@ -157,13 +170,21 @@ def run_simulation(
                         print(f"Warning: Agent {agent_id} is in env.agents but not in observations. Skipping.")
                     continue
 
-                obs_np = observations[agent_id]
+                obs_dict = observations[agent_id]
+                obs_np = obs_dict["observations"] if isinstance(obs_dict, dict) and "observations" in obs_dict else obs_dict
+                action_mask_np = obs_dict["action_mask"] if isinstance(obs_dict, dict) and "action_mask" in obs_dict else None
                 obs_np_float = obs_np.astype(np.float32) if obs_np.dtype != np.float32 else obs_np
                 obs_tensor = torch.from_numpy(obs_np_float).unsqueeze(0).to(device)
+                
+                # Build action mask tensor
+                if action_mask_np is not None:
+                    mask_tensor = torch.from_numpy(action_mask_np.astype(np.float32)).unsqueeze(0).to(device)
+                else:
+                    mask_tensor = torch.ones(1, mask_dim, device=device)
 
                 model = models[agent_id]
                 with torch.no_grad():
-                    model_output = model(obs_tensor)
+                    model_output = model(obs_tensor, mask_tensor)
 
                 action_space = env.action_space(agent_id)
                 if isinstance(action_space, spaces.Tuple):
@@ -201,19 +222,17 @@ def run_simulation(
                 action_dim = num_actions
 
                 if not config.deterministic:
-                    # Filter invalid actions probabilities and re-normalize
                     action_probs = probs.squeeze(0).cpu().numpy().copy()
-                    
-                    # Zero out invalid actions
-                    # for i in range(action_dim):
-                    #     if not env.is_valid_action(i, obs_np, last_actions[agent_id]):
-                    #         action_probs[i] = 0.0
                     
                     prob_sum = action_probs.sum()
                     if prob_sum > 0:
                         action_probs = action_probs / prob_sum
                         action = np.random.choice(action_dim, p=action_probs)
                     else:
+                        action = env.game.fallback_action()
+                        
+                    # If the model still somehow chooses an invalid action, fallback gracefully
+                    if not env.is_valid_action(action, obs_np):
                         action = env.game.fallback_action()
                 else:
                     # Deterministic: take highest probability valid action
