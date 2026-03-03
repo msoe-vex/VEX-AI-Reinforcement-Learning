@@ -8,7 +8,7 @@ from gymnasium import spaces
 
 # Import from new modular architecture
 from vex_core.base_env import VexMultiAgentEnv, MESSAGE_SIZE
-from vex_core.config import VexEnvConfig
+from vex_core.config import VexEnvConfig, CommunicationOption
 from pushback import PushBackGame
 import json
 
@@ -67,7 +67,7 @@ def load_agent_models(model_dir, agents, device):
 def run_simulation(
     config: VexEnvConfig,
     iterations=1,
-    test_communication=None,
+    test_communication_mode=None,
 ):
     """
     Loads trained models and runs one or more simulations in the VEX environment.
@@ -75,7 +75,7 @@ def run_simulation(
     Args:
         config (VexEnvConfig): Configuration object containing parameters.
         iterations (int): Number of episodes to run.
-        test_communication (bool): Whether to test communication. Only used if config.enable_communication is True.
+        test_communication_mode (CommunicationOption): Whether to test communication. Only used if config.communication_mode is not NONE.
     """
     model_dir = config.experiment_path
     output_dir = config.experiment_path
@@ -92,7 +92,7 @@ def run_simulation(
     # Initialize the game/environment with matching communication configuration
     game = PushBackGame.get_game(
         config.game_name,
-        enable_communication=config.enable_communication,
+        communication_mode=config.communication_mode,
         deterministic=config.deterministic,
     )
     
@@ -173,7 +173,7 @@ def run_simulation(
 
                     message_vector = None
                     remaining = model_output.shape[1] - num_actions
-                    if not test_communication: # If communication is explicitly disabled
+                    if test_communication_mode == CommunicationOption.NONE: # If communication is explicitly disabled
                         message_vector = np.zeros(MESSAGE_SIZE, dtype=np.float32)
                     elif remaining >= MESSAGE_SIZE:
                         message_mean = model_output[:, num_actions:num_actions + MESSAGE_SIZE]
@@ -315,7 +315,7 @@ if __name__ == "__main__":
         render_mode="image",
         experiment_path=None,
         randomize=False,
-        communication=None,
+        communication_mode="none",
         deterministic=False
     )
     parser.add_argument(
@@ -325,17 +325,20 @@ if __name__ == "__main__":
         help="Number of simulation iterations to run"
     )
     parser.add_argument(
-        "--test-communication",
-        action=argparse.BooleanOptionalAction,
+        "--test-communication-mode",
+        type=str,
+        choices=[opt.value for opt in CommunicationOption],
         help="Enable testing communication between agents",
-        default=True
+        default="none"
     )
     
     args = parser.parse_args()
     config = VexEnvConfig.from_args(args)
     
+    test_communication_mode_val = CommunicationOption(args.test_communication_mode) if hasattr(args, "test_communication_mode") and args.test_communication_mode is not None else None
+    
     run_simulation(
         config=config,
         iterations=args.iterations,
-        test_communication=args.test_communication if hasattr(args, "test_communication") else None,
+        test_communication_mode=test_communication_mode_val,
     )

@@ -227,6 +227,6 @@ if __name__ == "__main__":
         raise FileNotFoundError(f"No checkpoint directories found under: {experiment_path}")
 
     print(f"Using checkpoint: {checkpoint_path}")
-    game = PushBackGame.get_game(env_config.game_name, enable_communication=env_config.enable_communication)
+    game = PushBackGame.get_game(env_config.game_name, communication_mode=env_config.communication_mode)
     
     compile_checkpoint_to_torchscript(game, checkpoint_path, experiment_path, env_config)

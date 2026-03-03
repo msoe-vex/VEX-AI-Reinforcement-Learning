@@ -19,8 +19,8 @@ DEFAULT_REWARD_WEIGHT_OPP_DELTA = -0.1 # Negative weight for opponent score chan
 DEFAULT_REWARD_WEIGHT_INDIVIDUAL_DELTA = 1.0 # Positive weight for individual score changes (encourages contributing to scoring, can be higher than team reward to incentivize individual contribution)
 DEFAULT_REWARD_WEIGHT_INDIVIDUAL_PENALTY = -1.0 # Negative weight for individual penalties (e.g., losing held blocks, failed actions)
 DEFAULT_REWARD_WEIGHT_TEAM_PENALTY = -0.1 # Negative weight for team penalties (e.g., opponent scoring, collisions), encourages communication to avoid penalties but with a lower weight to prevent over-penalizing risky but potentially rewarding actions
-
 from vex_core.robot import Robot, Team, RobotSize
+from vex_core.config import CommunicationOption
 
 
 @dataclass
@@ -58,11 +58,11 @@ class VexGame(ABC):
     should create its own game instance.
     """
     
-    def __init__(self, robots: list[Robot] = None, enable_communication: bool = False):
+    def __init__(self, robots: list[Robot] = None, communication_mode: CommunicationOption = CommunicationOption.NONE):
         """Initialize with robot configurations."""
         self.robots = robots or []
         self._robot_map = {r.name: r for r in self.robots}
-        self.enable_communication = enable_communication
+        self.communication_mode = communication_mode
         self.state: Dict = None  # Game state, initialized by get_initial_state()
         self.reward_weight_team_delta = DEFAULT_REWARD_WEIGHT_TEAM_DELTA
         self.reward_weight_opp_delta = DEFAULT_REWARD_WEIGHT_OPP_DELTA

@@ -33,14 +33,14 @@ def main():
     # Create game instance using factory method
     game = PushBackGame.get_game(
         config.game_name,
-        enable_communication=config.enable_communication,
+        communication_mode=config.communication_mode,
         deterministic=config.deterministic,
     )
     
     print(f"Testing VEX Push Back environment...")
     print(f"Game: {config.game_name}")
     print(f"Game class: {game.__class__.__name__}")
-    print(f"Communication: {config.enable_communication}")
+    print(f"Communication: {config.communication_mode.value}")
     
     # Create environment
     env = VexMultiAgentEnv(

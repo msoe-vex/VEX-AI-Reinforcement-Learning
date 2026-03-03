@@ -3,6 +3,12 @@ import json
 import argparse
 from dataclasses import dataclass
 from typing import Optional
+from enum import Enum
+
+class CommunicationOption(Enum):
+    NONE = "none"
+    ATTENTION = "attention"
+    COPY = "copy"
 
 @dataclass
 class VexEnvConfig:
@@ -14,7 +20,7 @@ class VexEnvConfig:
     render_mode: Optional[str]
     experiment_path: str
     randomize: bool
-    enable_communication: bool
+    communication_mode: CommunicationOption
     deterministic: bool
 
     @classmethod
@@ -25,7 +31,7 @@ class VexEnvConfig:
         render_mode: Optional[str] = "image",
         experiment_path: Optional[str] = "vex_env_output",
         randomize: Optional[bool] = True,
-        communication: Optional[bool] = False,
+        communication_mode: Optional[str] = "none",
         deterministic: Optional[bool] = False
     ) -> None:
         """
@@ -59,10 +65,11 @@ class VexEnvConfig:
             help="Randomize initial agent positions and orientations"
         )
         parser.add_argument(
-            "--communication",
-            action=argparse.BooleanOptionalAction,
-            default=communication,
-            help="Enable or disable agent communication"
+            "--communication-mode",
+            type=str,
+            choices=[opt.value for opt in CommunicationOption],
+            default=communication_mode,
+            help="Agent communication mode: 'none' (disabled), 'attention' (learned message vector), 'copy' (share observations)"
         )
         parser.add_argument(
             "--deterministic",
@@ -87,9 +94,13 @@ class VexEnvConfig:
                     metadata = json.load(f)
                     
                 # Merge metadata into defaults, but only for keys we care about
-                for key in ["game", "enable_communication", "randomize", "deterministic"]:
+                for key in ["game", "communication_mode", "randomize", "deterministic"]:
                     if key in metadata:
                         defaults[key] = metadata[key]
+                        
+                    # Handle backwards compatibility with old metadata
+                    if key == "communication_mode" and "enable_communication" in metadata and "communication_mode" not in metadata:
+                        defaults["communication_mode"] = CommunicationOption.ATTENTION.value if metadata["enable_communication"] else CommunicationOption.NONE.value
                         
                 print(f"Loaded config overrides from metadata: {metadata_path}")
             except Exception as e:
@@ -109,8 +120,8 @@ class VexEnvConfig:
         defaults = {}
         if hasattr(args, "game") and args.game is not None:
              defaults["game"] = args.game
-        if hasattr(args, "communication") and args.communication is not None:
-             defaults["enable_communication"] = args.communication
+        if hasattr(args, "communication_mode") and args.communication_mode is not None:
+             defaults["communication_mode"] = args.communication_mode
         if hasattr(args, "randomize") and args.randomize is not None:
              defaults["randomize"] = args.randomize
         if hasattr(args, "deterministic") and args.deterministic is not None:
@@ -129,15 +140,20 @@ class VexEnvConfig:
         # A better way is to set argparse defaults to None where we want to inherit.
         
         game_name = args.game if (hasattr(args, "game") and args.game is not None) else metadata_overrides.get("game", "vexai_skills")
-        enable_communication = args.communication if (hasattr(args, "communication") and args.communication is not None) else metadata_overrides.get("enable_communication", False)
+        communication_mode_str = args.communication_mode if (hasattr(args, "communication_mode") and args.communication_mode is not None) else metadata_overrides.get("communication_mode", "none")
         randomize = args.randomize if (hasattr(args, "randomize") and args.randomize is not None) else metadata_overrides.get("randomize", True)
         deterministic = args.deterministic if (hasattr(args, "deterministic") and args.deterministic is not None) else metadata_overrides.get("deterministic", False)
+
+        try:
+            communication_mode = CommunicationOption(communication_mode_str)
+        except ValueError:
+            communication_mode = CommunicationOption.NONE
 
         return cls(
             game_name=game_name,
             render_mode=args.render_mode if hasattr(args, "render_mode") and args.render_mode != "none" else None,
             experiment_path=experiment_path,
             randomize=randomize,
-            enable_communication=enable_communication,
+            communication_mode=communication_mode,
             deterministic=deterministic
         )

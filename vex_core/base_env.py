@@ -15,7 +15,7 @@ from ray.rllib.env import MultiAgentEnv
 from typing import Dict, List, Tuple, Optional, Any
 
 from .base_game import VexGame, Robot, RobotSize, Team, ActionEvent, ActionStep
-from .config import VexEnvConfig
+from .config import VexEnvConfig, CommunicationOption
 
 DELTA_T = 0.1  # Discrete time step in seconds
 COMM_DELAY_TICKS = 4  # Message delivery delay in ticks (~0.375s, half of 0.75s RTT)
@@ -54,7 +54,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         
         self.game = game
         self.config = config
-        self.enable_communication = config.enable_communication
+        self.communication_mode = config.communication_mode
         self.deterministic = config.deterministic
         if hasattr(self.game, "deterministic"):
             self.game.deterministic = config.deterministic
@@ -133,13 +133,23 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         """Get observation space for an agent."""
         game_space = self.game.get_game_observation_space(agent)
         
-        if not self.enable_communication:
+        if self.communication_mode == CommunicationOption.NONE:
             return game_space
             
         # Append MESSAGE_SIZE dimensions to the observation space
         if isinstance(game_space, spaces.Box):
             orig_shape = game_space.shape[0]
-            new_shape = (orig_shape + MESSAGE_SIZE,)
+            
+            if self.communication_mode == CommunicationOption.ATTENTION:
+                new_shape = (orig_shape + MESSAGE_SIZE,)
+            elif self.communication_mode == CommunicationOption.COPY:
+                # Append observation shape of teammates
+                my_team = self.game.get_team_for_agent(agent)
+                num_teammates = sum(1 for a in self.possible_agents if self.game.get_team_for_agent(a) == my_team and a != agent)
+                new_shape = (orig_shape + (orig_shape * num_teammates),)
+            else:
+                new_shape = (orig_shape,)
+                
             low = np.full(new_shape, -1e10, dtype=np.float32)
             high = np.full(new_shape, 1e10, dtype=np.float32)
             return spaces.Box(low=low, high=high, dtype=np.float32)
@@ -151,7 +161,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         """Get action space for an agent."""
         game_space = self.game.get_game_action_space(agent)
         
-        if self.enable_communication:
+        if self.communication_mode == CommunicationOption.ATTENTION:
             return spaces.Tuple((
                 game_space,
                 spaces.Box(low=-1.0, high=1.0, shape=(MESSAGE_SIZE,), dtype=np.float32)
@@ -412,12 +422,25 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         """
         obs = self.game.get_game_observation(agent, game_time=game_time)
         
-        if self.enable_communication:
+        if self.communication_mode == CommunicationOption.ATTENTION:
             agent_state = self.environment_state["agents"].get(agent, {})
             msgs = agent_state.get("received_messages", np.zeros(MESSAGE_SIZE, dtype=np.float32))
 
             if len(msgs) != MESSAGE_SIZE:
                 msgs = np.zeros(MESSAGE_SIZE, dtype=np.float32)
+            obs = np.concatenate([obs, msgs]).astype(np.float32)
+            
+        elif self.communication_mode == CommunicationOption.COPY:
+            agent_state = self.environment_state["agents"].get(agent, {})
+            my_team = self.game.get_team_for_agent(agent)
+            num_teammates = sum(1 for a in self.possible_agents if self.game.get_team_for_agent(a) == my_team and a != agent)
+            
+            # Use size from the core observation space (it's the same for all agents in this game)
+            core_obs_size = obs.shape[0]
+            msgs = agent_state.get("received_messages", np.zeros(core_obs_size * num_teammates, dtype=np.float32))
+            
+            if len(msgs) != core_obs_size * num_teammates:
+                msgs = np.zeros(core_obs_size * num_teammates, dtype=np.float32)
             obs = np.concatenate([obs, msgs]).astype(np.float32)
             
         return obs
@@ -491,7 +514,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             action_steps, penalty = self.game.execute_action(agent, action_int)
             
             # Store emitted message (or force zeros when communication is disabled)
-            if self.enable_communication and emitted_msg is not None:
+            if self.communication_mode == CommunicationOption.ATTENTION and emitted_msg is not None:
                 arr = np.array(emitted_msg, dtype=np.float32).ravel()
                 if arr.size != MESSAGE_SIZE:
                     if arr.size < MESSAGE_SIZE:
@@ -505,6 +528,17 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 current_tick = int(self.env_agent_states.get(agent, {}).get("tick", 0))
                 self._message_buffer[agent].append((current_tick + COMM_DELAY_TICKS, arr))
                 agent_state["emitted_message"] = arr  # Store latest for debugging
+                
+            elif self.communication_mode == CommunicationOption.COPY:
+                # We emit our internal game observation directly
+                game_time = self._get_agent_time(agent)
+                obs_to_emit = self.game.get_game_observation(agent, game_time=game_time)
+                arr = np.array(obs_to_emit, dtype=np.float32).ravel()
+                
+                current_tick = int(self.env_agent_states.get(agent, {}).get("tick", 0))
+                self._message_buffer[agent].append((current_tick + COMM_DELAY_TICKS, arr))
+                agent_state["emitted_message"] = arr
+                
             else:
                 agent_state["emitted_message"] = np.zeros(MESSAGE_SIZE, dtype=np.float32)
 
@@ -728,56 +762,108 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         buffers_snapshot = {a: list(self._message_buffer.get(a, [])) for a in active_agents}
         max_tick = max(ticks_map.values()) if ticks_map else 0
 
-        # For each recipient, aggregate the most-recent ready message from each sender
-        for recipient in active_agents:
-            r_tick = ticks_map.get(recipient, 0)
-            received_sum = np.zeros(MESSAGE_SIZE, dtype=np.float32)
-            count = 0
+        if self.communication_mode == CommunicationOption.ATTENTION:
+            # For each recipient, aggregate the most-recent ready message from each sender
+            for recipient in active_agents:
+                r_tick = ticks_map.get(recipient, 0)
+                received_sum = np.zeros(MESSAGE_SIZE, dtype=np.float32)
+                count = 0
 
-            for sender in active_agents:
-                if sender == recipient:
-                    continue
-
-                buf = buffers_snapshot.get(sender, [])
-                # Messages are (delivery_tick, msg); pick those ready for THIS recipient
-                ready = [m for t, m in buf if t <= r_tick]
-                
-                if ready:
-                    other_msg = np.array(ready[-1], dtype=np.float32).ravel()[:MESSAGE_SIZE]
-                else:
-                    # check if we have a last delivered message from this sender
-                    last_msg = self._last_delivered_messages.get(sender)
-                    if last_msg is not None:
-                        other_msg = last_msg
-                    else:
+                for sender in active_agents:
+                    if sender == recipient:
                         continue
 
-                if other_msg.size != MESSAGE_SIZE:
-                    msg = np.zeros(MESSAGE_SIZE, dtype=np.float32)
-                    msg[: min(MESSAGE_SIZE, other_msg.size)] = other_msg[:MESSAGE_SIZE]
-                else:
-                    msg = other_msg
+                    buf = buffers_snapshot.get(sender, [])
+                    # Messages are (delivery_tick, msg); pick those ready for THIS recipient
+                    ready = [m for t, m in buf if t <= r_tick]
+                    
+                    if ready:
+                        other_msg = np.array(ready[-1], dtype=np.float32).ravel()[:MESSAGE_SIZE]
+                    else:
+                        # check if we have a last delivered message from this sender
+                        last_msg = self._last_delivered_messages.get(sender)
+                        if last_msg is not None:
+                            other_msg = last_msg
+                        else:
+                            continue
 
-                received_sum += msg
-                count += 1
+                    if other_msg.size != MESSAGE_SIZE:
+                        msg = np.zeros(MESSAGE_SIZE, dtype=np.float32)
+                        msg[: min(MESSAGE_SIZE, other_msg.size)] = other_msg[:MESSAGE_SIZE]
+                    else:
+                        msg = other_msg
 
-            if count > 0:
-                received_sum /= count
+                    received_sum += msg
+                    count += 1
 
-            self.environment_state["agents"][recipient]["received_messages"] = received_sum
+                if count > 0:
+                    received_sum /= count
+
+                self.environment_state["agents"][recipient]["received_messages"] = received_sum
+                
+        elif self.communication_mode == CommunicationOption.COPY:
+            # Concatenate teammate observations
+            # Determine base observation length (which is consistent)
+            arbitrary_agent = self.possible_agents[0]
+            core_obs_size = self.game.get_game_observation(arbitrary_agent).shape[0]
+            
+            for recipient in active_agents:
+                r_tick = ticks_map.get(recipient, 0)
+                my_team = self.game.get_team_for_agent(recipient)
+                
+                # Order teammates deterministically
+                teammates = [a for a in self.possible_agents if self.game.get_team_for_agent(a) == my_team and a != recipient]
+                
+                num_teammates = len(teammates)
+                if num_teammates == 0:
+                    self.environment_state["agents"][recipient]["received_messages"] = np.zeros(0, dtype=np.float32)
+                    continue
+                    
+                concatenated_msgs = np.zeros(core_obs_size * num_teammates, dtype=np.float32)
+                
+                for idx, sender in enumerate(teammates):
+                    buf = buffers_snapshot.get(sender, [])
+                    ready = [m for t, m in buf if t <= r_tick]
+                    
+                    if ready:
+                        other_msg = np.array(ready[-1], dtype=np.float32).ravel()[:core_obs_size]
+                    else:
+                        last_msg = self._last_delivered_messages.get(sender)
+                        if last_msg is not None:
+                            other_msg = last_msg
+                        else:
+                            other_msg = np.zeros(core_obs_size, dtype=np.float32)
+                            
+                    if len(other_msg) != core_obs_size:
+                        pad = np.zeros(core_obs_size, dtype=np.float32)
+                        valid_len = min(core_obs_size, len(other_msg))
+                        pad[:valid_len] = other_msg[:valid_len]
+                        other_msg = pad
+                        
+                    start_idx = idx * core_obs_size
+                    end_idx = start_idx + core_obs_size
+                    concatenated_msgs[start_idx:end_idx] = other_msg
+
+                self.environment_state["agents"][recipient]["received_messages"] = concatenated_msgs
+        else:
+            # No communication
+            for recipient in active_agents:
+                 self.environment_state["agents"][recipient]["received_messages"] = np.zeros(0, dtype=np.float32)
 
         # Purge any messages from the real buffers that have delivery_tick <= max_tick
         for sender in active_agents:
             buf = self._message_buffer.get(sender, [])
             self._message_buffer[sender] = [(t, m) for (t, m) in buf if t > max_tick]
             # Update last-delivered cache for diagnostics: most recent delivered up to max_tick
-            delivered = [m for (t, m) in buffers_snapshot.get(sender, []) if t <= max_tick]
-            if delivered:
-                self._last_delivered_messages[sender] = np.array(delivered[-1], dtype=np.float32).ravel()[:MESSAGE_SIZE]
-            else:
-                # leave previous cache value if no new delivery; explicit None when no deliveries
-                if self._last_delivered_messages.get(sender) is None:
-                    self._last_delivered_messages[sender] = None
+            size = MESSAGE_SIZE if self.communication_mode == CommunicationOption.ATTENTION else (core_obs_size if self.communication_mode == CommunicationOption.COPY else 0)
+            if size > 0:
+                delivered = [m for (t, m) in buffers_snapshot.get(sender, []) if t <= max_tick]
+                if delivered:
+                    self._last_delivered_messages[sender] = np.array(delivered[-1], dtype=np.float32).ravel()[:size]
+                else:
+                    # leave previous cache value if no new delivery; explicit None when no deliveries
+                    if self._last_delivered_messages.get(sender) is None:
+                        self._last_delivered_messages[sender] = None
 
 
 

@@ -3,7 +3,7 @@ import numpy as np
 
 # Import from new modular architecture
 from vex_core.base_game import VexGame
-from vex_core.config import VexEnvConfig
+from vex_core.config import VexEnvConfig, CommunicationOption
 from vex_core.base_env import MESSAGE_SIZE, VexMultiAgentEnv
 from typing import Dict
 
@@ -30,7 +30,7 @@ class VexModelRunner:
 
             env_config = VexEnvConfig(
                 game_name=game.get_game_name(),
-                enable_communication=True,
+                communication_mode=game.communication_mode,
                 render_mode='none',
                 experiment_path="",
                 randomize=False,

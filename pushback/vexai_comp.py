@@ -12,11 +12,12 @@ import numpy as np
 
 from .pushback import PushBackGame, BlockStatus, LOADERS, NUM_BLOCKS_FIELD, GoalType, GOALS
 from vex_core.robot import Robot, RobotSize, Team
+from vex_core.config import CommunicationOption
 
 class VexAICompGame(PushBackGame):
     """VEX AI Competition game variant."""
     
-    def __init__(self, robots: list = None, enable_communication: bool = False, deterministic: bool = True):
+    def __init__(self, robots: list = None, communication_mode: CommunicationOption = CommunicationOption.NONE, deterministic: bool = True):
         # Default: 2v2 (2 per team, 24" and 15")
         if robots is None:
             robots = [
@@ -29,7 +30,7 @@ class VexAICompGame(PushBackGame):
                 Robot(name="blue_robot_1", team=Team.BLUE, size=RobotSize.INCH_15, 
                       start_position=np.array([46.5, -24.0], dtype=np.float32)),
             ]
-        super().__init__(robots, enable_communication=enable_communication, deterministic=deterministic)
+        super().__init__(robots, communication_mode=communication_mode, deterministic=deterministic)
     
     @property
     def default_total_time(self) -> float:

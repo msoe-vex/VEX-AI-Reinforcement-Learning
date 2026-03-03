@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from vex_core.robot import Robot
 from vex_core.base_game import VexGame, ActionEvent, ActionStep
 from vex_core.base_env import MESSAGE_SIZE
+from vex_core.config import CommunicationOption
 from vex_core.path_planner import PathPlanner, Obstacle
 
 # Forward declarations for get_game method
@@ -511,8 +512,8 @@ class PushBackGame(VexGame):
     """
     
     
-    def __init__(self, robots: list = None, enable_communication: bool = False, deterministic: bool = True):
-        super().__init__(robots, enable_communication=enable_communication)
+    def __init__(self, robots: list = None, communication_mode: CommunicationOption = CommunicationOption.NONE, deterministic: bool = True):
+        super().__init__(robots, communication_mode=communication_mode)
         self.goal_manager = GoalManager()
         self._agents: Optional[List[str]] = None
         self.deterministic = bool(deterministic)
@@ -560,20 +561,20 @@ class PushBackGame(VexGame):
         return FIELD_SIZE_INCHES
     
     @staticmethod
-    def get_game(game_name: str, enable_communication: bool = False, deterministic: bool = True) -> VexGame:
+    def get_game(game_name: str, communication_mode: CommunicationOption = CommunicationOption.NONE, deterministic: bool = True) -> VexGame:
         """
         Factory method to create a game instance from a string identifier.
         
         Args:
             game_name: String identifier (e.g., 'vexu_skills', 'vexai_comp')
-            enable_communication: Whether to enable agent communication
+            communication_mode: String indicating the agent communication option
             deterministic: Whether environment mechanics are deterministic
             
         Returns:
             VexGame instance
         """
         game_class = _get_game_class(game_name)
-        return game_class(enable_communication=enable_communication, deterministic=deterministic)
+        return game_class(communication_mode=communication_mode, deterministic=deterministic)
     
     @property
     def total_time(self) -> float:

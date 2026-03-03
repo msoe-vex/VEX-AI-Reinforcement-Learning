@@ -14,7 +14,7 @@ import glob
 
 # Import from new modular architecture
 from vex_core.base_env import VexMultiAgentEnv
-from vex_core.config import VexEnvConfig
+from vex_core.config import VexEnvConfig, CommunicationOption
 from pushback import PushBackGame
 from vex_custom_model import VexCustomPPO
 
@@ -79,12 +79,14 @@ def apply_head_training_status_on_learner(learner, phase):
     
     # Update Entropy coefficient
     if hasattr(learner, "entropy_coeff_schedule"):
+        print(f"Set entropy coeff schedule for {learner}, Phase: {phase}")
         from ray.rllib.utils.schedules.constant_schedule import ConstantSchedule
         learner.entropy_coeff_schedule = ConstantSchedule(new_entropy, framework="torch")
     
     import torch
     for attr in ["entropy_coeff", "_entropy_coeff"]:
         if hasattr(learner, attr):
+            print(f"Set entropy coeff for {learner}, Phase: {phase}")
             val = getattr(learner, attr)
             if isinstance(val, torch.Tensor):
                 val.data = torch.tensor(new_entropy, dtype=torch.float32, device=val.device)
@@ -100,47 +102,79 @@ def apply_head_training_status_on_learner(learner, phase):
         
         if hasattr(target_module, "_encoder_net"):
             enc_params.update(target_module._encoder_net.parameters())
+            print(f"Set encoder params for {module_id}, Phase: {phase}")
+        else:
+            print(f"Warning: No _encoder_net found for {module_id}")
             
         if hasattr(target_module, "pi"):
             act_params.update(target_module.pi.parameters())
+            print(f"Set action params for {module_id}, Phase: {phase}")
+        else:
+            print(f"Warning: No pi (action head) found for {module_id}")
             
         if hasattr(target_module, "message_head") and target_module.message_head is not None:
             msg_params.update(target_module.message_head.parameters())
             msg_params.update(target_module.attention_unit.parameters())
             msg_params.add(target_module.msg_log_std)
+            print(f"Set message params for {module_id}, Phase: {phase}")
+        else:
+            print(f"Warning: No message_head found for {module_id}")
 
-    if hasattr(learner, "_optimizers"):
-        for opt in learner._optimizers.values():
-            all_params = []
-            for g in opt.param_groups:
-                all_params.extend(g['params'])
+    optimizers = []
+    
+    # Try RLlib V2 Learner API
+    if hasattr(learner, "get_optimizers_for_module"):
+        try:
+            for module_id in learner.module.keys():
+                optims = [opt for name, opt in learner.get_optimizers_for_module(module_id=module_id)]
+                optimizers.extend(optims)
+        except Exception as e:
+            print(f"Error getting optimizers via get_optimizers_for_module: {e}")
             
-            new_groups = []
-            enc_group = {'params': [], 'lr': enc_lr}
-            act_group = {'params': [], 'lr': act_lr}
-            msg_group = {'params': [], 'lr': msg_lr}
-            other_group = {'params': [], 'lr': base_lr}
-            
-            for p in all_params:
-                p.requires_grad = True
-                if p in enc_params:
-                    enc_group['params'].append(p)
-                elif p in act_params:
-                    act_group['params'].append(p)
-                elif p in msg_params:
-                    msg_group['params'].append(p)
-                else:
-                    other_group['params'].append(p)
-                    
-            if opt.param_groups:
-                base_kwargs = {k: v for k, v in opt.param_groups[0].items() if k not in ('params', 'lr')}
+    # Fallback to internal V2 attribute if the public API returned an empty list
+    if not optimizers and hasattr(learner, "_named_optimizers"):
+        optimizers = list(learner._named_optimizers.values())
+        
+    # Fallback to older RLlib attribute
+    if not optimizers and hasattr(learner, "_optimizers"):
+        optimizers = list(learner._optimizers.values())
+        
+    if not optimizers:
+        print(f"Warning: Could not find any optimizers for {learner}. Available attributes: {[a for a in dir(learner) if 'opt' in a.lower()]}")
+    else:
+        print(f"Found {len(optimizers)} optimizers processing...")
+        
+    for opt in optimizers:
+        all_params = []
+        for g in opt.param_groups:
+            all_params.extend(g['params'])
+        print(f"All params amount ({len(all_params)}), Phase: {phase}")
+        
+        new_groups = []
+        enc_group = {'params': [], 'lr': enc_lr}
+        act_group = {'params': [], 'lr': act_lr}
+        msg_group = {'params': [], 'lr': msg_lr}
+        other_group = {'params': [], 'lr': base_lr}
+        
+        for p in all_params:
+            p.requires_grad = True
+            if p in enc_params:
+                enc_group['params'].append(p)
+            elif p in act_params:
+                act_group['params'].append(p)
+            elif p in msg_params:
+                msg_group['params'].append(p)
+            else:
+                other_group['params'].append(p)
                 
-                for g in [enc_group, act_group, msg_group, other_group]:
-                    if g['params']:
-                        g.update(base_kwargs)
-                        new_groups.append(g)
-                        
-                opt.param_groups = new_groups
+        if opt.param_groups:
+            base_kwargs = {k: v for k, v in opt.param_groups[0].items() if k not in ('params', 'lr')}
+            for g in [enc_group, act_group, msg_group, other_group]:
+                if g['params']:
+                    g.update(base_kwargs)
+                    new_groups.append(g)
+                    
+            opt.param_groups = new_groups
 
 class VexScoreCallback(RLlibCallback):
     """Custom callback to track team scores at the end of each episode and toggle frozen layers."""
@@ -211,7 +245,21 @@ class VexScoreCallback(RLlibCallback):
 def env_creator(config=None):
     """Create environment instance for RLlib registration."""
     config = config or {}
-    enable_communication = config.get("enable_communication", True)
+    
+    # Handle backward compatibility
+    if "communication_mode" in config:
+        comm_val = config["communication_mode"]
+        if isinstance(comm_val, CommunicationOption):
+            communication_mode = comm_val
+        else:
+            try:
+                communication_mode = CommunicationOption(comm_val)
+            except ValueError:
+                communication_mode = CommunicationOption.NONE
+    else:
+        enable_comm = config.get("enable_communication", True)
+        communication_mode = CommunicationOption.ATTENTION if enable_comm else CommunicationOption.NONE
+        
     deterministic = config.get("deterministic", True)
     game_name = config.get("game", "vexai_skills")
     
@@ -220,13 +268,13 @@ def env_creator(config=None):
         render_mode=None,
         experiment_path=config.get("experiment_path", "vex_model_training"),
         randomize=config.get("randomize", True),
-        enable_communication=enable_communication,
+        communication_mode=communication_mode,
         deterministic=deterministic
     )
     
     game = PushBackGame.get_game(
         game_name,
-        enable_communication=enable_communication,
+        communication_mode=communication_mode,
         deterministic=deterministic,
     )
     return VexMultiAgentEnv(
@@ -309,7 +357,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train multiple agents concurrently.")
     VexEnvConfig.add_cli_args(
         parser,
-        communication=True,
+        communication_mode="attention",
         experiment_path=""
     )
     parser.add_argument('--learning-rate', type=float, default=0.0005, help='Learning rate')  # Default: 0.0005
@@ -365,7 +413,7 @@ if __name__ == "__main__":
     temp_env = env_creator({
         "game": env_config_obj.game_name,
         "randomize": env_config_obj.randomize,
-        "enable_communication": env_config_obj.enable_communication,
+        "communication_mode": env_config_obj.communication_mode.value,
         "deterministic": env_config_obj.deterministic,
     })
 
@@ -422,7 +470,7 @@ if __name__ == "__main__":
             env_config={
                 "randomize": env_config_obj.randomize,
                 "game": env_config_obj.game_name,
-                "enable_communication": env_config_obj.enable_communication,
+                "communication_mode": env_config_obj.communication_mode.value,
                 "deterministic": env_config_obj.deterministic,
             }
         )
@@ -449,7 +497,7 @@ if __name__ == "__main__":
                 module_class=VexCustomPPO,  # Use custom model with clean architecture
                 observation_space=obs_space,
                 action_space=act_space,
-                model_config={"enable_communication": env_config_obj.enable_communication}  # Model architecture defined in vex_custom_model.py
+                model_config={"communication_mode": env_config_obj.communication_mode.value}  # Model architecture defined in vex_custom_model.py
             )
         )
         .fault_tolerance(
@@ -490,7 +538,7 @@ if __name__ == "__main__":
         "num_iters": args.num_iters,
         "source_experiment_directory": restore_experiment_directory,
         "restored_checkpoint_path": restore_path,
-        "enable_communication": env_config_obj.enable_communication,
+        "communication_mode": env_config_obj.communication_mode.value,
         "deterministic": env_config_obj.deterministic,
         "start_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()),
     }
@@ -560,13 +608,13 @@ if __name__ == "__main__":
             render_mode=None,
             experiment_path=experiment_dir,
             randomize=env_config_obj.randomize,
-            enable_communication=env_config_obj.enable_communication,
+            communication_mode=env_config_obj.communication_mode,
             deterministic=env_config_obj.deterministic
         )
         run_simulation(
             config=test_config,
             iterations=1000,
-            test_communication=env_config_obj.enable_communication
+            test_communication_mode=env_config_obj.communication_mode
         )
         print("Automated testing complete.")
     except Exception as e:
