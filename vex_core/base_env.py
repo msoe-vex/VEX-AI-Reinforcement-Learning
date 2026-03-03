@@ -6,6 +6,7 @@ Delegates game-specific logic to a VexGame implementation.
 """
 
 import functools
+import math
 import os
 import numpy as np
 
@@ -16,6 +17,7 @@ from typing import Dict, List, Tuple, Optional, Any
 
 from .base_game import VexGame, Robot, RobotSize, Team, ActionEvent, ActionStep
 from .config import VexEnvConfig, CommunicationOption
+from .utils import vex_atan2, vex_normalize_angle, vex_shortest_angular_distance, vex_to_standard_radians
 
 DELTA_T = 0.1  # Discrete time step in seconds
 COMM_DELAY_TICKS = 4  # Message delivery delay in ticks (~0.375s, half of 0.75s RTT)
@@ -280,11 +282,13 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                         current_pos = s_pos + (e_pos - s_pos) * seg_alpha
                         s_or = float(seg["start_orient"][0])
                         e_or = float(seg["end_orient"][0])
-                        d_or = np.arctan2(np.sin(e_or - s_or), np.cos(e_or - s_or))
-                        interp_or = s_or + d_or * seg_alpha
+                        d_or = vex_shortest_angular_distance(s_or, e_or)
+                        interp_or = vex_normalize_angle(s_or + d_or * seg_alpha)
+                        
                         diff = e_pos - s_pos
                         if np.linalg.norm(diff) > 0.1:
-                            interp_or = np.arctan2(diff[1], diff[0])
+                            interp_or = vex_atan2(diff[0], diff[1])
+                            
                         current_orient = np.array([interp_or], dtype=np.float32)
                         break
                     else:
@@ -1167,13 +1171,17 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                         proj_theta = float(self.busy_state[agent]["target_orient"][0])
                     except Exception:
                         proj_theta = float(theta)
+                
+                # Matplotlib requires standard radians, not VEX degrees
+                proj_theta_rad = vex_to_standard_radians(proj_theta)
+                
                 proj_rect = patches.Rectangle(
                     (-robot_len/2, -robot_wid/2),
                     robot_len, robot_wid,
                     edgecolor='yellow', facecolor='none',
                     linestyle='--', linewidth=1.2, alpha=0.8, zorder=2
                 )
-                tproj = mtransforms.Affine2D().rotate(proj_theta).translate(px, py) + ax.transData
+                tproj = mtransforms.Affine2D().rotate(proj_theta_rad).translate(px, py) + ax.transData
                 proj_rect.set_transform(tproj)
                 ax.add_patch(proj_rect)
 
@@ -1184,18 +1192,58 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 edgecolor='black', facecolor=robot_color,
                 alpha=0.7, linewidth=2
             )
-            t = mtransforms.Affine2D().rotate(theta).translate(x, y) + ax.transData
+            theta_rad = vex_to_standard_radians(theta)
+            t = mtransforms.Affine2D().rotate(theta_rad).translate(x, y) + ax.transData
             robot_rect.set_transform(t)
             ax.add_patch(robot_rect)
             
-            # Draw orientation arrow
+            # Draw orientation arrow (Body)
             arrow_length = robot_len * 0.4
             ax.arrow(x, y,
-                    np.cos(theta) * arrow_length,
-                    np.sin(theta) * arrow_length,
+                    np.cos(theta_rad) * arrow_length,
+                    np.sin(theta_rad) * arrow_length,
                     width=1.5, facecolor='yellow',
                     head_width=4, head_length=2, zorder=10,
                     edgecolor='black', linewidth=0.5)
+
+            # Draw FOV cone (Camera)
+            cam_offset_vex = float(st.get("camera_rotation_offset", 0.0))
+            # Camera VEX angle is body + offset
+            cam_angle_vex = vex_normalize_angle(theta + cam_offset_vex)
+            # Matplotlib takes standard degrees (0=East, CCW is positive)
+            # vex_to_standard_radians gives radians, we need degrees for Wedge
+            cam_angle_std_deg = math.degrees(vex_to_standard_radians(cam_angle_vex))
+            
+            # Get the FOV from the game logic
+            fov_deg = 90.0 # Standard FOV from pushback.py
+            
+            # Gradient Render (Segmented wedges for radial alpha dropoff)
+            fov_radius = 72
+            fov_start_angle = cam_angle_std_deg - (fov_deg / 2)
+            fov_end_angle = cam_angle_std_deg + (fov_deg / 2)
+            
+            num_segments = 15
+            for seg_idx in range(num_segments):
+                inner_radius = (seg_idx / num_segments) * fov_radius
+                outer_radius = ((seg_idx + 1) / num_segments) * fov_radius
+                # Calculate alpha mapping from 0.25 (inner) to 0.0 (outer)
+                radial_alpha = 0.25 * (1.0 - (seg_idx / (num_segments - 1.0)))
+                
+                width = outer_radius - inner_radius
+                # Matplotlib throws errors if width or alpha are practically zero
+                if radial_alpha <= 0.001 or width <= 0.001:
+                    continue
+                    
+                fov_wedge = patches.Wedge(
+                    (x, y), outer_radius, fov_start_angle, fov_end_angle,
+                    width=width,
+                    facecolor=robot_color, # Use the robot's team color instead of yellow
+                    alpha=radial_alpha,
+                    edgecolor='none',
+                    linewidth=0.0,
+                    zorder=1
+                )
+                ax.add_patch(fov_wedge)
             
             # Agent number label
             ax.text(x, y, str(i), fontsize=12, ha='center', va='center',

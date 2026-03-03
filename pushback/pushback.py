@@ -26,6 +26,13 @@ from vex_core.base_game import VexGame, ActionEvent, ActionStep
 from vex_core.base_env import MESSAGE_SIZE
 from vex_core.config import CommunicationOption
 from vex_core.path_planner import PathPlanner, Obstacle
+from vex_core.utils import (
+    vex_normalize_angle, 
+    vex_shortest_angular_distance, 
+    vex_atan2, 
+    vex_cos, 
+    vex_sin
+)
 
 # Forward declarations for get_game method
 def _get_game_class(game_name: str):
@@ -75,7 +82,7 @@ LONG_GOAL_CONTROL_THRESHOLD = 3
 CENTER_GOAL_CONTROL_THRESHOLD = 7
 
 # Field of view for robot vision
-FOV = np.pi / 2
+FOV = 90.0
 
 # Default penalty for invalid actions
 DEFAULT_PENALTY = 1.0
@@ -165,7 +172,7 @@ GOALS: Dict[GoalType, GoalPosition] = {
         capacity=LONG_GOAL_CAPACITY,
         control_threshold=LONG_GOAL_CONTROL_THRESHOLD,
         goal_type=GoalType.LONG_1,
-        angle=0.0,
+        angle=90.0,
     ),
     GoalType.LONG_2: GoalPosition(
         center=np.array([0.0, -48.0]),
@@ -174,7 +181,7 @@ GOALS: Dict[GoalType, GoalPosition] = {
         capacity=LONG_GOAL_CAPACITY,
         control_threshold=LONG_GOAL_CONTROL_THRESHOLD,
         goal_type=GoalType.LONG_2,
-        angle=0.0,
+        angle=90.0,
     ),
     GoalType.CENTER_UPPER: GoalPosition(
         center=np.array([0.0, 0.0]),
@@ -183,7 +190,7 @@ GOALS: Dict[GoalType, GoalPosition] = {
         capacity=CENTER_GOAL_CAPACITY,
         control_threshold=CENTER_GOAL_CONTROL_THRESHOLD,
         goal_type=GoalType.CENTER_UPPER,
-        angle=-45.0,
+        angle=135.0,
     ),
     GoalType.CENTER_LOWER: GoalPosition(
         center=np.array([0.0, 0.0]),
@@ -192,7 +199,7 @@ GOALS: Dict[GoalType, GoalPosition] = {
         capacity=CENTER_GOAL_CAPACITY,
         control_threshold=CENTER_GOAL_CONTROL_THRESHOLD,
         goal_type=GoalType.CENTER_LOWER,
-        angle=-45.0,
+        angle=135.0,
     ),
 }
 
@@ -683,8 +690,8 @@ class PushBackGame(VexGame):
         
         camera_offset = float(agent_state.get("camera_rotation_offset", 0.0))
         camera_angle = float(agent_state["orientation"][0]) + camera_offset
-        # Normalize to [-pi, pi]
-        camera_angle = np.arctan2(np.sin(camera_angle), np.cos(camera_angle))
+        # Normalize to [0, 360)
+        camera_angle = vex_normalize_angle(camera_angle)
         obs_parts.append(float(camera_angle))
         
         # 2. Held blocks by color from inferred tracker
@@ -1072,7 +1079,7 @@ class PushBackGame(VexGame):
         move_duration = dist / speed if speed > 0 else 0.0
 
         travel_orientation = (
-            np.array([np.arctan2(movement[1], movement[0])], dtype=np.float32)
+            np.array([vex_atan2(movement[0], movement[1])], dtype=np.float32)
             if dist > 0
             else start_orient.copy()
         )
@@ -1124,11 +1131,13 @@ class PushBackGame(VexGame):
         agent_pos = agent_state["position"]
         camera_offset = float(agent_state.get("camera_rotation_offset", 0.0))
         camera_angle = float(agent_state["orientation"][0]) + camera_offset
-        
+        camera_angle = vex_normalize_angle(camera_angle)
+
+        # Check if center is in FOV
         direction = point - agent_pos
-        other_angle = np.arctan2(direction[1], direction[0])
+        other_angle = vex_atan2(direction[0], direction[1])
         
-        angle_diff = (float(other_angle) - float(camera_angle) + np.pi) % (2 * np.pi) - np.pi
+        angle_diff = vex_shortest_angular_distance(camera_angle, other_angle)
         return abs(angle_diff) <= float(FOV) / 2.0
 
     def _visibility_probability(self, agent_state: dict, point: np.ndarray) -> float:
@@ -1237,7 +1246,7 @@ class PushBackGame(VexGame):
             
             target_orient = start_orient.copy()
             if dist > 0:
-                target_orient = np.array([np.arctan2(movement[1], movement[0])], dtype=np.float32)
+                target_orient = np.array([vex_atan2(movement[0], movement[1])], dtype=np.float32)
             
             # Build pickup event with stochastic probability
             pickup_event = ActionEvent(
@@ -1293,33 +1302,33 @@ class PushBackGame(VexGame):
         if goal_type == GoalType.LONG_1:
             if scoring_side == "left":
                 robot_pos = np.array([-24.0 - robot_len/2 - 2.0, 48.0])
-                orientation = 0.0
+                orientation = 90.0
             else:
                 robot_pos = np.array([24.0 + robot_len/2 + 2.0, 48.0])
-                orientation = np.pi
+                orientation = 270.0
         elif goal_type == GoalType.LONG_2:
             if scoring_side == "left":
                 robot_pos = np.array([-24.0 - robot_len/2 - 2.0, -48.0])
-                orientation = 0.0
+                orientation = 90.0
             else:
                 robot_pos = np.array([24.0 + robot_len/2 + 2.0, -48.0])
-                orientation = np.pi
+                orientation = 270.0
         elif goal_type == GoalType.CENTER_UPPER:
             offset = robot_len/2 + 4.0
             if scoring_side == "left":
                 robot_pos = np.array([-8.5 - offset * 0.707, 8.5 + offset * 0.707])
-                orientation = -np.pi / 4
+                orientation = 135.0
             else:
                 robot_pos = np.array([8.5 + offset * 0.707, -8.5 - offset * 0.707])
-                orientation = 3 * np.pi / 4
+                orientation = 315.0
         else:  # CENTER_LOWER
             offset = robot_len/2 + 4.0
             if scoring_side == "left":
                 robot_pos = np.array([8.5 + offset * 0.707, 8.5 + offset * 0.707])
-                orientation = -3 * np.pi / 4
+                orientation = 225.0
             else:
                 robot_pos = np.array([-8.5 - offset * 0.707, -8.5 - offset * 0.707])
-                orientation = np.pi / 4
+                orientation = 45.0
         
         # Build one scoring event for all currently held blocks
         agent_name = agent_state["agent_name"]
@@ -1419,16 +1428,16 @@ class PushBackGame(VexGame):
         offset = robot_len / 2 + 8.0
         
         if loader_idx == 0:  # Top Left
-            orientation = np.pi
+            orientation = 270.0
             robot_pos = np.array([loader_pos[0] + offset, loader_pos[1]])
         elif loader_idx == 1:  # Top Right
-            orientation = 0.0
+            orientation = 90.0
             robot_pos = np.array([loader_pos[0] - offset, loader_pos[1]])
         elif loader_idx == 2:  # Bottom Left
-            orientation = np.pi
+            orientation = 270.0
             robot_pos = np.array([loader_pos[0] + offset, loader_pos[1]])
         else:  # Bottom Right
-            orientation = 0.0
+            orientation = 90.0
             robot_pos = np.array([loader_pos[0] - offset, loader_pos[1]])
         
         # Build loader clear event
@@ -1496,7 +1505,7 @@ class PushBackGame(VexGame):
                         target_orient=start_orient.copy(),
                     )], DEFAULT_PENALTY
         
-        final_orient = np.array([np.random.choice([np.pi/2, -np.pi/2])], dtype=np.float32)
+        final_orient = np.array([np.random.choice([0.0, 180.0])], dtype=np.float32)
         
         # Build park event
         park_event = ActionEvent(
@@ -1525,21 +1534,18 @@ class PushBackGame(VexGame):
         start_orient = agent_state["orientation"].copy()
 
         direction = np.array([0.0, 0.0]) - agent_state["position"]
-        target_camera_angle = np.arctan2(direction[1], direction[0])
+        target_camera_angle = vex_atan2(direction[0], direction[1])
         camera_offset = float(agent_state.get("camera_rotation_offset", 0.0))
 
         current_body_angle = float(agent_state["orientation"][0])
-        current_camera_angle = current_body_angle + camera_offset
+        current_camera_angle = vex_normalize_angle(current_body_angle + camera_offset)
         target_body_angle = target_camera_angle - camera_offset
 
         # Check using camera angle (consistent with the updated observation space)
-        angle_error = np.arctan2(
-            np.sin(target_camera_angle - current_camera_angle),
-            np.cos(target_camera_angle - current_camera_angle),
-        )
+        angle_error = vex_shortest_angular_distance(current_camera_angle, target_camera_angle)
 
         # If camera is already oriented correctly, give a small penalty
-        if abs(angle_error) < 0.1:
+        if abs(angle_error) < 5.7:
             return [ActionStep(
                 duration=0.1,
                 target_pos=start_pos.copy(),
@@ -1665,13 +1671,10 @@ class PushBackGame(VexGame):
             camera_orient = observation[ObsIndex.SELF_ORIENT]
             
             # target_camera_angle is the direction to center
-            target_camera_angle = np.arctan2(-pos_y, -pos_x)
+            target_camera_angle = vex_atan2(-pos_x, -pos_y)
             
-            angle_error = abs(np.arctan2(
-                np.sin(target_camera_angle - camera_orient),
-                np.cos(target_camera_angle - camera_orient),
-            ))
-            if angle_error < 0.1:  # ~5.7 degrees
+            angle_error = vex_shortest_angular_distance(camera_orient, target_camera_angle)
+            if abs(angle_error) < 5.7:  # ~5.7 degrees
                 return False
         
         return True
@@ -2141,37 +2144,7 @@ class PushBackGame(VexGame):
                 )
                 ax.add_patch(hexagon)
         
-        # Robot FOV wedges
-        for agent_name, agent_state in self.state["agents"].items():
-            x, y = agent_state["position"]
-            camera_offset = float(agent_state.get("camera_rotation_offset", 0.0))
-            theta = float(agent_state["orientation"][0]) + camera_offset
-            
-            fov_radius = 72
-            fov_start_angle = np.degrees(theta - FOV/2)
-            fov_end_angle = np.degrees(theta + FOV/2)
-            num_segments = 15
-            for seg_idx in range(num_segments):
-                inner_radius = (seg_idx / num_segments) * fov_radius
-                outer_radius = ((seg_idx + 1) / num_segments) * fov_radius
-                # Calculate alpha mapping from 0.25 (inner) to 0.0 (outer)
-                radial_alpha = 0.25 * (1.0 - (seg_idx / (num_segments - 1.0)))
-                
-                width = outer_radius - inner_radius
-                # Matplotlib throws errors if width or alpha are practically zero
-                if radial_alpha <= 0.001 or width <= 0.001:
-                    continue
-                    
-                fov_wedge = patches.Wedge(
-                    (x, y), outer_radius, fov_start_angle, fov_end_angle,
-                    width=width,
-                    facecolor='yellow',
-                    alpha=radial_alpha,
-                    edgecolor='none',
-                    linewidth=0.0
-                )
-                ax.add_patch(fov_wedge)
-    
+
     def action_to_name(self, action: int) -> str:
         """
         Convert an action index to a human-readable name.
@@ -2296,7 +2269,7 @@ class PushBackGame(VexGame):
             actions.append("DRIVE;24;30")
 
         elif action == Actions.TURN_TOWARD_CENTER.value:
-            target_camera_angle = np.arctan2(-robot_pos[1], -robot_pos[0])
+            target_camera_angle = vex_atan2(-robot_pos[0], -robot_pos[1])
             camera_offset = float(getattr(robot, "camera_rotation_offset", 0.0))
             target_body_angle_deg = np.degrees(target_camera_angle - camera_offset)
             actions.append(f"TURN_TO;{target_body_angle_deg:.1f};40")

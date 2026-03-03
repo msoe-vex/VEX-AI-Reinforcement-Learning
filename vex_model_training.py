@@ -547,7 +547,7 @@ if __name__ == "__main__":
 
     # Calculate checkpoint frequency - ensure at least one checkpoint is created
     # Checkpoint at the end and at reasonable intervals
-    checkpoint_freq = max(1, min(5, args.num_iters))  # Every 5 iters, but at least once
+    checkpoint_freq = max(1, min(5, num_iters))  # Every 5 iters, but at least once
     print(f"Checkpoint frequency: every {checkpoint_freq} iterations")
 
     # Prepare restore parameter if an experiment directory was provided

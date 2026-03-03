@@ -23,10 +23,10 @@ class VexAISkillsGame(PushBackGame):
         # Start positions still follow VAIRS4 (24" in blue park zone, 15" in red park zone).
         if robots is None:
             robots = [
-                Robot(name="red_robot_0", team=Team.RED, size=RobotSize.INCH_24, length=15, width=15,
-                      start_position=np.array([60.0, 0.0], dtype=np.float32), start_orientation=np.pi),
-                Robot(name="red_robot_1", team=Team.RED, size=RobotSize.INCH_15, length=15, width=15,
-                      start_position=np.array([-60.0, 0.0], dtype=np.float32), start_orientation=0),
+                Robot(name="red_robot_0", team=Team.RED, size=RobotSize.INCH_24, length=15.0, width=15.0,
+                      start_position=np.array([60.0, 0.0], dtype=np.float32), start_orientation=270.0),
+                Robot(name="red_robot_1", team=Team.RED, size=RobotSize.INCH_15, length=15.0, width=15.0,
+                      start_position=np.array([-60.0, 0.0], dtype=np.float32), start_orientation=90.0),
             ]
         super().__init__(robots, communication_mode=communication_mode, deterministic=deterministic)
     
