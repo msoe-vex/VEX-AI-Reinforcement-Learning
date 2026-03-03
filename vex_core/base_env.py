@@ -340,8 +340,13 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             float(self._agent_penalty_totals.get(agent, 0.0)) + float(penalty)
         )
 
-    def _start_deferred_reward(self, agent: str, action_name: str, penalty: float) -> None:
-        """Initialize deferred reward tracking for a newly started action."""
+    def _start_deferred_reward(self, agent: str, action_name: str, penalty: float, initial_score_delta: float = 0.0) -> None:
+        """Initialize deferred reward tracking for a newly started action.
+        
+        Args:
+            initial_score_delta: Score change that occurred before this action
+                started (e.g. unparking), attributed to this agent.
+        """
         team = self.game.get_team_for_agent(agent)
         team_score_start, opp_score_start = self._get_team_and_opp_scores(team)
         self._deferred_rewards[agent] = {
@@ -351,7 +356,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             "team_score_start": team_score_start,
             "opp_score_start": opp_score_start,
             "team_penalty_baseline": self._get_team_penalty_total(team, exclude_agent=agent),
-            "individual_team_delta": 0.0,
+            "individual_team_delta": float(initial_score_delta),
             "individual_opp_delta": 0.0,
         }
         self._add_agent_penalty(agent, penalty)
@@ -527,7 +532,17 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             action_int = int(action_val.value if hasattr(action_val, 'value') else action_val)
             agent_state["current_action"] = action_int
             agent_state["game_time"] = self._get_agent_time(agent)
+            
+            # Capture score BEFORE execute_action to detect immediate score changes
+            # (e.g. unparking drops parking bonus, taking from loader changes block status)
+            team = self.game.get_team_for_agent(agent)
+            score_before_exec = dict(self.game.compute_score())
+            
             action_steps, penalty = self.game.execute_action(agent, action_int)
+            
+            # Capture score AFTER execute_action — delta is attributed to this agent
+            score_after_exec = dict(self.game.compute_score())
+            exec_team_delta = float(score_after_exec.get(team, 0)) - float(score_before_exec.get(team, 0))
             
             # Store emitted message (or force zeros when communication is disabled)
             if self.communication_mode == CommunicationOption.ATTENTION and emitted_msg is not None:
@@ -616,7 +631,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 action_name = self.game.action_to_name(action_int)
             except Exception:
                 action_name = str(action_int)
-            self._start_deferred_reward(agent, action_name, penalty)
+            self._start_deferred_reward(agent, action_name, penalty, initial_score_delta=exec_team_delta)
 
             # Agent is now busy — remove from self.agents
             if agent in self.agents:

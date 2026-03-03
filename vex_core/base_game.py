@@ -14,11 +14,11 @@ from enum import Enum
 
 # Default reward decomposition weights
 # reward = a * team_delta + b * opp_delta + c * individual_delta + d * individual_penalty + e * team_penalty
-DEFAULT_REWARD_WEIGHT_TEAM_DELTA = 0.2 # Positive weight for team score changes (encourages cooperation)
-DEFAULT_REWARD_WEIGHT_OPP_DELTA = -0.1 # Negative weight for opponent score changes (discourages opponent scoring, but less than team reward to avoid over-aggression)
+DEFAULT_REWARD_WEIGHT_TEAM_DELTA = 0.05 # Positive weight for team score changes (encourages cooperation)
+DEFAULT_REWARD_WEIGHT_OPP_DELTA = -0.01 # Negative weight for opponent score changes (discourages opponent scoring, but less than team reward to avoid over-aggression)
 DEFAULT_REWARD_WEIGHT_INDIVIDUAL_DELTA = 1.0 # Positive weight for individual score changes (encourages contributing to scoring, can be higher than team reward to incentivize individual contribution)
 DEFAULT_REWARD_WEIGHT_INDIVIDUAL_PENALTY = -1.0 # Negative weight for individual penalties (e.g., losing held blocks, failed actions)
-DEFAULT_REWARD_WEIGHT_TEAM_PENALTY = -0.1 # Negative weight for team penalties (e.g., opponent scoring, collisions), encourages communication to avoid penalties but with a lower weight to prevent over-penalizing risky but potentially rewarding actions
+DEFAULT_REWARD_WEIGHT_TEAM_PENALTY = -0.01 # Negative weight for team penalties (e.g., opponent scoring, collisions), encourages communication to avoid penalties but with a lower weight to prevent over-penalizing risky but potentially rewarding actions
 from vex_core.robot import Robot, Team, RobotSize
 from vex_core.config import CommunicationOption
 

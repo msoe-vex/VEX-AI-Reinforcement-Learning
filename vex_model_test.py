@@ -138,6 +138,8 @@ def run_simulation(
 
     team_score_totals = {}
     team_score_counts = {}
+    total_reward_totals = {}
+    total_reward_counts = {}
     os.makedirs(output_dir, exist_ok=True)
     results_csv_path = os.path.join(output_dir, "results.csv")
     iteration_results = []
@@ -153,6 +155,8 @@ def run_simulation(
         done = False
         step_count = 0
         last_actions = {agent: None for agent in env.possible_agents}
+
+        total_reward = 0
 
         while not done:
             step_count += 1
@@ -259,6 +263,9 @@ def run_simulation(
 
             next_observations, step_rewards, terminations, truncations, infos = env.step(actions_to_take)
 
+            for agent_id, reward in step_rewards.items():
+                total_reward += reward
+
             # Rendering is handled internally by env.step() during fast-forward
 
             observations = next_observations
@@ -271,6 +278,7 @@ def run_simulation(
             f"Simulation iteration {iteration} ended after {step_count} steps "
             f"(env steps: {env.num_steps}, internal ticks: {env.num_ticks}). "
             f"Final score: {env.score}"
+            f"Total reward: {total_reward}"
         )
 
         if isinstance(env.score, dict):
@@ -297,6 +305,9 @@ def run_simulation(
                     "score": env.score,
                 }
             )
+        
+        total_reward_totals[team_name] = total_reward_totals.get(team_name, 0.0) + float(total_reward)
+        total_reward_counts[team_name] = total_reward_counts.get(team_name, 0) + 1
 
         if render_mode == "image":
             print("Creating GIF of the simulation...")
@@ -309,6 +320,14 @@ def run_simulation(
             print(f"  {team_name}: {avg_score:.3f}")
     else:
         print("  No per-team score dictionary found on env.score.")
+
+    print("\nAverage total rewards across all iterations:")
+    if total_reward_totals:
+        for team_name in sorted(total_reward_totals.keys()):
+            avg_reward = total_reward_totals[team_name] / max(total_reward_counts.get(team_name, 1), 1)
+            print(f"  {team_name}: {avg_reward:.3f}")
+    else:
+        print("  No per-team total reward dictionary found on env.score.")
 
     if iteration_results:
         fieldnames = []
@@ -334,7 +353,7 @@ if __name__ == "__main__":
         render_mode="image",
         experiment_path=None,
         randomize=False,
-        communication_mode="none",
+        communication_mode=None,
         deterministic=False
     )
     parser.add_argument(
