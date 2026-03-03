@@ -26,12 +26,12 @@ import json
 TRAINING_PHASES = [
     # Phase 1: BOOTSTRAP (The "Silent" Era)
     # Goal: Learn basic robot movement and game mechanics without message noise.
-    {"iterations": 100,  "train_encoder": True,  "train_action": True,  "train_message": False, "lr": 0.0005,  "entropy": 0.05},
+    {"iterations": 100,  "train_encoder": True,  "train_action": True,  "train_message": False, "lr": 0.001,  "entropy": 0.05},
 
     # Phase 2: TALK ONLY (The "Encoding" Era)
     # Goal: Freeze the good behavior. Now, force the message head to explain 
     # what the robot is doing/seeing.
-    {"iterations": 90,  "train_encoder": False, "train_action": False, "train_message": True,  "lr": 0.0005,  "entropy": 0.05},
+    {"iterations": 90,  "train_encoder": False, "train_action": False, "train_message": True,  "lr": 0.001,  "entropy": 0.05},
 
     # Fine tune
     {"iterations": 10,  "train_encoder": True, "train_action": True,  "train_message": True, "lr": 0.00005,  "entropy": 0.005},
@@ -39,7 +39,7 @@ TRAINING_PHASES = [
     # Phase 3: LISTEN ONLY (The "Coordination" Era)
     # Goal: Keep messages stable. Now, teach the robots to use those messages 
     # to improve their existing policy.
-    {"iterations": 90,  "train_encoder": False, "train_action": True,  "train_message": False, "lr": 0.0005,  "entropy": 0.03},
+    {"iterations": 90,  "train_encoder": False, "train_action": True,  "train_message": False, "lr": 0.001,  "entropy": 0.03},
 
     # Fine tune
     {"iterations": 10,  "train_encoder": True, "train_action": True,  "train_message": True, "lr": 0.00005,  "entropy": 0.005},
@@ -237,8 +237,8 @@ def env_creator(config=None):
 
 # Policy mapping function to assign agents to policies.
 def policy_mapping_fn(agent_id, episode):
-    # return "shared_policy" # Use the same policy for all agents
-    return agent_id # Change to agent_id if you want to use different policies for each agent
+    return "shared_policy" # Use the same policy for all agents
+    # return agent_id # Change to agent_id if you want to use different policies for each agent
 
 
 def find_latest_checkpoint(experiment_directory: str):
