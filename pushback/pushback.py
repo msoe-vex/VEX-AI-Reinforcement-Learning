@@ -2262,7 +2262,7 @@ class PushBackGame(VexGame):
             
             actions.append(f"FOLLOW;{get_path(start_pos, approach_pos)};60")
             actions.append(f"TURN_TO_POINT;({target_pos[0]:.1f},{target_pos[1]:.1f});40")
-            actions.append("DRIVE;24;30")
+            actions.append("DRIVE;-24;30")
 
         elif action == Actions.TURN_TOWARD_CENTER.value:
             target_camera_angle = np.arctan2(-robot_pos[1], -robot_pos[0])
