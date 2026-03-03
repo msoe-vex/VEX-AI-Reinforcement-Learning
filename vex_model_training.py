@@ -323,7 +323,6 @@ def apply_training_metadata_overrides(args, metadata, explicit_cli_flags):
         "discount_factor": ("discount_factor", ["--discount-factor"]),
         "entropy": ("entropy", ["--entropy"]),
         "entropy_final": ("entropy_final", ["--entropy-final"]),
-        "num_iters": ("num_iters", ["--num-iters"]),
     }
 
     for metadata_key, (arg_name, cli_flags) in metadata_to_arg.items():
@@ -367,7 +366,7 @@ if __name__ == "__main__":
     parser.add_argument('--entropy', type=float, default=0.05, help='Entropy coefficient')  # Default: 0.05
     parser.add_argument('--entropy-final', type=float, default=0.005,
                         help='Final entropy coefficient for linear schedule (if not set, entropy is constant)')
-    parser.add_argument('--num-iters', type=int, default=10, help='Number of training iterations')  # Default: 10
+
     parser.add_argument('--cpus-per-task', type=int, default=1, help='Number of CPUs per task')  # Default: 1
     parser.add_argument('--job-id', type=str, default="", help='SLURM job ID')  # Job ID for logging
     parser.add_argument('--num-gpus', type=int, default=0, help='Number of GPUs to use')
@@ -447,9 +446,8 @@ if __name__ == "__main__":
     print(f"Configured policy IDs: {configured_policy_ids}")
     train_batch_size_per_learner = 4096
 
-    # Set number of iterations manually according to phase list
-    args.num_iters = sum(phase["iterations"] for phase in TRAINING_PHASES)
-    print(f"Total training iterations set to {args.num_iters} based on TRAINING_PHASES.")
+    num_iters = sum(phase["iterations"] for phase in TRAINING_PHASES)
+    print(f"Total training iterations: {num_iters} (from TRAINING_PHASES)")
 
     print("Using custom callback for LR and entropy scheduling based on iterations.")
 
@@ -535,7 +533,7 @@ if __name__ == "__main__":
         "training_phases": TRAINING_PHASES,
         "discount_factor": args.discount_factor,
         "randomize": env_config_obj.randomize,
-        "num_iters": args.num_iters,
+        "num_iters": num_iters,
         "source_experiment_directory": restore_experiment_directory,
         "restored_checkpoint_path": restore_path,
         "communication_mode": env_config_obj.communication_mode.value,
@@ -568,7 +566,7 @@ if __name__ == "__main__":
         sync_config=tune.SyncConfig(
             sync_period=300,  # Sync every 5 minutes instead of constantly
         ),
-        stop={"training_iteration": args.num_iters},
+        stop={"training_iteration": num_iters},
         callbacks=[
             JsonLoggerCallback(),
             CSVLoggerCallback(),

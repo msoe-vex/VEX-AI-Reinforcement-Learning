@@ -595,7 +595,7 @@ class PushBackGame(VexGame):
     
     @property
     def fallback_action(self) -> int:
-        return Actions.IDLE.value
+        return Actions.TURN_TOWARD_CENTER.value
         
     def get_action_name(self, action: int) -> str:
         """Get the human-readable string name for an action index."""
@@ -897,7 +897,9 @@ class PushBackGame(VexGame):
             steps, penalty = self._action_turn_toward_center(agent_state)
         
         elif action == Actions.IDLE.value:
-            penalty = DEFAULT_PENALTY  # Small penalty for idle
+            # No penalty if parked (agent should stay put); penalize if not parked
+            if not (agent_state.get("parked", False) or agent_state.get("inferred_parked", False)):
+                penalty = DEFAULT_PENALTY
             steps = [ActionStep(
                 duration=0.1,
                 target_pos=start_pos.copy(),
@@ -1531,7 +1533,7 @@ class PushBackGame(VexGame):
         )
 
         # If camera is already facing center, give a small penalty
-        if abs(angle_error) < 1e-4:
+        if abs(angle_error) < 0.1:
             return [ActionStep(
                 duration=0.1,
                 target_pos=start_pos.copy(),
@@ -1618,11 +1620,12 @@ class PushBackGame(VexGame):
             if held_friendly <= 0:
                 return False
         
-        # Team-relative pickup actions - require at least one visible block of either team
-        # (exact team availability is validated in _action_pickup_block and penalized if missing).
-        if action in (Actions.PICK_UP_FRIENDLY_BLOCK.value, Actions.PICK_UP_OPPONENT_BLOCK.value):
-            visible_blocks = observation[ObsIndex.FRIENDLY_BLOCK_COUNT] + observation[ObsIndex.OPPONENT_BLOCK_COUNT]
-            if total_held >= MAX_HELD_BLOCKS or visible_blocks <= 0:
+        # Pickup actions require visible blocks of the SPECIFIC team color
+        if action == Actions.PICK_UP_FRIENDLY_BLOCK.value:
+            if total_held >= MAX_HELD_BLOCKS or observation[ObsIndex.FRIENDLY_BLOCK_COUNT] <= 0:
+                return False
+        elif action == Actions.PICK_UP_OPPONENT_BLOCK.value:
+            if total_held >= MAX_HELD_BLOCKS or observation[ObsIndex.OPPONENT_BLOCK_COUNT] <= 0:
                 return False
         
         # Clear loader actions - can only clear each loader once
@@ -1642,6 +1645,24 @@ class PushBackGame(VexGame):
         if action in (Actions.PARK_FRIENDLY.value, Actions.PARK_OPPONENT.value):
             # Parking is only valid if not already parked
             if observation[ObsIndex.PARKED] >= 1:
+                return False
+        
+        # IDLE is masked unless the agent is parked (parked agents should idle)
+        if action == Actions.IDLE.value:
+            if observation[ObsIndex.PARKED] < 1:
+                return False
+        
+        # TURN_TOWARD_CENTER is masked if already facing center
+        if action == Actions.TURN_TOWARD_CENTER.value:
+            pos_x = observation[ObsIndex.SELF_POS_X]
+            pos_y = observation[ObsIndex.SELF_POS_Y]
+            orient = observation[ObsIndex.SELF_ORIENT]
+            angle_to_center = np.arctan2(-pos_y, -pos_x)
+            angle_error = abs(np.arctan2(
+                np.sin(angle_to_center - orient),
+                np.cos(angle_to_center - orient),
+            ))
+            if angle_error < 0.1:  # ~5.7 degrees
                 return False
         
         return True
