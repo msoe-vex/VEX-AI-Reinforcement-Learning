@@ -677,10 +677,15 @@ class PushBackGame(VexGame):
         
         obs_parts = []
         
-        # 1. Self position (2) and orientation (1)
+        # 1. Self position (2) and orientation (1) - using CAMERA angle since FOV determines vision
         obs_parts.append(float(agent_state["position"][0]))
         obs_parts.append(float(agent_state["position"][1]))
-        obs_parts.append(float(agent_state["orientation"][0]))
+        
+        camera_offset = float(agent_state.get("camera_rotation_offset", 0.0))
+        camera_angle = float(agent_state["orientation"][0]) + camera_offset
+        # Normalize to [-pi, pi]
+        camera_angle = np.arctan2(np.sin(camera_angle), np.cos(camera_angle))
+        obs_parts.append(float(camera_angle))
         
         # 2. Held blocks by color from inferred tracker
         obs_parts.append(float(agent_state.get("inferred_held_friendly", 0)))
@@ -1527,12 +1532,13 @@ class PushBackGame(VexGame):
         current_camera_angle = current_body_angle + camera_offset
         target_body_angle = target_camera_angle - camera_offset
 
+        # Check using camera angle (consistent with the updated observation space)
         angle_error = np.arctan2(
             np.sin(target_camera_angle - current_camera_angle),
             np.cos(target_camera_angle - current_camera_angle),
         )
 
-        # If camera is already facing center, give a small penalty
+        # If camera is already oriented correctly, give a small penalty
         if abs(angle_error) < 0.1:
             return [ActionStep(
                 duration=0.1,
@@ -1652,15 +1658,18 @@ class PushBackGame(VexGame):
             if observation[ObsIndex.PARKED] < 1:
                 return False
         
-        # TURN_TOWARD_CENTER is masked if already facing center
+        # TURN_TOWARD_CENTER is masked if camera is already pointing at center
         if action == Actions.TURN_TOWARD_CENTER.value:
             pos_x = observation[ObsIndex.SELF_POS_X]
             pos_y = observation[ObsIndex.SELF_POS_Y]
-            orient = observation[ObsIndex.SELF_ORIENT]
-            angle_to_center = np.arctan2(-pos_y, -pos_x)
+            camera_orient = observation[ObsIndex.SELF_ORIENT]
+            
+            # target_camera_angle is the direction to center
+            target_camera_angle = np.arctan2(-pos_y, -pos_x)
+            
             angle_error = abs(np.arctan2(
-                np.sin(angle_to_center - orient),
-                np.cos(angle_to_center - orient),
+                np.sin(target_camera_angle - camera_orient),
+                np.cos(target_camera_angle - camera_orient),
             ))
             if angle_error < 0.1:  # ~5.7 degrees
                 return False
