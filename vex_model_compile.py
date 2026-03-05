@@ -143,15 +143,17 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
                     # Apply action masking (same as training)
                     inf_mask = torch.clamp(torch.log(action_mask + 1e-10), min=-1e8)
                     logits = logits + inf_mask
-                    if (self.msg_head is None) or (self.msg_log_std is None) or (self.attention_unit is None):
+                    
+                    if self.msg_head is not None and self.attention_unit is not None and self.msg_log_std is not None:
+                        batch_size = feats.shape[0]
+                        msg_mean = self.msg_head(feats)
+                        attention_logits = self.attention_unit(feats)
+                        gate = torch.sigmoid(attention_logits)
+                        msg_mean = msg_mean * gate
+                        msg_log_std_exp = self.msg_log_std.expand(batch_size, -1)
+                        return torch.cat([logits, msg_mean, msg_log_std_exp], dim=1)
+                    else:
                         return logits
-                    batch_size = feats.shape[0]
-                    msg_mean = self.msg_head(feats)
-                    attention_logits = self.attention_unit(feats)
-                    gate = torch.sigmoid(attention_logits)
-                    msg_mean = msg_mean * gate
-                    msg_log_std_exp = self.msg_log_std.expand(batch_size, -1)
-                    return torch.cat([logits, msg_mean, msg_log_std_exp], dim=1)
 
             clean_head = CombinedHead(pi_head, message_head, msg_log_std, attention_unit)
             

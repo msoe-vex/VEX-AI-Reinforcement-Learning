@@ -60,7 +60,7 @@ class FusionEncoder(nn.Module):
         self.output_dim = 512
 
     def forward(self, x):
-        if self.comm_dim > 0:
+        if self.comm_net is not None:
             core_obs = x[:, :self.core_dim]
             comm_obs = x[:, self.core_dim:]
             
