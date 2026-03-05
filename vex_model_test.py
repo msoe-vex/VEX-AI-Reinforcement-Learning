@@ -176,9 +176,17 @@ def run_simulation(
 
                 obs_dict = observations[agent_id]
                 obs_np = obs_dict["observations"] if isinstance(obs_dict, dict) and "observations" in obs_dict else obs_dict
+
+                # If communication_mode is copy but test_communication_mode is not NONE, fill the second half of the observation vector with zeros
+                if config.communication_mode == CommunicationOption.COPY and test_communication_mode is not CommunicationOption.COPY:
+                    obs_np[0:obs_np.shape[0] // 2] = 0
+
                 action_mask_np = obs_dict["action_mask"] if isinstance(obs_dict, dict) and "action_mask" in obs_dict else None
                 obs_np_float = obs_np.astype(np.float32) if obs_np.dtype != np.float32 else obs_np
                 obs_tensor = torch.from_numpy(obs_np_float).unsqueeze(0).to(device)
+
+                # # Print observation
+                # print(f"Observation for agent {agent_id}: {obs_np}")
                 
                 # Build action mask tensor
                 if action_mask_np is not None:
@@ -233,11 +241,11 @@ def run_simulation(
                         action_probs = action_probs / prob_sum
                         action = np.random.choice(action_dim, p=action_probs)
                     else:
-                        action = env.game.fallback_action()
+                        action = env.game.fallback_action
                         
                     # If the model still somehow chooses an invalid action, fallback gracefully
                     if not env.is_valid_action(action, obs_np):
-                        action = env.game.fallback_action()
+                        action = env.game.fallback_action
                 else:
                     # Deterministic: take highest probability valid action
                     sorted_actions = torch.argsort(action_logits, dim=1, descending=True).squeeze(0).tolist()
@@ -247,7 +255,7 @@ def run_simulation(
                             action = candidate_action
                             break
                     if action is None:
-                        action = env.game.fallback_action()
+                        action = env.game.fallback_action
 
                 actions_to_take[agent_id] = (action, message_vector) if message_vector is not None else action
                 last_actions[agent_id] = action
@@ -367,7 +375,6 @@ if __name__ == "__main__":
         type=str,
         choices=[opt.value for opt in CommunicationOption],
         help="Enable testing communication between agents",
-        default="none"
     )
     
     args = parser.parse_args()

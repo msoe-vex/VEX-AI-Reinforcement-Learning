@@ -20,7 +20,60 @@ from vex_core.base_env import MESSAGE_SIZE
 # SIMPLE MODEL DEFINITION - Easy to modify!
 # ============================================================================
 
-def build_vex_model(obs_dim, action_dim, enable_communication=False):
+class FusionEncoder(nn.Module):
+    def __init__(self, core_dim, comm_dim):
+        super().__init__()
+        self.core_dim = core_dim
+        self.comm_dim = comm_dim
+        
+        # 1. Core Feature Extractor
+        self.core_net = nn.Sequential(
+            nn.LayerNorm(core_dim),
+            nn.Linear(core_dim, 256),
+            nn.ReLU(),
+            nn.Dropout(0.1)
+        )
+        
+        # 2. Communication Feature Extractor (only if comm_dim > 0)
+        if comm_dim > 0:
+            self.comm_net = nn.Sequential(
+                nn.LayerNorm(comm_dim),
+                nn.Linear(comm_dim, 128),
+                nn.ReLU(),
+                nn.Dropout(0.1)
+            )
+            fused_dim = 256 + 128
+        else:
+            self.comm_net = None
+            fused_dim = 256
+            
+        # 3. Fused Network
+        self.fused_net = nn.Sequential(
+            nn.Linear(fused_dim, 512),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Dropout(0.1)
+        )
+        
+        self.output_dim = 512
+
+    def forward(self, x):
+        if self.comm_dim > 0:
+            core_obs = x[:, :self.core_dim]
+            comm_obs = x[:, self.core_dim:]
+            
+            core_feat = self.core_net(core_obs)
+            comm_feat = self.comm_net(comm_obs)
+            
+            fused = torch.cat([core_feat, comm_feat], dim=1)
+        else:
+            fused = self.core_net(x)
+            
+        return self.fused_net(fused)
+
+def build_vex_model(core_dim, comm_dim, action_dim, enable_communication=False):
     """
     Build a simple feedforward neural network for VEX robotics.
     
@@ -28,7 +81,8 @@ def build_vex_model(obs_dim, action_dim, enable_communication=False):
     Modify this function to change your model architecture.
     
     Args:
-        obs_dim: Input observation dimension
+        core_dim: Input observation dimension for the core environment features
+        comm_dim: Input observation dimension for the communication features
         action_dim: Output action dimension
         enable_communication: Whether to enable ATOC communication heads
     
@@ -40,24 +94,8 @@ def build_vex_model(obs_dim, action_dim, enable_communication=False):
         message_encoder: nn.Linear for message encoding (or None if disabled)
         message_log_std: nn.Parameter for message log std (or None if disabled)
     """
-    # Build encoder layers
-    encoder_layers = []
-    prev_dim = obs_dim
-
-    # Normalize inputs for better training stability
-    encoder_layers.append(nn.LayerNorm(obs_dim))
-
-    hidden_layers = [512, 1024, 1024, 512]
-    dropout_rate = 0.1  # Light dropout for regularization
-    
-    for hidden_size in hidden_layers:
-        encoder_layers.append(nn.Linear(prev_dim, hidden_size))
-        encoder_layers.append(nn.ReLU())
-        encoder_layers.append(nn.Dropout(dropout_rate))
-        
-        prev_dim = hidden_size
-    
-    encoder = nn.Sequential(*encoder_layers)
+    encoder = FusionEncoder(core_dim, comm_dim)
+    prev_dim = encoder.output_dim
     
     # ATOC Heads
     # 1. Intention Head (The Policy)
@@ -81,6 +119,7 @@ def build_vex_model(obs_dim, action_dim, enable_communication=False):
         message_log_std = None
     
     return encoder, intention_head, value_head, attention_unit, message_encoder, message_log_std
+
 
 
 
@@ -125,9 +164,30 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
         # For continuous actions, double the output size (mean + log_std)
         policy_output_dim = action_dim * 2 if is_continuous else action_dim
         
+        try:
+            comm_mode_str = self.model_config.get("communication_mode", "none")
+            from vex_core.config import CommunicationOption
+            comm_mode = CommunicationOption(comm_mode_str)
+        except Exception:
+            from vex_core.config import CommunicationOption
+            comm_mode = CommunicationOption.NONE
+
+        if comm_mode == CommunicationOption.ATTENTION:
+            from vex_core.base_env import MESSAGE_SIZE
+            comm_dim = MESSAGE_SIZE
+            core_dim = obs_dim - comm_dim
+        elif comm_mode == CommunicationOption.COPY:
+            num_teammates = 1  # Standard for VEX AI
+            core_dim = obs_dim // (num_teammates + 1)
+            comm_dim = obs_dim - core_dim
+        else:
+            core_dim = obs_dim
+            comm_dim = 0
+            
         # Build the actual model using our simple function
         self._encoder_net, self.pi, self.value_head, self.attention_unit, self.message_head, self.msg_log_std = build_vex_model(
-            obs_dim=obs_dim,
+            core_dim=core_dim,
+            comm_dim=comm_dim,
             action_dim=action_dim,
             enable_communication=enable_communication
         )
@@ -198,7 +258,8 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
             
             # Concat outputs for Tuple Distribution: [DiscreteLogits, BoxMean, BoxLogStd]
             batch_size = features.shape[0]
-            msg_log_std_exp = self.msg_log_std.expand(batch_size, -1)
+            gated_log_std = self.msg_log_std + torch.log(gate + 1e-8)
+            msg_log_std_exp = gated_log_std.expand(batch_size, -1)
             
             dist_inputs = torch.cat([intention_logits, msg_mean, msg_log_std_exp], dim=1)
             
@@ -243,7 +304,8 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
             
             # Concat outputs for Tuple Distribution: [DiscreteLogits, BoxMean, BoxLogStd]
             batch_size = features.shape[0]
-            msg_log_std_exp = self.msg_log_std.expand(batch_size, -1)
+            gated_log_std = self.msg_log_std + torch.log(gate + 1e-8)
+            msg_log_std_exp = gated_log_std.expand(batch_size, -1)
             
             dist_inputs = torch.cat([intention_logits, msg_mean, msg_log_std_exp], dim=1)
             

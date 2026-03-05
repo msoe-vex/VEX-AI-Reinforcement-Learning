@@ -14,11 +14,11 @@ from enum import Enum
 
 # Default reward decomposition weights
 # reward = a * team_delta + b * opp_delta + c * individual_delta + d * individual_penalty + e * team_penalty
-DEFAULT_REWARD_WEIGHT_TEAM_DELTA = 0.05 # Positive weight for team score changes (encourages cooperation)
-DEFAULT_REWARD_WEIGHT_OPP_DELTA = -0.01 # Negative weight for opponent score changes (discourages opponent scoring, but less than team reward to avoid over-aggression)
-DEFAULT_REWARD_WEIGHT_INDIVIDUAL_DELTA = 1.0 # Positive weight for individual score changes (encourages contributing to scoring, can be higher than team reward to incentivize individual contribution)
-DEFAULT_REWARD_WEIGHT_INDIVIDUAL_PENALTY = -1.0 # Negative weight for individual penalties (e.g., losing held blocks, failed actions)
-DEFAULT_REWARD_WEIGHT_TEAM_PENALTY = -0.01 # Negative weight for team penalties (e.g., opponent scoring, collisions), encourages communication to avoid penalties but with a lower weight to prevent over-penalizing risky but potentially rewarding actions
+DEFAULT_REWARD_WEIGHT_TEAM_DELTA = 0.5 # (Points scored for my team by teammates - Points scored for opp team by teammates)
+DEFAULT_REWARD_WEIGHT_OPP_DELTA = -0.1 # (Points scored for opp team by opponents - Points scored for my team by opponents)
+DEFAULT_REWARD_WEIGHT_INDIVIDUAL_DELTA = 1.0 # (Points scored for my team by me - Points scored for opp team by me)
+DEFAULT_REWARD_WEIGHT_INDIVIDUAL_PENALTY = -1.0 # (Penalty for actions performed by me)
+DEFAULT_REWARD_WEIGHT_TEAM_PENALTY = -0.1 # (Penalty for actions performed by teammates)
 from vex_core.robot import Robot, Team, RobotSize
 from vex_core.config import CommunicationOption
 
@@ -119,6 +119,7 @@ class VexGame(ABC):
         """Number of possible actions in the action space."""
         pass
     
+    @property
     @abstractmethod
     def fallback_action(self) -> int:
         """Default action to take if no valid action is available."""
@@ -503,9 +504,9 @@ class VexGame(ABC):
         Override this to customize the penalty for collisions.
         
         Returns:
-            Penalty value (default: 5.0)
+            Penalty value (default: 10.0)
         """
-        return 1.0
+        return 10.0
 
     def update_robot_position(self, agent: str, position: np.ndarray) -> None:
         """

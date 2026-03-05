@@ -20,7 +20,7 @@ from .config import VexEnvConfig, CommunicationOption
 from .utils import vex_atan2, vex_normalize_angle, vex_shortest_angular_distance, vex_to_standard_radians
 
 DELTA_T = 0.1  # Discrete time step in seconds
-COMM_DELAY_TICKS = 4  # Message delivery delay in ticks (~0.375s, half of 0.75s RTT)
+COMM_DELAY_TICKS = 0  # Message delivery delay in ticks (4 ticks = ~0.375s, half of 0.75s RTT)
 MESSAGE_SIZE = 8  # Dimension of inter-agent communication message vector
 
 
@@ -196,6 +196,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self._last_delivered_messages = {
             agent: None for agent in self.possible_agents
         }
+        self._global_score_contributions = {agent: {} for agent in self.possible_agents}
         
         # Reset game-specific state
         self.game.reset()
@@ -344,39 +345,35 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             float(self._agent_penalty_totals.get(agent, 0.0)) + float(penalty)
         )
 
-    def _start_deferred_reward(self, agent: str, action_name: str, penalty: float, initial_score_delta: float = 0.0) -> None:
-        """Initialize deferred reward tracking for a newly started action.
-        
-        Args:
-            initial_score_delta: Score change that occurred before this action
-                started (e.g. unparking), attributed to this agent.
-        """
+    def _start_deferred_reward(self, agent: str, action_name: str, penalty: float, baseline_contributions: Dict[str, Dict[str, float]]) -> None:
+        """Initialize deferred reward tracking for a newly started action."""
         team = self.game.get_team_for_agent(agent)
-        team_score_start, opp_score_start = self._get_team_and_opp_scores(team)
         self._deferred_rewards[agent] = {
             "penalty": float(penalty),
             "action_name": action_name,
             "team": team,
-            "team_score_start": team_score_start,
-            "opp_score_start": opp_score_start,
             "team_penalty_baseline": self._get_team_penalty_total(team, exclude_agent=agent),
-            "individual_team_delta": float(initial_score_delta),
-            "individual_opp_delta": 0.0,
+            "baseline_contributions": baseline_contributions,
         }
         self._add_agent_penalty(agent, penalty)
 
+    def _add_score_contribution(self, agent: str, score_before: Dict[str, Any], score_after: Dict[str, Any]) -> None:
+        """Accumulate absolute score points added to ANY team by this agent."""
+        if not hasattr(self, '_global_score_contributions'):
+            self._global_score_contributions = {a: {} for a in self.possible_agents}
+        if agent not in self._global_score_contributions:
+            self._global_score_contributions[agent] = {}
+        
+        all_teams = set(list(score_before.keys()) + list(score_after.keys()))
+        for t in all_teams:
+            delta = float(score_after.get(t, 0)) - float(score_before.get(t, 0))
+            if delta != 0:
+                current = self._global_score_contributions[agent].get(t, 0.0)
+                self._global_score_contributions[agent][t] = current + delta
+
     def _add_event_delta_for_agent(self, agent: str, score_before: Dict[str, int], score_after: Dict[str, int]) -> None:
         """Accumulate score delta caused by an agent's own completed segment events."""
-        stored = self._deferred_rewards.get(agent)
-        if stored is None:
-            return
-        team = self.game.get_team_for_agent(agent)
-        before_team = float(score_before.get(team, 0))
-        after_team = float(score_after.get(team, 0))
-        before_opp = float(sum(float(v) for key, v in score_before.items() if key != team))
-        after_opp = float(sum(float(v) for key, v in score_after.items() if key != team))
-        stored["individual_team_delta"] = float(stored.get("individual_team_delta", 0.0)) + (after_team - before_team)
-        stored["individual_opp_delta"] = float(stored.get("individual_opp_delta", 0.0)) + (after_opp - before_opp)
+        self._add_score_contribution(agent, score_before, score_after)
 
     def _complete_deferred_reward(self, agent: str) -> Optional[Tuple[float, str]]:
         """Finalize deferred reward for an agent and remove its tracker entry."""
@@ -385,14 +382,47 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             return None
 
         team = stored.get("team")
-        team_now, opp_now = self._get_team_and_opp_scores(team)
-        team_delta = team_now - float(stored.get("team_score_start", 0.0))
-        opp_delta = opp_now - float(stored.get("opp_score_start", 0.0))
-        individual_team_delta = float(stored.get("individual_team_delta", 0.0))
-        individual_opp_delta = float(stored.get("individual_opp_delta", 0.0))
-        individual_delta = individual_team_delta - individual_opp_delta
-        individual_penalty = float(stored.get("penalty", 0.0))
         team_penalty = self._get_team_penalty_total(team, exclude_agent=agent) - float(stored.get("team_penalty_baseline", 0.0))
+
+        baseline = stored.get("baseline_contributions", {})
+        
+        agent_deltas = {}
+        for a in self.possible_agents:
+            agent_deltas[a] = {}
+            current_contribs = self._global_score_contributions.get(a, {})
+            base_contribs = baseline.get(a, {})
+            all_teams = set(list(current_contribs.keys()) + list(base_contribs.keys()))
+            for t in all_teams:
+                agent_deltas[a][t] = float(current_contribs.get(t, 0.0)) - float(base_contribs.get(t, 0.0))
+
+        individual_team_delta = 0.0
+        individual_opp_delta = 0.0
+        teammate_team_delta = 0.0
+        teammate_opp_delta = 0.0
+        opponent_team_delta = 0.0
+        opponent_opp_delta = 0.0
+
+        for a in self.possible_agents:
+            a_team = self.game.get_team_for_agent(a)
+            
+            a_scored_for_my_team = agent_deltas[a].get(team, 0.0)
+            a_scored_for_opp_team = sum(agent_deltas[a].get(t, 0.0) for t in agent_deltas[a] if t != team)
+
+            if a == agent:
+                individual_team_delta = a_scored_for_my_team
+                individual_opp_delta = a_scored_for_opp_team
+            elif a_team == team:
+                teammate_team_delta += a_scored_for_my_team
+                teammate_opp_delta += a_scored_for_opp_team
+            else:
+                opponent_team_delta += a_scored_for_my_team
+                opponent_opp_delta += a_scored_for_opp_team
+
+        individual_delta = individual_team_delta - individual_opp_delta
+        team_delta = teammate_team_delta - teammate_opp_delta
+        opp_delta = opponent_opp_delta - opponent_team_delta
+
+        individual_penalty = float(stored.get("penalty", 0.0))
 
         reward = self.game.combine_reward_components(
             agent=agent,
@@ -542,11 +572,16 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             team = self.game.get_team_for_agent(agent)
             score_before_exec = dict(self.game.compute_score())
             
+            baseline_contributions = {
+                a: dict(self._global_score_contributions.get(a, {})) 
+                for a in self.possible_agents
+            }
+            
             action_steps, penalty = self.game.execute_action(agent, action_int)
             
             # Capture score AFTER execute_action — delta is attributed to this agent
             score_after_exec = dict(self.game.compute_score())
-            exec_team_delta = float(score_after_exec.get(team, 0)) - float(score_before_exec.get(team, 0))
+            self._add_score_contribution(agent, score_before_exec, score_after_exec)
             
             # Store emitted message (or force zeros when communication is disabled)
             if self.communication_mode == CommunicationOption.ATTENTION and emitted_msg is not None:
@@ -635,7 +670,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 action_name = self.game.action_to_name(action_int)
             except Exception:
                 action_name = str(action_int)
-            self._start_deferred_reward(agent, action_name, penalty, initial_score_delta=exec_team_delta)
+            self._start_deferred_reward(agent, action_name, penalty, baseline_contributions)
 
             # Agent is now busy — remove from self.agents
             if agent in self.agents:
@@ -807,9 +842,12 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 r_tick = ticks_map.get(recipient, 0)
                 received_sum = np.zeros(MESSAGE_SIZE, dtype=np.float32)
                 count = 0
+                my_team = self.game.get_team_for_agent(recipient)
 
                 for sender in active_agents:
                     if sender == recipient:
+                        continue
+                    if self.game.get_team_for_agent(sender) != my_team:
                         continue
 
                     buf = buffers_snapshot.get(sender, [])
