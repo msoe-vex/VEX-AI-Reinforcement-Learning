@@ -26,31 +26,31 @@ import json
 TRAINING_PHASES = [
     # Phase 1: BOOTSTRAP (The "Silent" Era)
     # Goal: Learn basic robot movement and game mechanics without message noise.
-    {"iterations": 100,  "train_encoder": True,  "train_action": True,  "train_message": False, "lr": 0.001,  "entropy": 0.05},
+    {"iterations": 200,  "train_encoder": True,  "train_action": True,  "train_message": False, "lr": 0.001,  "entropy": 0.05},
 
     # Phase 2: TALK ONLY (The "Encoding" Era)
     # Goal: Freeze the good behavior. Now, force the message head to explain 
     # what the robot is doing/seeing.
-    {"iterations": 90,  "train_encoder": False, "train_action": False, "train_message": True,  "lr": 0.001,  "entropy": 0.05},
+    {"iterations": 180,  "train_encoder": False, "train_action": False, "train_message": True,  "lr": 0.001,  "entropy": 0.05},
 
     # Fine tune
-    {"iterations": 10,  "train_encoder": True, "train_action": True,  "train_message": True, "lr": 0.00005,  "entropy": 0.005},
+    {"iterations": 20,  "train_encoder": True, "train_action": True,  "train_message": True, "lr": 0.00005,  "entropy": 0.005},
 
     # Phase 3: LISTEN ONLY (The "Coordination" Era)
     # Goal: Keep messages stable. Now, teach the robots to use those messages 
     # to improve their existing policy.
-    {"iterations": 90,  "train_encoder": False, "train_action": True,  "train_message": False, "lr": 0.001,  "entropy": 0.03},
+    {"iterations": 180,  "train_encoder": False, "train_action": True,  "train_message": False, "lr": 0.001,  "entropy": 0.03},
 
     # Fine tune
-    {"iterations": 10,  "train_encoder": True, "train_action": True,  "train_message": True, "lr": 0.00005,  "entropy": 0.005},
+    {"iterations": 20,  "train_encoder": True, "train_action": True,  "train_message": True, "lr": 0.00005,  "entropy": 0.005},
 
     # Phase 4: CO-EVOLUTION (The "Bilingual" Era)
     # Goal: Small tweaks to both heads to align the "language" with the "actions."
-    {"iterations": 100,  "train_encoder": False, "train_action": True,  "train_message": True,  "lr": 0.0001,  "entropy": 0.02},
+    {"iterations": 200,  "train_encoder": False, "train_action": True,  "train_message": True,  "lr": 0.0001,  "entropy": 0.02},
 
     # Phase 5: FINAL POLISH
     # Goal: Train all heads to optimize the policy and communication.
-    {"iterations": 100, "train_encoder": True,  "train_action": True,  "train_message": True,  "lr": 0.00005, "entropy": 0.005},
+    {"iterations": 200, "train_encoder": True,  "train_action": True,  "train_message": True,  "lr": 0.00005, "entropy": 0.005},
 ]
 
 def get_training_phase(iteration, phases):
