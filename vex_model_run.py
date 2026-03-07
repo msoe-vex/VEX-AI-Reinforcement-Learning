@@ -95,7 +95,7 @@ class VexModelRunner:
             num_actions = 14  # fallback
         
         action_mask = np.array(
-            [1.0 if self.game.is_valid_action(i, observation) else 0.0 for i in range(num_actions)],
+            [1.0 if self.game.is_valid_action(self.robot.name, i, observation) else 0.0 for i in range(num_actions)],
             dtype=np.float32
         )
         mask_tensor = torch.from_numpy(action_mask).unsqueeze(0).to(self.device)
@@ -147,13 +147,13 @@ class VexModelRunner:
                 action = self.game.fallback_action()
                 
             # If the model still somehow chooses an invalid action, fallback gracefully
-            if not self.game.is_valid_action(action, observation):
+            if not self.game.is_valid_action(self.robot.name, action, observation):
                 action = self.game.fallback_action()
         else:
             sorted_actions = torch.argsort(action_logits, dim=1, descending=True).squeeze(0).tolist()
             action = None
             for candidate_action in sorted_actions:
-                if self.game.is_valid_action(candidate_action, observation):
+                if self.game.is_valid_action(self.robot.name, candidate_action, observation):
                     action = candidate_action
                     break
             if action is None:

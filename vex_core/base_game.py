@@ -61,6 +61,18 @@ class VexGame(ABC):
     def __init__(self, robots: list[Robot] = None, communication_mode: CommunicationOption = CommunicationOption.NONE):
         """Initialize with robot configurations."""
         self.robots = robots or []
+        
+        # Validate robot size uniqueness per team
+        from vex_core.robot import RobotSize
+        team_sizes = {}
+        for r in self.robots:
+            if r.team not in team_sizes:
+                team_sizes[r.team] = set()
+            if r.size in team_sizes[r.team]:
+                if r.size in (RobotSize.INCH_15, RobotSize.INCH_24):
+                    raise ValueError(f"Duplicate RobotSize {r.size} for team {r.team}. Only one 15 or 24 size allowed per team.")
+            team_sizes[r.team].add(r.size)
+            
         self._robot_map = {r.name: r for r in self.robots}
         self.communication_mode = communication_mode
         self.state: Dict = None  # Game state, initialized by get_initial_state()
@@ -398,13 +410,14 @@ class VexGame(ABC):
     # Optional Methods (with default implementations)
     # =========================================================================
     
-    def is_valid_action(self, action: int, observation: np.ndarray) -> bool:
+    def is_valid_action(self, agent: str, action: int, observation: np.ndarray) -> bool:
         """
         Check if an action is valid in the current state.
         
         Override this to implement action masking.
         
         Args:
+            agent: Agent name
             action: Action index
             observation: Current observation
             

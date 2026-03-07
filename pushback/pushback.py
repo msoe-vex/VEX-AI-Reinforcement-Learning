@@ -1618,7 +1618,7 @@ class PushBackGame(VexGame):
         
         return False
     
-    def is_valid_action(self, action: int, observation: np.ndarray) -> bool:
+    def is_valid_action(self, agent: str, action: int, observation: np.ndarray) -> bool:
         """Check if action is valid based on observation.
         
         Uses ObsIndex constants for observation layout.

@@ -492,7 +492,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         num_actions = self.game.num_actions
         action_mask = np.zeros(num_actions, dtype=np.float32)
         for i in range(num_actions):
-            if self.game.is_valid_action(i, obs):
+            if self.game.is_valid_action(agent, i, obs):
                 action_mask[i] = 1.0
                 
         return {
@@ -1020,12 +1020,13 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
 
     def is_valid_action(
         self, 
+        agent: str,
         action: int, 
         observation: np.ndarray, 
         last_action: Optional[int] = None
     ) -> bool:
         """Check if an action is valid."""
-        return self.game.is_valid_action(action, observation)
+        return self.game.is_valid_action(agent, action, observation)
     
     def render(
         self, 

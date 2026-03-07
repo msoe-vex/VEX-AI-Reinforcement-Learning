@@ -247,14 +247,14 @@ def run_simulation(
                         action = env.game.fallback_action
                         
                     # If the model still somehow chooses an invalid action, fallback gracefully
-                    if not env.is_valid_action(action, obs_np):
+                    if not env.is_valid_action(agent_id, action, obs_np):
                         action = env.game.fallback_action
                 else:
                     # Deterministic: take highest probability valid action
                     sorted_actions = torch.argsort(action_logits, dim=1, descending=True).squeeze(0).tolist()
                     action = None
                     for candidate_action in sorted_actions:
-                        if env.is_valid_action(candidate_action, obs_np, last_actions[agent_id]):
+                        if env.is_valid_action(agent_id, candidate_action, obs_np, last_actions[agent_id]):
                             action = candidate_action
                             break
                     if action is None:
