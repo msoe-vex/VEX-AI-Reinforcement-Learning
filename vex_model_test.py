@@ -80,6 +80,9 @@ def run_simulation(
     model_dir = config.experiment_path
     output_dir = config.experiment_path
     render_mode = config.render_mode
+
+    if test_communication_mode is None:
+        test_communication_mode = config.communication_mode
     
     if not os.path.exists(model_dir):
         print(f"Error: Model directory not found at {model_dir}")
@@ -285,7 +288,7 @@ def run_simulation(
         print(
             f"Simulation iteration {iteration} ended after {step_count} steps "
             f"(env steps: {env.num_steps}, internal ticks: {env.num_ticks}). "
-            f"Final score: {env.score}"
+            f"Final score: {env.score} "
             f"Total reward: {total_reward}"
         )
 
@@ -380,7 +383,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
     config = VexEnvConfig.from_args(args)
     
-    test_communication_mode_val = CommunicationOption(args.test_communication_mode) if hasattr(args, "test_communication_mode") and args.test_communication_mode is not None else None
+
+    test_communication_mode_val = None
+    if hasattr(args, "test_communication_mode") and args.test_communication_mode is not None:
+        test_communication_mode_val = CommunicationOption(args.test_communication_mode)
     
     run_simulation(
         config=config,

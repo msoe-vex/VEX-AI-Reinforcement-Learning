@@ -55,6 +55,10 @@ TRAINING_PHASES = [
 
 def get_training_phase(iteration, phases):
     """Determine the current training phase settings based on the iteration."""
+    total_iters = sum(phase["iterations"] for phase in phases)
+    if total_iters > 0:
+        iteration = iteration % total_iters
+
     iters_accumulated = 0
     for phase in phases:
         if iteration < iters_accumulated + phase["iterations"]:
@@ -368,6 +372,7 @@ if __name__ == "__main__":
                         help='Final entropy coefficient for linear schedule (if not set, entropy is constant)')
 
     parser.add_argument('--cpus-per-task', type=int, default=1, help='Number of CPUs per task')  # Default: 1
+    parser.add_argument('--num-iters', type=int, default=None, help='Total number of iterations to run, overriding the sum of training phases')
     parser.add_argument('--job-id', type=str, default="", help='SLURM job ID')  # Job ID for logging
     parser.add_argument('--num-gpus', type=int, default=0, help='Number of GPUs to use')
     parser.add_argument('--partition', type=str, default="teaching", help='SLURM partition to use')
@@ -446,8 +451,12 @@ if __name__ == "__main__":
     print(f"Configured policy IDs: {configured_policy_ids}")
     train_batch_size_per_learner = 4096
 
-    num_iters = sum(phase["iterations"] for phase in TRAINING_PHASES)
-    print(f"Total training iterations: {num_iters} (from TRAINING_PHASES)")
+    if args.num_iters is not None:
+        num_iters = args.num_iters
+        print(f"Total training iterations: {num_iters} (from args)")
+    else:
+        num_iters = sum(phase["iterations"] for phase in TRAINING_PHASES)
+        print(f"Total training iterations: {num_iters} (from TRAINING_PHASES)")
 
     print("Using custom callback for LR and entropy scheduling based on iterations.")
 
