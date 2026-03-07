@@ -173,6 +173,15 @@ def apply_head_training_status_on_learner(learner, phase):
                 
         if opt.param_groups:
             base_kwargs = {k: v for k, v in opt.param_groups[0].items() if k not in ('params', 'lr')}
+            
+            # Sanitize kwargs (checkpoint loading sometimes converts floats to 0-d tensors)
+            import torch
+            for k, v in base_kwargs.items():
+                if isinstance(v, torch.Tensor) and v.numel() == 1:
+                    base_kwargs[k] = v.item()
+                elif isinstance(v, tuple):
+                    base_kwargs[k] = tuple(x.item() if isinstance(x, torch.Tensor) and x.numel() == 1 else x for x in v)
+
             for g in [enc_group, act_group, msg_group, other_group]:
                 if g['params']:
                     g.update(base_kwargs)
@@ -613,7 +622,7 @@ if __name__ == "__main__":
     try:
         test_config = VexEnvConfig(
             game_name=env_config_obj.game_name,
-            render_mode=None,
+            render_mode=None, # Explicitly set to None to avoid rendering during training
             experiment_path=experiment_dir,
             randomize=env_config_obj.randomize,
             communication_mode=env_config_obj.communication_mode,
