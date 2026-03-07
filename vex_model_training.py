@@ -327,6 +327,11 @@ def apply_training_metadata_overrides(args, metadata, explicit_cli_flags):
         "discount_factor": ("discount_factor", ["--discount-factor"]),
         "entropy": ("entropy", ["--entropy"]),
         "entropy_final": ("entropy_final", ["--entropy-final"]),
+        "game": ("game", ["--game"]),
+        "communication_mode": ("communication_mode", ["--communication-mode"]),
+        "randomize": ("randomize", ["--randomize", "--no-randomize"]),
+        "deterministic": ("deterministic", ["--deterministic", "--no-deterministic"]),
+        "num_iters": ("num_iters", ["--num-iters"]),
     }
 
     for metadata_key, (arg_name, cli_flags) in metadata_to_arg.items():
@@ -381,29 +386,25 @@ if __name__ == "__main__":
 
     explicit_cli_flags = get_explicit_cli_flags(sys.argv[1:])
     args = parser.parse_args()
-    env_config_obj = VexEnvConfig.from_args(args)
 
     restore_path = None
-    restore_experiment_directory = env_config_obj.experiment_path
+    restore_experiment_directory = args.experiment_path
     if restore_experiment_directory:
         restore_experiment_directory = os.path.abspath(restore_experiment_directory)
-        metadata_path = os.path.join(restore_experiment_directory, "training_metadata.json")
-
-        if os.path.exists(metadata_path):
-            with open(metadata_path, 'r') as f:
-                metadata = json.load(f)
+        
+        metadata = VexEnvConfig.read_from_metadata(restore_experiment_directory)
+        if metadata:
             apply_training_metadata_overrides(args, metadata, explicit_cli_flags)
-            # Recreate config obj in case args were updated
-            env_config_obj = VexEnvConfig.from_args(args)
-            print(f"Loaded and applied metadata overrides from: {metadata_path}")
         else:
-            print(f"Warning: No training metadata found at {metadata_path}; using CLI/default parameters.")
+            print(f"Warning: No training metadata found under {restore_experiment_directory}; using CLI/default parameters.")
 
         restore_path = find_latest_checkpoint(restore_experiment_directory)
         if restore_path:
             print(f"Found latest checkpoint: {restore_path}")
         else:
             print(f"Warning: No checkpoint directories found under {restore_experiment_directory}; training will start fresh.")
+
+    env_config_obj = VexEnvConfig.from_args(args)
 
     print("Training parameters:")
     for arg in vars(args):

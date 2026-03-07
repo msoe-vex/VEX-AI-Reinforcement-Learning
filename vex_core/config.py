@@ -81,7 +81,7 @@ class VexEnvConfig:
     @classmethod
     def read_from_metadata(cls, experiment_path: str, defaults: dict = None) -> dict:
         """Reads configuration overrides from training_metadata.json if it exists."""
-        if not defaults:
+        if defaults is None:
             defaults = {}
             
         if not experiment_path:
@@ -93,14 +93,12 @@ class VexEnvConfig:
                 with open(metadata_path, 'r') as f:
                     metadata = json.load(f)
                     
-                # Merge metadata into defaults, but only for keys we care about
-                for key in ["game", "communication_mode", "randomize", "deterministic"]:
-                    if key in metadata:
-                        defaults[key] = metadata[key]
+                # Merge metadata into defaults
+                defaults.update(metadata)
                         
-                    # Handle backwards compatibility with old metadata
-                    if key == "communication_mode" and "enable_communication" in metadata and "communication_mode" not in metadata:
-                        defaults["communication_mode"] = CommunicationOption.ATTENTION.value if metadata["enable_communication"] else CommunicationOption.NONE.value
+                # Handle backwards compatibility with old metadata
+                if "enable_communication" in metadata and "communication_mode" not in metadata:
+                    defaults["communication_mode"] = CommunicationOption.ATTENTION.value if metadata["enable_communication"] else CommunicationOption.NONE.value
                         
                 print(f"Loaded config overrides from metadata: {metadata_path}")
             except Exception as e:
