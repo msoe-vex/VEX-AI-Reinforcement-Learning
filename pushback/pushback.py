@@ -237,27 +237,27 @@ LOADERS: List[LoaderPosition] = [
 PARK_ZONES = {
     "red": ParkZone(
         center=np.array([-60.0, 0.0]),
-        bounds=(-72.0, -54.0, -12.0, 12.0),
+        bounds=(-72.0, -56, -7.0, 7.0),
     ),
     "blue": ParkZone(
         center=np.array([60.0, 0.0]),
-        bounds=(54.0, 72.0, -12.0, 12.0),
+        bounds=(56, 72.0, -7.0, 7.0),
     ),
 }
 
 
 PERMANENT_OBSTACLES: List[Obstacle] = [
-    Obstacle(0.0, 0.0, 11.3, False),       # Center Goal Structure
-    Obstacle(-21.0, 48.0, 3.0, False),     # Long Goal Top - Left End
-    Obstacle(0.0, 48.0, 3.0, False),       # Long Goal Top - Center
-    Obstacle(21.0, 48.0, 3.0, False),      # Long Goal Top - Right End
-    Obstacle(-21.0, -48.0, 3.0, False),    # Long Goal Bottom - Left End
-    Obstacle(0.0, -48.0, 3.0, False),      # Long Goal Bottom - Center
-    Obstacle(21.0, -48.0, 3.0, False),     # Long Goal Bottom - Right End
-    Obstacle(58.0, -10.0, 0.0, False),     # Blue Park Zone Bottom Corner
-    Obstacle(58.0, 10.0, 0.0, False),      # Blue Park Zone Top Corner
-    Obstacle(-58.0, -10.0, 0.0, False),    # Red Park Zone Bottom Corner
-    Obstacle(-58.0, 10.0, 0.0, False),     # Red Park Zone Top Corner
+    Obstacle(0.0, 0.0, 11.3, False),        # Center Goal Structure
+    Obstacle(-21.0, 48.0, 3.0, False),      # Long Goal Top - Left End
+    Obstacle(0.0, 48.0, 0.0, False),        # Long Goal Top - Center
+    Obstacle(21.0, 48.0, 3.0, False),       # Long Goal Top - Right End
+    Obstacle(-21.0, -48.0, 3.0, False),     # Long Goal Bottom - Left End
+    Obstacle(0.0, -48.0, 0.0, False),       # Long Goal Bottom - Center
+    Obstacle(21.0, -48.0, 3.0, False),      # Long Goal Bottom - Right End
+    Obstacle(56.0, -7.0, 0.0, False),       # Blue Park Zone Bottom Corner
+    Obstacle(56.0, 7.0, 0.0, False),        # Blue Park Zone Top Corner
+    Obstacle(-56.0, -7.0, 0.0, False),      # Red Park Zone Bottom Corner
+    Obstacle(-56.0, 7.0, 0.0, False),       # Red Park Zone Top Corner
 ]
 
 
@@ -1811,20 +1811,32 @@ class PushBackGame(VexGame):
                                 eb = self.state["blocks"][ejected_idx]
                                 eb["status"] = BlockStatus.ON_FIELD
                                 eb["held_by"] = None
-                                eb["position"] = self._clamp_position_to_field(
-                                    goal.right_entry.copy() if scoring_side == "left" else goal.left_entry.copy()
-                                )
+                                
+                                if not self._is_stochastic():
+                                    eb["position"] = self._clamp_position_to_field(
+                                        goal.right_entry.copy() if scoring_side == "left" else goal.left_entry.copy()
+                                    )
+                                else:
+                                    eb["position"] = self._clamp_position_to_field(
+                                        self._random_point_within_radius(goal.goal_position.center, radius=12.0)
+                                    )
                         elif scoring_entry is not None:
                             block["status"] = BlockStatus.ON_FIELD
                             block["held_by"] = None
                             block["position"] = self._clamp_position_to_field(scoring_entry)
                     elif scoring_entry is not None:
-                        # Wrong-color held blocks are ejected near scoring entry.
+                        # Wrong-color held blocks are ejected.
                         block["status"] = BlockStatus.ON_FIELD
                         block["held_by"] = None
-                        block["position"] = self._clamp_position_to_field(
-                            self._random_point_within_radius(np.array(scoring_entry, dtype=np.float32), radius=6.0)
-                        )
+                        
+                        if not self._is_stochastic():
+                            block["position"] = self._clamp_position_to_field(
+                                self._random_point_within_radius(np.array(scoring_entry, dtype=np.float32), radius=6.0)
+                            )
+                        else:
+                            block["position"] = self._clamp_position_to_field(
+                                self._random_point_within_radius(goal.goal_position.center, radius=12.0)
+                            )
 
                 if scored_any:
                     self._update_goal_block_positions(goal, target_status)

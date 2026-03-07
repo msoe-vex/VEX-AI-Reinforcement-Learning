@@ -1026,6 +1026,43 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 
                 plan = busy.get("plan", [])
                 
+                if positions is not None and len(positions) > 1:
+                    first_astar_or = None
+                    for i in range(1, len(positions)):
+                        diff = positions[i] - positions[0]
+                        if np.linalg.norm(diff) > 0.001:
+                            first_astar_or = float(vex_atan2(diff[0], diff[1]))
+                            break
+                            
+                    last_astar_or = None
+                    for i in range(len(positions) - 2, -1, -1):
+                        diff = positions[-1] - positions[i]
+                        if np.linalg.norm(diff) > 0.001:
+                            last_astar_or = float(vex_atan2(diff[0], diff[1]))
+                            break
+
+                    if first_astar_or is not None and last_astar_or is not None:
+                        move_idx = -1
+                        for idx, seg in enumerate(plan):
+                            if np.linalg.norm(seg["end_pos"] - seg["start_pos"]) > 0.1:
+                                move_idx = idx
+                                break
+                                
+                        if move_idx != -1:
+                            for idx in range(move_idx):
+                                plan[idx]["end_orient"] = np.array([first_astar_or], dtype=np.float32)
+                                if idx > 0:
+                                    plan[idx]["start_orient"] = plan[idx-1]["end_orient"].copy()
+                                    
+                            plan[move_idx]["start_orient"] = np.array([first_astar_or], dtype=np.float32)
+                            plan[move_idx]["end_orient"] = np.array([last_astar_or], dtype=np.float32)
+                            
+                            for idx in range(move_idx + 1, len(plan)):
+                                if idx == move_idx + 1:
+                                    plan[idx]["start_orient"] = np.array([last_astar_or], dtype=np.float32)
+                                else:
+                                    plan[idx]["start_orient"] = plan[idx-1]["end_orient"].copy()
+                
                 for t in range(total_ticks + 1):
                     current_pos = start_pos.copy()
                     interp_or = float(busy["start_orient"][0])
