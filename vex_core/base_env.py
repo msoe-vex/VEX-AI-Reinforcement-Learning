@@ -268,33 +268,45 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 del self.busy_state[agent]
                 completed[agent] = True
             else:
-                # Interpolate position within multi-segment plan
+                # Interpolate position
                 current_pos = busy_info["start_pos"].copy()
                 current_orient = busy_info["start_orient"].copy()
-                for seg in plan:
-                    seg_start = seg["tick_start"]
-                    seg_end = seg["tick_end"]
-                    if elapsed <= seg_end:
-                        seg_ticks = max(1, seg_end - seg_start)
-                        seg_alpha = (elapsed - seg_start) / seg_ticks
-                        seg_alpha = float(np.clip(seg_alpha, 0.0, 1.0))
-                        s_pos = seg["start_pos"]
-                        e_pos = seg["end_pos"]
-                        current_pos = s_pos + (e_pos - s_pos) * seg_alpha
-                        s_or = float(seg["start_orient"][0])
-                        e_or = float(seg["end_orient"][0])
-                        d_or = vex_shortest_angular_distance(s_or, e_or)
-                        interp_or = vex_normalize_angle(s_or + d_or * seg_alpha)
-                        
-                        diff = e_pos - s_pos
-                        if np.linalg.norm(diff) > 0.1:
-                            interp_or = vex_atan2(diff[0], diff[1])
+                
+                if "tick_positions" in busy_info:
+                    tick_positions = busy_info["tick_positions"]
+                    tick_orients = busy_info["tick_orients"]
+                    idx = min(elapsed, len(tick_positions) - 1)
+                    current_pos = tick_positions[idx].copy()
+                    current_orient = tick_orients[idx].copy()
+                else:
+                    for seg in plan:
+                        seg_start = seg["tick_start"]
+                        seg_end = seg["tick_end"]
+                        if elapsed <= seg_end:
+                            seg_ticks = max(1, seg_end - seg_start)
+                            seg_alpha = (elapsed - seg_start) / seg_ticks
+                            seg_alpha = float(np.clip(seg_alpha, 0.0, 1.0))
+                            s_pos = seg["start_pos"]
+                            e_pos = seg["end_pos"]
+                            current_pos = s_pos + (e_pos - s_pos) * seg_alpha
+                            s_or = float(seg["start_orient"][0])
+                            e_or = float(seg["end_orient"][0])
                             
-                        current_orient = np.array([interp_or], dtype=np.float32)
-                        break
-                    else:
-                        current_pos = seg["end_pos"].copy()
-                        current_orient = seg["end_orient"].copy()
+                            try:
+                                from pushback.pushback import vex_shortest_angular_distance, vex_normalize_angle, vex_atan2
+                                d_or = vex_shortest_angular_distance(s_or, e_or)
+                                interp_or = vex_normalize_angle(s_or + d_or * seg_alpha)
+                                diff = e_pos - s_pos
+                                if np.linalg.norm(diff) > 0.1:
+                                    interp_or = vex_atan2(diff[0], diff[1])
+                            except Exception:
+                                interp_or = s_or
+                                
+                            current_orient = np.array([interp_or], dtype=np.float32)
+                            break
+                        else:
+                            current_pos = seg["end_pos"].copy()
+                            current_orient = seg["end_orient"].copy()
                 self.game.update_robot_position(agent, current_pos)
                 agent_state["position"] = current_pos
                 agent_state["orientation"] = current_orient
@@ -970,51 +982,167 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
 
     def _resolve_projected_collisions(self, active_agents: List[str], newly_actioned: Optional[set] = None) -> set:
         """
-        Project all agents' intended next-step positions and convert any
-        NEWLY STARTED conflicting actions into one-tick failed actions.
-
-        Only agents in `newly_actioned` (those that started a new action this
-        step) are marked as impacted. Agents already mid-action from
-        a previous step continue uninterrupted.
-
-        - Agents with `busy_state` use `busy_state["target_pos"]` as projection.
-        - Stationary agents project to their current center (within robot).
-                - If two projections overlap (distance < sum of radii), impacted
-                    agents are returned to be converted into one-tick failures by step().
+        Project all agents' intended paths and find collisions tick-by-tick.
         """
         if newly_actioned is None:
             newly_actioned = set()
 
-        # Build projected positions
-        projections: Dict[str, np.ndarray] = {}
-        for agent in active_agents:
+        try:
+            obstacles = self.game.get_permanent_obstacles()
+        except AttributeError:
+            obstacles = []
+
+        # 1. Generate full paths for all newly_actioned agents
+        for agent in newly_actioned:
+            busy = self.busy_state.get(agent)
+            if not busy:
+                continue
+            
+            start_pos = busy["start_pos"]
+            target_pos = busy["target_pos"]
+            total_ticks = busy["total_ticks"]
+            
+            if np.array_equal(start_pos, target_pos) or total_ticks <= 0:
+                busy["tick_positions"] = np.array([start_pos] * max(1, total_ticks + 1))
+                busy["tick_orients"] = np.array([busy["start_orient"]] * max(1, total_ticks + 1))
+                continue
+                
+            robot = self.game.get_robot_for_agent(agent)
+            
             try:
-                projections[agent] = self._project_agent_next_position(agent)
+                positions, velocities, dt, grid = self.path_planner.Solve(
+                    start_point=start_pos,
+                    end_point=target_pos,
+                    obstacles=obstacles,
+                    robot=robot,
+                    optimize=False
+                )
+                
+                # Precompute arrays for all ticks
+                tick_positions = np.zeros((total_ticks + 1, 2), dtype=np.float32)
+                tick_orients = np.zeros((total_ticks + 1, 1), dtype=np.float32)
+                
+                from pushback.pushback import vex_shortest_angular_distance, vex_normalize_angle, vex_atan2
+                
+                plan = busy.get("plan", [])
+                
+                for t in range(total_ticks + 1):
+                    current_pos = start_pos.copy()
+                    interp_or = float(busy["start_orient"][0])
+                    
+                    for seg in plan:
+                        if t <= seg["tick_end"]:
+                            seg_ticks = max(1, seg["tick_end"] - seg["tick_start"])
+                            seg_alpha = float(np.clip((t - seg["tick_start"]) / seg_ticks, 0.0, 1.0))
+                            
+                            s_or = float(seg["start_orient"][0])
+                            e_or = float(seg["end_orient"][0])
+                            d_or = vex_shortest_angular_distance(s_or, e_or)
+                            interp_or = vex_normalize_angle(s_or + d_or * seg_alpha)
+                            
+                            s_pos = seg["start_pos"]
+                            e_pos = seg["end_pos"]
+                            diff_seg = e_pos - s_pos
+                            
+                            if np.linalg.norm(diff_seg) > 0.1:
+                                # This is a moving segment
+                                if positions is not None and len(positions) > 1:
+                                    # Interpolate along the A* generated geometric path!
+                                    interp_axis = np.linspace(0, 1, len(positions))
+                                    x_val = np.interp(seg_alpha, interp_axis, positions[:, 0])
+                                    y_val = np.interp(seg_alpha, interp_axis, positions[:, 1])
+                                    current_pos = np.array([x_val, y_val], dtype=np.float32)
+                                    
+                                    # Forward difference for orientation
+                                    alpha_next = min(1.0, seg_alpha + 0.05) if seg_alpha < 0.99 else 1.0
+                                    nx_val = np.interp(alpha_next, interp_axis, positions[:, 0])
+                                    ny_val = np.interp(alpha_next, interp_axis, positions[:, 1])
+                                    diff_path = np.array([nx_val - x_val, ny_val - y_val])
+                                    if np.linalg.norm(diff_path) > 0.001:
+                                        interp_or = float(vex_atan2(diff_path[0], diff_path[1]))
+                                else:
+                                    current_pos = s_pos + (e_pos - s_pos) * seg_alpha
+                                    interp_or = float(vex_atan2(diff_seg[0], diff_seg[1]))
+                            else:
+                                # Stationary segment (like turning in place)
+                                current_pos = s_pos.copy()
+                            break
+                    else:
+                        if plan:
+                            current_pos = plan[-1]["end_pos"].copy()
+                            interp_or = float(plan[-1]["end_orient"][0])
+                            
+                    tick_positions[t] = current_pos
+                    tick_orients[t] = np.array([interp_or], dtype=np.float32)
+
+                busy["tick_positions"] = tick_positions
+                busy["tick_orients"] = tick_orients
+                
             except Exception:
-                projections[agent] = self.environment_state["agents"][agent]["position"].copy()
-        self.projected_positions = projections
+                busy["tick_positions"] = np.array([start_pos] * (total_ticks + 1))
+                busy["tick_orients"] = np.array([busy["start_orient"]] * (total_ticks + 1))
 
-        # Pairwise collision check on projected positions
-        colliding_pairs: set[tuple[str, str]] = set()
-        agents_list = list(active_agents)
-        for i in range(len(agents_list)):
-            a = agents_list[i]
-            pa = projections[a]
-            ra = (self.game.get_robot_for_agent(a).size.value / 2.0) if self.game.get_robot_for_agent(a) else 9.0
-            for j in range(i + 1, len(agents_list)):
-                b = agents_list[j]
-                pb = projections[b]
-                rb = (self.game.get_robot_for_agent(b).size.value / 2.0) if self.game.get_robot_for_agent(b) else 9.0
-                if float(np.linalg.norm(pa - pb)) < (ra + rb):
-                    colliding_pairs.add((a, b))
-
-        # Only cancel agents that JUST started a new action this step
+        # 2. Check collisions over time
         impacted: set[str] = set()
-        for a, b in colliding_pairs:
-            if a in newly_actioned:
-                impacted.add(a)
-            if b in newly_actioned:
-                impacted.add(b)
+        
+        # Max ticks to look forward based on newly_actioned agents
+        max_ticks = 0
+        for a in newly_actioned:
+            b = self.busy_state.get(a)
+            if b:
+                max_ticks = max(max_ticks, b["total_ticks"])
+                
+        for t in range(max_ticks):
+            # Get positions for all agents at tick t
+            pos_at_t = {}
+            radii = {}
+            
+            for agent in active_agents:
+                robot = self.game.get_robot_for_agent(agent)
+                radii[agent] = robot.radius if robot else 9.0
+                
+                busy = self.busy_state.get(agent)
+                if busy:
+                    if "tick_positions" in busy:
+                        path_positions = busy["tick_positions"]
+                        elapsed = busy["total_ticks"] - busy["remaining_ticks"]
+                        idx = min(elapsed + t, len(path_positions) - 1)
+                        pos_at_t[agent] = path_positions[idx]
+                    else:
+                        pos_at_t[agent] = busy["target_pos"]
+                else:
+                    pos_at_t[agent] = self.environment_state["agents"][agent]["position"].copy()
+                    
+            # Check pairwise collisions at tick t
+            agents_list = list(active_agents)
+            for i in range(len(agents_list)):
+                a = agents_list[i]
+                team_a = self.game.get_team_for_agent(a)
+                for j in range(i + 1, len(agents_list)):
+                    b = agents_list[j]
+                    
+                    # Only check collisions for teammates
+                    if team_a != self.game.get_team_for_agent(b):
+                        continue
+                    
+                    dist = float(np.linalg.norm(pos_at_t[a] - pos_at_t[b]))
+                    if dist < (radii[a] + radii[b]):
+                        # Escaping deadlock exception
+                        if t == 0:
+                            if "initial_dist" not in self.busy_state.get(a, {}):
+                                if a in self.busy_state: self.busy_state[a]["initial_dist"] = {}
+                            if "initial_dist" not in self.busy_state.get(b, {}):
+                                if b in self.busy_state: self.busy_state[b]["initial_dist"] = {}
+                                
+                            if a in self.busy_state: self.busy_state[a]["initial_dist"][b] = dist
+                            if b in self.busy_state: self.busy_state[b]["initial_dist"][a] = dist
+                        else:
+                            dist_0_a = self.busy_state.get(a, {}).get("initial_dist", {}).get(b, None)
+                            if dist_0_a is not None and dist > dist_0_a:
+                                continue # Escaping
+                                
+                            if a in newly_actioned: impacted.add(a)
+                            if b in newly_actioned: impacted.add(b)
 
         return impacted
 
@@ -1163,7 +1291,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                     start_point=start_pos,
                     end_point=end_pos,
                     obstacles=obstacles,
-                    robot=robot_config
+                    robot=robot_config,
+                    optimize=False
                 )
                 ax.plot(
                     positions[:, 0], positions[:, 1],
