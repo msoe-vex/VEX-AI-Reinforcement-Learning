@@ -105,7 +105,11 @@ def apply_head_training_status_on_learner(learner, phase):
         target_module = module.unwrapped() if hasattr(module, "unwrapped") else module
         
         if hasattr(target_module, "_encoder_net"):
-            enc_params.update(target_module._encoder_net.parameters())
+            if hasattr(target_module._encoder_net, "core_net"):
+                enc_params.update(target_module._encoder_net.core_net.parameters())
+            if hasattr(target_module._encoder_net, "fused_net"):
+                enc_params.update(target_module._encoder_net.fused_net.parameters())
+            # comm_net will be added below in msg_params
             print(f"Set encoder params for {module_id}, Phase: {phase}")
         else:
             print(f"Warning: No _encoder_net found for {module_id}")
@@ -120,6 +124,9 @@ def apply_head_training_status_on_learner(learner, phase):
             msg_params.update(target_module.message_head.parameters())
             msg_params.update(target_module.attention_unit.parameters())
             msg_params.add(target_module.msg_log_std)
+            # Add comm_net to message params group so it trains when message_head trains
+            if hasattr(target_module, "_encoder_net") and hasattr(target_module._encoder_net, "comm_net") and target_module._encoder_net.comm_net is not None:
+                msg_params.update(target_module._encoder_net.comm_net.parameters())
             print(f"Set message params for {module_id}, Phase: {phase}")
         else:
             print(f"Warning: No message_head found for {module_id}")
@@ -161,16 +168,18 @@ def apply_head_training_status_on_learner(learner, phase):
         other_group = {'params': [], 'lr': base_lr}
         
         for p in all_params:
-            p.requires_grad = True
             if p in enc_params:
+                p.requires_grad = train_encoder
                 enc_group['params'].append(p)
             elif p in act_params:
+                p.requires_grad = train_action
                 act_group['params'].append(p)
             elif p in msg_params:
+                p.requires_grad = train_message
                 msg_group['params'].append(p)
             else:
-                other_group['params'].append(p)
-                
+                p.requires_grad = True
+                other_group['params'].append(p)                
         if opt.param_groups:
             base_kwargs = {k: v for k, v in opt.param_groups[0].items() if k not in ('params', 'lr')}
             
