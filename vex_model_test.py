@@ -213,10 +213,12 @@ def run_simulation(
                         message_vector = np.zeros(MESSAGE_SIZE, dtype=np.float32)
                     elif remaining >= MESSAGE_SIZE:
                         message_mean = model_output[:, num_actions:num_actions + MESSAGE_SIZE]
-                        
+                        # Apply temperature to message sampling std (T>1 -> more random)
+                        temperature = max(1e-6, getattr(config, "temperature", 1.0))
+
                         if not config.deterministic and remaining >= 2 * MESSAGE_SIZE:
                             msg_log_std = model_output[:, num_actions + MESSAGE_SIZE:num_actions + 2 * MESSAGE_SIZE]
-                            msg_std = torch.exp(msg_log_std)
+                            msg_std = torch.exp(msg_log_std) * temperature
                             msg_dist = torch.distributions.Normal(message_mean, msg_std)
                             message_vector = msg_dist.sample().cpu().numpy()[0]
                         else:
@@ -227,11 +229,17 @@ def run_simulation(
                         message_vector = mm
                     else:
                         message_vector = np.zeros(MESSAGE_SIZE, dtype=np.float32)
-                    probs = torch.softmax(action_logits, dim=-1)
+                    # Temperature scaling for action selection
+                    temperature = max(1e-6, getattr(config, "temperature", 1.0))
+                    scaled_logits = action_logits / temperature
+                    probs = torch.softmax(scaled_logits, dim=-1)
                 else:
                     num_actions = action_space.n
                     action_logits = model_output[:, :num_actions]
-                    probs = torch.softmax(action_logits, dim=-1)
+                    # Temperature scaling for action selection
+                    temperature = max(1e-6, getattr(config, "temperature", 1.0))
+                    scaled_logits = action_logits / temperature
+                    probs = torch.softmax(scaled_logits, dim=-1)
                     message_vector = None
                 
                 action_dim = num_actions
@@ -251,7 +259,8 @@ def run_simulation(
                         action = env.game.fallback_action
                 else:
                     # Deterministic: take highest probability valid action
-                    sorted_actions = torch.argsort(action_logits, dim=1, descending=True).squeeze(0).tolist()
+                    # Use same temperature-scaled logits for deterministic selection
+                    sorted_actions = torch.argsort(scaled_logits, dim=1, descending=True).squeeze(0).tolist()
                     action = None
                     for candidate_action in sorted_actions:
                         if env.is_valid_action(agent_id, candidate_action, obs_np, last_actions[agent_id]):
