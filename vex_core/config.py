@@ -22,6 +22,7 @@ class VexEnvConfig:
     randomize: bool
     communication_mode: CommunicationOption
     deterministic: bool
+    temperature: float = 1.0
 
     @classmethod
     def add_cli_args(
@@ -32,7 +33,8 @@ class VexEnvConfig:
         experiment_path: Optional[str] = "vex_env_output",
         randomize: Optional[bool] = True,
         communication_mode: Optional[str] = "none",
-        deterministic: Optional[bool] = False
+        deterministic: Optional[bool] = False,
+        temperature: Optional[float] = 1.0
     ) -> None:
         """
         Adds configuration arguments to an argparse.ArgumentParser.
@@ -77,6 +79,12 @@ class VexEnvConfig:
             default=deterministic,
             help="Enable deterministic environment mechanics (use --no-deterministic for stochastic outcomes)"
         )
+        parser.add_argument(
+            "--temperature",
+            type=float,
+            default=temperature,
+            help="Action selection temperature (0 < T). Lower => more deterministic. Default=1.0",
+        )
 
     @classmethod
     def read_from_metadata(cls, experiment_path: str, defaults: dict = None) -> dict:
@@ -113,34 +121,29 @@ class VexEnvConfig:
         falling back to metadata for any unspecified arguments.
         """
         experiment_path = args.experiment_path if hasattr(args, "experiment_path") else ""
-        
-        # Determine defaults from arguments (only if explicitly set or if we need a base)
+
+        # Collect explicit CLI-provided values (so metadata can override defaults when appropriate)
         defaults = {}
         if hasattr(args, "game") and args.game is not None:
-             defaults["game"] = args.game
+            defaults["game"] = args.game
         if hasattr(args, "communication_mode") and args.communication_mode is not None:
-             defaults["communication_mode"] = args.communication_mode
+            defaults["communication_mode"] = args.communication_mode
         if hasattr(args, "randomize") and args.randomize is not None:
-             defaults["randomize"] = args.randomize
+            defaults["randomize"] = args.randomize
         if hasattr(args, "deterministic") and args.deterministic is not None:
-             defaults["deterministic"] = args.deterministic
-             
-        # Read from metadata to fill in gaps or override defaults if args weren't explicitly provided
+            defaults["deterministic"] = args.deterministic
+        if hasattr(args, "temperature") and args.temperature is not None:
+            defaults["temperature"] = args.temperature
+
+        # Read metadata overrides from the experiment directory (if present)
         metadata_overrides = cls.read_from_metadata(experiment_path, {})
-        
-        # Apply metadata ONLY if the argument was NOT explicitly provided on CLI
-        # args usually have defaults, so we need to be careful. 
-        # If args.game is None, we definitely use metadata.
-        # If args.game has a default but metadata exists, we often want metadata to win for evaluation.
-        # We will prioritize metadata over argparse defaults where possible by checking if the user explicitly provided it.
-        # Since argparse doesn't easily tell us if a default was used, we will just apply metadata if it exists
-        # and assume the user wants the trained model's config unless they specify otherwise.
-        # A better way is to set argparse defaults to None where we want to inherit.
-        
+
+        # Resolve final values: prefer CLI args, then metadata, then hardcoded defaults
         game_name = args.game if (hasattr(args, "game") and args.game is not None) else metadata_overrides.get("game", "vexai_skills")
         communication_mode_str = args.communication_mode if (hasattr(args, "communication_mode") and args.communication_mode is not None) else metadata_overrides.get("communication_mode", "none")
         randomize = args.randomize if (hasattr(args, "randomize") and args.randomize is not None) else metadata_overrides.get("randomize", True)
         deterministic = args.deterministic if (hasattr(args, "deterministic") and args.deterministic is not None) else metadata_overrides.get("deterministic", False)
+        temperature = args.temperature if (hasattr(args, "temperature") and args.temperature is not None) else metadata_overrides.get("temperature", 1.0)
 
         try:
             communication_mode = CommunicationOption(communication_mode_str)
@@ -153,5 +156,6 @@ class VexEnvConfig:
             experiment_path=experiment_path,
             randomize=randomize,
             communication_mode=communication_mode,
-            deterministic=deterministic
+            deterministic=deterministic,
+            temperature=float(temperature),
         )

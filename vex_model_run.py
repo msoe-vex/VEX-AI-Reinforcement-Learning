@@ -8,7 +8,7 @@ from vex_core.base_env import MESSAGE_SIZE, VexMultiAgentEnv
 from typing import Dict
 
 class VexModelRunner:
-    def __init__(self, model_path: str, game: VexGame):
+    def __init__(self, model_path: str, game: VexGame, temperature: float = 1.0):
         self.model_path: str = model_path
         self.game: VexGame = game
         if hasattr(self.game, "deterministic"):
@@ -18,6 +18,7 @@ class VexModelRunner:
                 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Using device: {self.device}")
+        self.temperature = max(1e-6, float(temperature))
 
         # Load the TorchScript model
         try:
@@ -126,14 +127,15 @@ class VexModelRunner:
             is_deterministic = hasattr(self.game, 'deterministic') and self.game.deterministic
             if not is_deterministic and remaining >= 2 * MESSAGE_SIZE:
                 msg_log_std = model_output[:, action_dim + MESSAGE_SIZE:action_dim + 2 * MESSAGE_SIZE]
-                msg_std = torch.exp(msg_log_std)
+                msg_std = torch.exp(msg_log_std) * getattr(self, "temperature", 1.0)
                 msg_dist = torch.distributions.Normal(message_mean, msg_std)
                 message_vector = msg_dist.sample().cpu().numpy()[0]
             else:
                 message_vector = message_mean.cpu().numpy()[0]
         
-        # Use stochastic sampling like RLlib does during training
-        probs = torch.softmax(action_logits, dim=-1)
+        # Use temperature-scaled sampling like RLlib does during training
+        scaled_logits = action_logits / max(1e-6, getattr(self, "temperature", 1.0))
+        probs = torch.softmax(scaled_logits, dim=-1)
         
         is_deterministic = hasattr(self.game, 'deterministic') and self.game.deterministic
         if not is_deterministic:
@@ -150,7 +152,7 @@ class VexModelRunner:
             if not self.game.is_valid_action(self.robot.name, action, observation):
                 action = self.game.fallback_action()
         else:
-            sorted_actions = torch.argsort(action_logits, dim=1, descending=True).squeeze(0).tolist()
+            sorted_actions = torch.argsort(scaled_logits, dim=1, descending=True).squeeze(0).tolist()
             action = None
             for candidate_action in sorted_actions:
                 if self.game.is_valid_action(self.robot.name, candidate_action, observation):
