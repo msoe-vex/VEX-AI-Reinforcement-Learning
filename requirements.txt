@@ -13,3 +13,5 @@ lz4
 torch
 gputil
 imageio
+seaborn
+pandas
