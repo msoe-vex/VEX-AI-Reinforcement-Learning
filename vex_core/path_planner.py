@@ -861,8 +861,8 @@ if __name__ == "__main__":
         max_speed=25,
         max_acceleration=25,
         buffer=1.0,
-        length=24.0,
-        width=24.0,
+        length=18.0,
+        width=15.0,
     )
 
     planner = PathPlanner(
@@ -882,19 +882,9 @@ if __name__ == "__main__":
         start_point = [np.random.uniform(-60, 60), np.random.uniform(-60, 60)]
         end_point = [np.random.uniform(-60, 60), np.random.uniform(-60, 60)]
 
-        obstacles = [
-            Obstacle(0.0, 0.0, 11.3, False),       # Center Goal Structure
-            Obstacle(-21.0, 48.0, 3.0, False),     # Long Goal Top - Left End
-            Obstacle(0.0, 48.0, 0.0, False),       # Long Goal Top - Center
-            Obstacle(21.0, 48.0, 3.0, False),      # Long Goal Top - Right End
-            Obstacle(-21.0, -48.0, 3.0, False),    # Long Goal Bottom - Left End
-            Obstacle(0.0, -48.0, 0.0, False),      # Long Goal Bottom - Center
-            Obstacle(21.0, -48.0, 3.0, False),     # Long Goal Bottom - Right End
-            Obstacle(56.0, -7.0, 0.0, False),     # Blue Park Zone Bottom Corner
-            Obstacle(56.0, 7.0, 0.0, False),      # Blue Park Zone Top Corner
-            Obstacle(-56.0, -7.0, 0.0, False),    # Red Park Zone Bottom Corner
-            Obstacle(-56.0, 7.0, 0.0, False),     # Red Park Zone Top Corner
-        ]
+        from pushback.pushback import PERMANENT_OBSTACLES
+
+        obstacles = PERMANENT_OBSTACLES
 
         positions, velocities, dt, grid = planner.Solve(start_point=start_point, end_point=end_point, obstacles=obstacles, robot=robot, optimize=True)
 

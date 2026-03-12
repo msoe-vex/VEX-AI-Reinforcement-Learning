@@ -237,11 +237,11 @@ LOADERS: List[LoaderPosition] = [
 PARK_ZONES = {
     "red": ParkZone(
         center=np.array([-60.0, 0.0]),
-        bounds=(-72.0, -56, -7.0, 7.0),
+        bounds=(-72.0, -54, -10.0, 10.0),
     ),
     "blue": ParkZone(
         center=np.array([60.0, 0.0]),
-        bounds=(56, 72.0, -7.0, 7.0),
+        bounds=(54, 72.0, -10.0, 10.0),
     ),
 }
 
@@ -254,10 +254,12 @@ PERMANENT_OBSTACLES: List[Obstacle] = [
     Obstacle(-21.0, -48.0, 3.0, False),     # Long Goal Bottom - Left End
     Obstacle(0.0, -48.0, 0.0, False),       # Long Goal Bottom - Center
     Obstacle(21.0, -48.0, 3.0, False),      # Long Goal Bottom - Right End
-    Obstacle(56.0, -7.0, 0.0, False),       # Blue Park Zone Bottom Corner
-    Obstacle(56.0, 7.0, 0.0, False),        # Blue Park Zone Top Corner
-    Obstacle(-56.0, -7.0, 0.0, False),      # Red Park Zone Bottom Corner
-    Obstacle(-56.0, 7.0, 0.0, False),       # Red Park Zone Top Corner
+    Obstacle(55.0, -9.0, 0.0, False),       # Blue Park Zone Bottom Corner
+    Obstacle(55.0, 9.0, 0.0, False),        # Blue Park Zone Top Corner
+    Obstacle(-55.0, -9.0, 0.0, False),      # Red Park Zone Bottom Corner
+    Obstacle(-55.0, 9.0, 0.0, False),       # Red Park Zone Top Corner
+    Obstacle(0.0, 60.0, 0.0, False),        # Long Goal Top - Extra Center
+    Obstacle(0.0, -60.0, 0.0, False),       # Long Goal Bottom - Extra Center
 ]
 
 
@@ -2004,15 +2006,19 @@ class PushBackGame(VexGame):
         
         # Park Zones
         red_park_style, red_park_alpha = _visibility_style('red', 1.0)
+        red_zone = PARK_ZONES["red"]
+        x_min, x_max, y_min, y_max = red_zone.bounds
         rect_park_red = patches.Rectangle(
-            (-72, -12), 18, 24,
+            (x_min, y_min), x_max - x_min, y_max - y_min,
             linewidth=1, edgecolor=red_park_style, facecolor=red_park_style, hatch='//', alpha=red_park_alpha * 0.22
         )
         ax.add_patch(rect_park_red)
         
         blue_park_style, blue_park_alpha = _visibility_style('blue', 1.0)
+        blue_zone = PARK_ZONES["blue"]
+        x_min, x_max, y_min, y_max = blue_zone.bounds
         rect_park_blue = patches.Rectangle(
-            (54, -12), 18, 24,
+            (x_min, y_min), x_max - x_min, y_max - y_min,
             linewidth=1, edgecolor=blue_park_style, facecolor=blue_park_style, hatch='//', alpha=blue_park_alpha * 0.22
         )
         ax.add_patch(rect_park_blue)
