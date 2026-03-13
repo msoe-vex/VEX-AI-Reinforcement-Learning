@@ -16,9 +16,9 @@ from enum import Enum
 # reward = a * team_delta + b * opp_delta + c * individual_delta + d * individual_penalty + e * team_penalty
 DEFAULT_REWARD_WEIGHT_TEAM_DELTA = 0.25 # (Points scored for my team by teammates - Points scored for opp team by teammates)
 DEFAULT_REWARD_WEIGHT_OPP_DELTA = -0.1 # (Points scored for opp team by opponents - Points scored for my team by opponents)
-DEFAULT_REWARD_WEIGHT_INDIVIDUAL_DELTA = 0.75 # (Points scored for my team by me - Points scored for opp team by me)
-DEFAULT_REWARD_WEIGHT_INDIVIDUAL_PENALTY = -1.0 # (Penalty for actions performed by me)
-DEFAULT_REWARD_WEIGHT_TEAM_PENALTY = -0.25 # (Penalty for actions performed by teammates)
+DEFAULT_REWARD_WEIGHT_INDIVIDUAL_DELTA = 1.00 # (Points scored for my team by me - Points scored for opp team by me)
+DEFAULT_REWARD_WEIGHT_INDIVIDUAL_PENALTY = -0.1 # (Penalty for actions performed by me)
+DEFAULT_REWARD_WEIGHT_TEAM_PENALTY = -0.025 # (Penalty for actions performed by teammates)
 from vex_core.robot import Robot, Team, RobotSize
 from vex_core.config import CommunicationOption
 
@@ -517,9 +517,9 @@ class VexGame(ABC):
         Override this to customize the penalty for collisions.
         
         Returns:
-            Penalty value (default: 10.0)
+            Penalty value (default: 3.0)
         """
-        return 10.0
+        return 3.0
 
     def update_robot_position(self, agent: str, position: np.ndarray) -> None:
         """

@@ -78,13 +78,14 @@ def run_simulation(
         test_communication_mode (CommunicationOption): Whether to test communication. Only used if config.communication_mode is not NONE.
     """
     model_dir = config.experiment_path
-    output_dir = config.experiment_path
+    output_dir = config.experiment_path if config.experiment_path else os.path.join(os.getcwd(), "vex_model_test")
     render_mode = config.render_mode
 
     if test_communication_mode is None:
         test_communication_mode = config.communication_mode
     
-    if not os.path.exists(model_dir):
+    use_random_actions = model_dir is None or str(model_dir).strip() == ""
+    if not use_random_actions and not os.path.exists(model_dir):
         print(f"Error: Model directory not found at {model_dir}")
         return
 
@@ -104,14 +105,18 @@ def run_simulation(
         config=config,
     )
     
-    # Load models for each agent
-    print(f"Loading models from {model_dir}...")
-    try:
-        models = load_agent_models(model_dir, env.possible_agents, device)
-        print(f"Successfully loaded models for {len(models)} agents")
-    except Exception as e:
-        print(f"Error loading models: {e}")
-        return
+    models = {}
+    if use_random_actions:
+        print("No experiment-path provided. Running random-action baseline test (no model loading).")
+    else:
+        # Load models for each agent
+        print(f"Loading models from {model_dir}...")
+        try:
+            models = load_agent_models(model_dir, env.possible_agents, device)
+            print(f"Successfully loaded models for {len(models)} agents")
+        except Exception as e:
+            print(f"Error loading models: {e}")
+            return
     
     # Get observation and action space shapes for a sample agent
     # These are used to correctly shape tensors for the model
@@ -122,10 +127,7 @@ def run_simulation(
     else:
         obs_shape = obs_space.shape
     
-    # Warmup Pass: Initialize CUDA context before simulation starts
-    print("Warming up models...")
-    dummy_input = torch.randn(1, *obs_shape, device=device)
-    # Determine action mask dim for warmup
+    # Determine action mask dim for warmup/random fallback
     sample_act_space = env.action_space(sample_agent)
     if isinstance(sample_act_space, spaces.Tuple):
         mask_dim = sample_act_space[0].n
@@ -133,11 +135,16 @@ def run_simulation(
         mask_dim = sample_act_space.n
     else:
         mask_dim = obs_shape[0]
-    dummy_mask = torch.ones(1, mask_dim, device=device)
-    with torch.no_grad():
-        for agent_id, model in models.items():
-            _ = model(dummy_input, dummy_mask)
-    print("Models warmed up")
+
+    if not use_random_actions:
+        # Warmup Pass: Initialize CUDA context before simulation starts
+        print("Warming up models...")
+        dummy_input = torch.randn(1, *obs_shape, device=device)
+        dummy_mask = torch.ones(1, mask_dim, device=device)
+        with torch.no_grad():
+            for agent_id, model in models.items():
+                _ = model(dummy_input, dummy_mask)
+        print("Models warmed up")
 
     team_score_totals = {}
     team_score_counts = {}
@@ -185,6 +192,35 @@ def run_simulation(
                     obs_np[0:obs_np.shape[0] // 2] = 0
 
                 action_mask_np = obs_dict["action_mask"] if isinstance(obs_dict, dict) and "action_mask" in obs_dict else None
+
+                if use_random_actions:
+                    if action_mask_np is not None:
+                        valid_actions = np.flatnonzero(action_mask_np > 0.5)
+                    else:
+                        action_space = env.action_space(agent_id)
+                        if isinstance(action_space, spaces.Tuple):
+                            valid_actions = np.arange(action_space[0].n)
+                        else:
+                            valid_actions = np.arange(action_space.n)
+
+                    if valid_actions.size == 0:
+                        action = env.game.fallback_action
+                    else:
+                        action = int(np.random.choice(valid_actions))
+
+                    action_space = env.action_space(agent_id)
+                    if isinstance(action_space, spaces.Tuple):
+                        if test_communication_mode == CommunicationOption.NONE:
+                            message_vector = np.zeros(MESSAGE_SIZE, dtype=np.float32)
+                        else:
+                            message_vector = np.random.uniform(-1.0, 1.0, size=(MESSAGE_SIZE,)).astype(np.float32)
+                        actions_to_take[agent_id] = (action, message_vector)
+                    else:
+                        actions_to_take[agent_id] = action
+
+                    last_actions[agent_id] = action
+                    continue
+
                 obs_np_float = obs_np.astype(np.float32) if obs_np.dtype != np.float32 else obs_np
                 obs_tensor = torch.from_numpy(obs_np_float).unsqueeze(0).to(device)
 
@@ -371,7 +407,7 @@ if __name__ == "__main__":
         parser,
         game=None,
         render_mode="image",
-        experiment_path=None,
+        experiment_path="",
         randomize=False,
         communication_mode=None,
         deterministic=False
