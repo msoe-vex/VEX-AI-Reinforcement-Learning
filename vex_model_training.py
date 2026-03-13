@@ -53,6 +53,41 @@ TRAINING_PHASES = [
     {"iterations": 100, "train_encoder": True,  "train_action": True,  "train_message": True,  "lr": 0.00005, "entropy": 0.005},
 ]
 
+# Populated at runtime based on model capabilities (e.g., communication disabled => no message params).
+ACTIVE_TRAINING_PHASES = TRAINING_PHASES
+
+
+def build_active_training_phases(phases, supports_message_params=True):
+    """Return phases adjusted to model capabilities, defaulting zero-train phases to action-only."""
+    active_phases = []
+    action_only_fallback_count = 0
+
+    for phase in phases:
+        adjusted_phase = dict(phase)
+
+        if not supports_message_params:
+            adjusted_phase["train_message"] = False
+
+        train_encoder = adjusted_phase.get("train_encoder", True)
+        train_action = adjusted_phase.get("train_action", True)
+        train_message = adjusted_phase.get("train_message", True)
+
+        if not (train_encoder or train_action or train_message):
+            # Ensure every phase trains at least one head by defaulting to action-only.
+            adjusted_phase["train_action"] = True
+            train_action = True
+            action_only_fallback_count += 1
+
+        active_phases.append(adjusted_phase)
+
+    if not active_phases:
+        raise ValueError("No valid training phases remain after applying model capability filters.")
+
+    if action_only_fallback_count > 0:
+        print(f"Converted {action_only_fallback_count} training phase(s) to action-only (no trainable heads).")
+
+    return active_phases
+
 def get_training_phase(iteration, phases):
     """Determine the current training phase settings based on the iteration."""
     total_iters = sum(phase["iterations"] for phase in phases)
@@ -204,7 +239,7 @@ class VexScoreCallback(RLlibCallback):
     def on_algorithm_init(self, *, algorithm, **kwargs):
         """Called when a new algorithm instance has been created."""
         try:
-            phase = get_training_phase(0, TRAINING_PHASES)
+            phase = get_training_phase(0, ACTIVE_TRAINING_PHASES)
             algorithm.learner_group.foreach_learner(
                 lambda learner: apply_head_training_status_on_learner(learner, phase)
             )
@@ -249,7 +284,7 @@ class VexScoreCallback(RLlibCallback):
             
         # Toggle frozen heads
         try:
-            phase = get_training_phase(iteration, TRAINING_PHASES)
+            phase = get_training_phase(iteration, ACTIVE_TRAINING_PHASES)
             algorithm.learner_group.foreach_learner(
                 lambda learner: apply_head_training_status_on_learner(learner, phase)
             )
@@ -424,6 +459,12 @@ if __name__ == "__main__":
 
     env_config_obj = VexEnvConfig.from_args(args)
 
+    supports_message_params = env_config_obj.communication_mode != CommunicationOption.NONE
+    ACTIVE_TRAINING_PHASES = build_active_training_phases(
+        TRAINING_PHASES,
+        supports_message_params=supports_message_params,
+    )
+
     print("Training parameters:")
     for arg in vars(args):
         print(f"{arg}: {getattr(args, arg)}")
@@ -474,15 +515,15 @@ if __name__ == "__main__":
         num_iters = args.num_iters
         print(f"Total training iterations: {num_iters} (from args)")
     else:
-        num_iters = sum(phase["iterations"] for phase in TRAINING_PHASES)
-        print(f"Total training iterations: {num_iters} (from TRAINING_PHASES)")
+        num_iters = sum(phase["iterations"] for phase in ACTIVE_TRAINING_PHASES)
+        print(f"Total training iterations: {num_iters} (from ACTIVE_TRAINING_PHASES)")
 
     print("Using custom callback for LR and entropy scheduling based on iterations.")
 
     # RLlib new API: schedules must be provided directly via `lr` and
     # `entropy_coeff` (not via deprecated *_schedule fields). Pass the initial values.
-    lr_config_value = TRAINING_PHASES[0]["lr"]
-    entropy_config_value = TRAINING_PHASES[0]["entropy"]
+    lr_config_value = ACTIVE_TRAINING_PHASES[0]["lr"]
+    entropy_config_value = ACTIVE_TRAINING_PHASES[0]["entropy"]
     
     # Configure the RLlib Trainer using PPO with new API stack
     config = (
@@ -558,7 +599,8 @@ if __name__ == "__main__":
     # Save game metadata early (before training starts)
     metadata = {
         "game": env_config_obj.game_name,
-        "training_phases": TRAINING_PHASES,
+        "training_phases": ACTIVE_TRAINING_PHASES,
+        "base_training_phases": TRAINING_PHASES,
         "discount_factor": args.discount_factor,
         "randomize": env_config_obj.randomize,
         "num_iters": num_iters,
