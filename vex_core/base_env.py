@@ -58,6 +58,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self.config = config
         self.communication_mode = config.communication_mode
         self.deterministic = config.deterministic
+        self.copy_message_dropout_prob = float(np.clip(getattr(config, "copy_message_dropout_prob", 0.0), 0.0, 1.0))
         if hasattr(self.game, "deterministic"):
             self.game.deterministic = config.deterministic
             
@@ -926,6 +927,10 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                         valid_len = min(core_obs_size, len(other_msg))
                         pad[:valid_len] = other_msg[:valid_len]
                         other_msg = pad
+
+                    # Communication dropout regularization for COPY mode.
+                    if self.copy_message_dropout_prob > 0.0 and np.random.random() < self.copy_message_dropout_prob:
+                        other_msg = np.zeros(core_obs_size, dtype=np.float32)
                         
                     start_idx = idx * core_obs_size
                     end_idx = start_idx + core_obs_size

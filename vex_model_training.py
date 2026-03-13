@@ -326,7 +326,8 @@ def env_creator(config=None):
         experiment_path=config.get("experiment_path", "vex_model_training"),
         randomize=config.get("randomize", True),
         communication_mode=communication_mode,
-        deterministic=deterministic
+        deterministic=deterministic,
+        copy_message_dropout_prob=float(config.get("copy_message_dropout_prob", 0.0)),
     )
     
     game = PushBackGame.get_game(
@@ -342,8 +343,8 @@ def env_creator(config=None):
 
 # Policy mapping function to assign agents to policies.
 def policy_mapping_fn(agent_id, episode):
-    # return "shared_policy" # Use the same policy for all agents
-    return agent_id # Change to agent_id if you want to use different policies for each agent
+    return "shared_policy" # Use the same policy for all agents
+    # return agent_id # Change to agent_id if you want to use different policies for each agent
 
 
 def find_latest_checkpoint(experiment_directory: str):
@@ -385,6 +386,7 @@ def apply_training_metadata_overrides(args, metadata, explicit_cli_flags):
         "randomize": ("randomize", ["--randomize", "--no-randomize"]),
         "deterministic": ("deterministic", ["--deterministic", "--no-deterministic"]),
         "num_iters": ("num_iters", ["--num-iters"]),
+        "copy_message_dropout_prob": ("copy_message_dropout_prob", ["--copy-message-dropout-prob"]),
     }
 
     for metadata_key, (arg_name, cli_flags) in metadata_to_arg.items():
@@ -479,6 +481,7 @@ if __name__ == "__main__":
         "randomize": env_config_obj.randomize,
         "communication_mode": env_config_obj.communication_mode.value,
         "deterministic": env_config_obj.deterministic,
+        "copy_message_dropout_prob": env_config_obj.copy_message_dropout_prob,
     })
 
     # Get observation and action spaces for module spec
@@ -539,6 +542,7 @@ if __name__ == "__main__":
                 "game": env_config_obj.game_name,
                 "communication_mode": env_config_obj.communication_mode.value,
                 "deterministic": env_config_obj.deterministic,
+                "copy_message_dropout_prob": env_config_obj.copy_message_dropout_prob,
             }
         )
         .framework("torch")  # change to "tf" for TensorFlow
@@ -608,6 +612,7 @@ if __name__ == "__main__":
         "restored_checkpoint_path": restore_path,
         "communication_mode": env_config_obj.communication_mode.value,
         "deterministic": env_config_obj.deterministic,
+        "copy_message_dropout_prob": env_config_obj.copy_message_dropout_prob,
         "start_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()),
     }
     metadata_path = os.path.join(experiment_dir, "training_metadata.json")
@@ -677,7 +682,8 @@ if __name__ == "__main__":
             experiment_path=experiment_dir,
             randomize=env_config_obj.randomize,
             communication_mode=env_config_obj.communication_mode,
-            deterministic=env_config_obj.deterministic
+            deterministic=env_config_obj.deterministic,
+            copy_message_dropout_prob=env_config_obj.copy_message_dropout_prob,
         )
         run_simulation(
             config=test_config,

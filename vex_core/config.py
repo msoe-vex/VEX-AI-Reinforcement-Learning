@@ -1,6 +1,7 @@
 import os
 import json
 import argparse
+import numpy as np
 from dataclasses import dataclass
 from typing import Optional
 from enum import Enum
@@ -23,6 +24,7 @@ class VexEnvConfig:
     communication_mode: CommunicationOption
     deterministic: bool
     temperature: float = 1.0
+    copy_message_dropout_prob: float = 0.0
 
     @classmethod
     def add_cli_args(
@@ -34,7 +36,8 @@ class VexEnvConfig:
         randomize: Optional[bool] = True,
         communication_mode: Optional[str] = "none",
         deterministic: Optional[bool] = False,
-        temperature: Optional[float] = 1.0
+        temperature: Optional[float] = 1.0,
+        copy_message_dropout_prob: Optional[float] = 0.0,
     ) -> None:
         """
         Adds configuration arguments to an argparse.ArgumentParser.
@@ -85,6 +88,12 @@ class VexEnvConfig:
             default=temperature,
             help="Action selection temperature (0 < T). Lower => more deterministic. Default=1.0",
         )
+        parser.add_argument(
+            "--copy-message-dropout-prob",
+            type=float,
+            default=copy_message_dropout_prob,
+            help="In COPY communication mode, probability [0,1] of zeroing each teammate message per tick.",
+        )
 
     @classmethod
     def read_from_metadata(cls, experiment_path: str, defaults: dict = None) -> dict:
@@ -134,6 +143,8 @@ class VexEnvConfig:
             defaults["deterministic"] = args.deterministic
         if hasattr(args, "temperature") and args.temperature is not None:
             defaults["temperature"] = args.temperature
+        if hasattr(args, "copy_message_dropout_prob") and args.copy_message_dropout_prob is not None:
+            defaults["copy_message_dropout_prob"] = args.copy_message_dropout_prob
 
         # Read metadata overrides from the experiment directory (if present)
         metadata_overrides = cls.read_from_metadata(experiment_path, {})
@@ -144,6 +155,7 @@ class VexEnvConfig:
         randomize = args.randomize if (hasattr(args, "randomize") and args.randomize is not None) else metadata_overrides.get("randomize", True)
         deterministic = args.deterministic if (hasattr(args, "deterministic") and args.deterministic is not None) else metadata_overrides.get("deterministic", False)
         temperature = args.temperature if (hasattr(args, "temperature") and args.temperature is not None) else metadata_overrides.get("temperature", 1.0)
+        copy_message_dropout_prob = args.copy_message_dropout_prob if (hasattr(args, "copy_message_dropout_prob") and args.copy_message_dropout_prob is not None) else metadata_overrides.get("copy_message_dropout_prob", 0.0)
 
         try:
             communication_mode = CommunicationOption(communication_mode_str)
@@ -158,4 +170,5 @@ class VexEnvConfig:
             communication_mode=communication_mode,
             deterministic=deterministic,
             temperature=float(temperature),
+            copy_message_dropout_prob=float(np.clip(copy_message_dropout_prob, 0.0, 1.0)),
         )
