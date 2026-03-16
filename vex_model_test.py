@@ -4,6 +4,7 @@ import os
 import numpy as np
 import glob
 import csv
+import time
 from gymnasium import spaces
 
 # Import from new modular architecture
@@ -150,6 +151,8 @@ def run_simulation(
     team_score_counts = {}
     total_reward_totals = {}
     total_reward_counts = {}
+    inference_time_total_s = 0.0
+    inference_call_count = 0
     os.makedirs(output_dir, exist_ok=True)
     results_csv_path = os.path.join(output_dir, "results.csv")
     iteration_results = []
@@ -167,6 +170,8 @@ def run_simulation(
         last_actions = {agent: None for agent in env.possible_agents}
 
         total_reward = 0
+        iteration_inference_time_s = 0.0
+        iteration_inference_calls = 0
 
         while not done:
             step_count += 1
@@ -234,8 +239,18 @@ def run_simulation(
                     mask_tensor = torch.ones(1, mask_dim, device=device)
 
                 model = models[agent_id]
+                if device.type == "cuda":
+                    torch.cuda.synchronize(device)
+                inference_start = time.perf_counter()
                 with torch.no_grad():
                     model_output = model(obs_tensor, mask_tensor)
+                if device.type == "cuda":
+                    torch.cuda.synchronize(device)
+                inference_elapsed = time.perf_counter() - inference_start
+                inference_time_total_s += inference_elapsed
+                inference_call_count += 1
+                iteration_inference_time_s += inference_elapsed
+                iteration_inference_calls += 1
 
                 action_space = env.action_space(agent_id)
                 if isinstance(action_space, spaces.Tuple):
@@ -336,6 +351,9 @@ def run_simulation(
             f"Final score: {env.score} "
             f"Total reward: {total_reward}"
         )
+        if iteration_inference_calls > 0:
+            iter_avg_inference_ms = (iteration_inference_time_s / iteration_inference_calls) * 1000.0
+            print(f"Average inference time (iteration {iteration}): {iter_avg_inference_ms:.3f} ms over {iteration_inference_calls} calls")
 
         if isinstance(env.score, dict):
             for team_name, score in env.score.items():
@@ -348,19 +366,22 @@ def run_simulation(
                 "env_steps": env.num_steps,
                 "internal_ticks": env.num_ticks,
             }
+            if iteration_inference_calls > 0:
+                row["avg_inference_ms"] = (iteration_inference_time_s / iteration_inference_calls) * 1000.0
             for team_name, score in env.score.items():
                 row[f"score_{team_name}"] = float(score)
             iteration_results.append(row)
         else:
-            iteration_results.append(
-                {
-                    "iteration": iteration,
-                    "steps": step_count,
-                    "env_steps": env.num_steps,
-                    "internal_ticks": env.num_ticks,
-                    "score": env.score,
-                }
-            )
+            row = {
+                "iteration": iteration,
+                "steps": step_count,
+                "env_steps": env.num_steps,
+                "internal_ticks": env.num_ticks,
+                "score": env.score,
+            }
+            if iteration_inference_calls > 0:
+                row["avg_inference_ms"] = (iteration_inference_time_s / iteration_inference_calls) * 1000.0
+            iteration_results.append(row)
         
         total_reward_totals[team_name] = total_reward_totals.get(team_name, 0.0) + float(total_reward)
         total_reward_counts[team_name] = total_reward_counts.get(team_name, 0) + 1
@@ -384,6 +405,13 @@ def run_simulation(
             print(f"  {team_name}: {avg_reward:.3f}")
     else:
         print("  No per-team total reward dictionary found on env.score.")
+
+    print("\nAverage model inference time:")
+    if inference_call_count > 0:
+        avg_inference_ms = (inference_time_total_s / inference_call_count) * 1000.0
+        print(f"  {avg_inference_ms:.3f} ms over {inference_call_count} calls")
+    else:
+        print("  No model inference calls were made (random-action mode).")
 
     if iteration_results:
         fieldnames = []
