@@ -106,15 +106,19 @@ def run_simulation(
         config=config,
     )
     
-    models = {}
+    runners = {}
     if use_random_actions:
         print("No experiment-path provided. Running random-action baseline test (no model loading).")
     else:
         # Load models for each agent
         print(f"Loading models from {model_dir}...")
         try:
+            from vex_model_run import VexModelRunner
             models = load_agent_models(model_dir, env.possible_agents, device)
-            print(f"Successfully loaded models for {len(models)} agents")
+            for agent_id, model in models.items():
+                temperature = getattr(config, "temperature", 1.0)
+                runners[agent_id] = VexModelRunner(model_path=None, game=game, temperature=temperature, agent_name=agent_id, model=model)
+            print(f"Successfully loaded models for {len(runners)} agents")
         except Exception as e:
             print(f"Error loading models: {e}")
             return
@@ -139,13 +143,7 @@ def run_simulation(
 
     if not use_random_actions:
         # Warmup Pass: Initialize CUDA context before simulation starts
-        print("Warming up models...")
-        dummy_input = torch.randn(1, *obs_shape, device=device)
-        dummy_mask = torch.ones(1, mask_dim, device=device)
-        with torch.no_grad():
-            for agent_id, model in models.items():
-                _ = model(dummy_input, dummy_mask)
-        print("Models warmed up")
+        print("Models warmed up during initialization")
 
     team_score_totals = {}
     team_score_counts = {}
@@ -226,26 +224,17 @@ def run_simulation(
                     last_actions[agent_id] = action
                     continue
 
-                obs_np_float = obs_np.astype(np.float32) if obs_np.dtype != np.float32 else obs_np
-                obs_tensor = torch.from_numpy(obs_np_float).unsqueeze(0).to(device)
-
-                # # Print observation
-                # print(f"Observation for agent {agent_id}: {obs_np}")
+                runner = runners[agent_id]
                 
-                # Build action mask tensor
-                if action_mask_np is not None:
-                    mask_tensor = torch.from_numpy(action_mask_np.astype(np.float32)).unsqueeze(0).to(device)
-                else:
-                    mask_tensor = torch.ones(1, mask_dim, device=device)
-
-                model = models[agent_id]
                 if device.type == "cuda":
                     torch.cuda.synchronize(device)
                 inference_start = time.perf_counter()
-                with torch.no_grad():
-                    model_output = model(obs_tensor, mask_tensor)
+                
+                action, message_vector = runner.get_prediction(obs_np, action_mask_np)
+                
                 if device.type == "cuda":
                     torch.cuda.synchronize(device)
+                
                 inference_elapsed = time.perf_counter() - inference_start
                 inference_time_total_s += inference_elapsed
                 inference_call_count += 1
@@ -254,73 +243,12 @@ def run_simulation(
 
                 action_space = env.action_space(agent_id)
                 if isinstance(action_space, spaces.Tuple):
-                    num_actions = action_space[0].n
-                    action_logits = model_output[:, :num_actions]
-                    message_params = model_output[:, num_actions:]
-
-                    message_vector = None
-                    remaining = model_output.shape[1] - num_actions
-                    if test_communication_mode == CommunicationOption.NONE: # If communication is explicitly disabled
+                    if test_communication_mode == CommunicationOption.NONE:
                         message_vector = np.zeros(MESSAGE_SIZE, dtype=np.float32)
-                    elif remaining >= MESSAGE_SIZE:
-                        message_mean = model_output[:, num_actions:num_actions + MESSAGE_SIZE]
-                        # Apply temperature to message sampling std (T>1 -> more random)
-                        temperature = max(1e-6, getattr(config, "temperature", 1.0))
-
-                        if not config.deterministic and remaining >= 2 * MESSAGE_SIZE:
-                            msg_log_std = model_output[:, num_actions + MESSAGE_SIZE:num_actions + 2 * MESSAGE_SIZE]
-                            msg_std = torch.exp(msg_log_std) * temperature
-                            msg_dist = torch.distributions.Normal(message_mean, msg_std)
-                            message_vector = msg_dist.sample().cpu().numpy()[0]
-                        else:
-                            message_vector = message_mean.cpu().numpy()[0]
-                    elif remaining > 0:
-                        mm = np.zeros(MESSAGE_SIZE, dtype=np.float32)
-                        mm[:remaining] = model_output[:, num_actions:].cpu().numpy()[0]
-                        message_vector = mm
-                    else:
-                        message_vector = np.zeros(MESSAGE_SIZE, dtype=np.float32)
-                    # Temperature scaling for action selection
-                    temperature = max(1e-6, getattr(config, "temperature", 1.0))
-                    scaled_logits = action_logits / temperature
-                    probs = torch.softmax(scaled_logits, dim=-1)
+                    actions_to_take[agent_id] = (action, message_vector)
                 else:
-                    num_actions = action_space.n
-                    action_logits = model_output[:, :num_actions]
-                    # Temperature scaling for action selection
-                    temperature = max(1e-6, getattr(config, "temperature", 1.0))
-                    scaled_logits = action_logits / temperature
-                    probs = torch.softmax(scaled_logits, dim=-1)
-                    message_vector = None
-                
-                action_dim = num_actions
+                    actions_to_take[agent_id] = action
 
-                if not config.deterministic:
-                    action_probs = probs.squeeze(0).cpu().numpy().copy()
-                    
-                    prob_sum = action_probs.sum()
-                    if prob_sum > 0:
-                        action_probs = action_probs / prob_sum
-                        action = np.random.choice(action_dim, p=action_probs)
-                    else:
-                        action = env.game.fallback_action
-                        
-                    # If the model still somehow chooses an invalid action, fallback gracefully
-                    if not env.is_valid_action(agent_id, action, obs_np):
-                        action = env.game.fallback_action
-                else:
-                    # Deterministic: take highest probability valid action
-                    # Use same temperature-scaled logits for deterministic selection
-                    sorted_actions = torch.argsort(scaled_logits, dim=1, descending=True).squeeze(0).tolist()
-                    action = None
-                    for candidate_action in sorted_actions:
-                        if env.is_valid_action(agent_id, candidate_action, obs_np, last_actions[agent_id]):
-                            action = candidate_action
-                            break
-                    if action is None:
-                        action = env.game.fallback_action
-
-                actions_to_take[agent_id] = (action, message_vector) if message_vector is not None else action
                 last_actions[agent_id] = action
 
             if not actions_to_take and env.agents:

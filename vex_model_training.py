@@ -239,6 +239,30 @@ class VexScoreCallback(RLlibCallback):
     def on_algorithm_init(self, *, algorithm, **kwargs):
         """Called when a new algorithm instance has been created."""
         try:
+            env_config = algorithm.config.env_config
+            warm_start = env_config.get("warm_start", False)
+            restore_path = env_config.get("restore_path", None)
+            
+            if warm_start and restore_path:
+                print(f"*** WARM START: Loading weights only from {restore_path} ***")
+                from ray.rllib.algorithms.algorithm import Algorithm
+                import os
+                try:
+                    restore_abs = os.path.abspath(restore_path)
+                    if not restore_abs.startswith("file://"):
+                        restore_abs = "file://" + restore_abs
+                    temp_algo = Algorithm.from_checkpoint(restore_abs)
+                    algorithm.set_weights(temp_algo.get_weights())
+                    temp_algo.stop()
+                    print("Successfully loaded weights for warm start.")
+                except Exception as e:
+                    print(f"Failed to perform warm start weight load from algorithm: {e}")
+                    import traceback
+                    traceback.print_exc()
+        except Exception as e:
+            print(f"Error in warm start initialization: {e}")
+
+        try:
             phase = get_training_phase(0, ACTIVE_TRAINING_PHASES)
             algorithm.learner_group.foreach_learner(
                 lambda learner: apply_head_training_status_on_learner(learner, phase)
@@ -438,6 +462,7 @@ if __name__ == "__main__":
     parser.add_argument('--partition', type=str, default="teaching", help='SLURM partition to use')
     parser.add_argument('--algorithm', type=str, default="PPO", help='Algorithm to use for training')
     parser.add_argument('--verbose', type=int, default=1, help='Verbosity mode: 0 = silent, 1 = default, 2 = verbose')
+    parser.add_argument('--warm-start', action='store_true', help='Load weights from checkpoint but reset optimizer and iteration count')
 
     explicit_cli_flags = get_explicit_cli_flags(sys.argv[1:])
     args = parser.parse_args()
@@ -543,6 +568,8 @@ if __name__ == "__main__":
                 "communication_mode": env_config_obj.communication_mode.value,
                 "deterministic": env_config_obj.deterministic,
                 "copy_message_dropout_prob": env_config_obj.copy_message_dropout_prob,
+                "warm_start": args.warm_start,
+                "restore_path": restore_path,
             }
         )
         .framework("torch")  # change to "tf" for TensorFlow
@@ -629,6 +656,10 @@ if __name__ == "__main__":
     if restore_path:
         print(f"Restoring from checkpoint: {restore_path}")
 
+    # Prepare the actual tune restore parameter
+    # IF warm_start is True, we pass None to tune.run so it thinks it's a fresh start
+    tune_restore_path = None if args.warm_start else restore_path
+
     # Run the training process with logger callbacks
     analysis = tune.run(
         "PPO",
@@ -651,7 +682,7 @@ if __name__ == "__main__":
         metric="env_runners/episode_return_mean",
         mode="max",
         verbose=args.verbose,  # Use the verbosity level from the argument
-        restore=restore_path,  # Resume from checkpoint if provided
+        restore=tune_restore_path,  # Resume from checkpoint if provided
     )
 
     print(f"Training completed at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")

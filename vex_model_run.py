@@ -8,62 +8,68 @@ from vex_core.base_env import MESSAGE_SIZE, VexMultiAgentEnv
 from typing import Dict
 
 class VexModelRunner:
-    def __init__(self, model_path: str, game: VexGame, temperature: float = 1.0):
-        self.model_path: str = model_path
-        self.game: VexGame = game
+    def __init__(self, model_path: str, game: VexGame, temperature: float = 1.0, agent_name: str = None, model: torch.jit.ScriptModule = None):
+        self.model_path = model_path
+        self.game = game
         if hasattr(self.game, "deterministic"):
             self.game.deterministic = True
-        self.robot = game.robots[0]  # Use first (only) robot
-        self.model: torch.jit.ScriptModule = None
-                
+            
+        self.agent_name = agent_name if agent_name else game.possible_agents[0]
+        self.robot = game.get_robot_for_agent(self.agent_name)
+        
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Using device: {self.device}")
         self.temperature = max(1e-6, float(temperature))
 
+        self.model = model
+
         # Load the TorchScript model
-        try:
-            self.model = torch.jit.load(self.model_path, map_location=self.device)
-            self.model.eval()
-            
-            self.model = torch.jit.optimize_for_inference(self.model)
-            
-            print(f"Successfully loaded and optimized model from {self.model_path}")
+        if self.model is None and self.model_path:
+            try:
+                self.model = torch.jit.load(self.model_path, map_location=self.device)
+                self.model.eval()
+                
+                self.model = torch.jit.optimize_for_inference(self.model)
+                
+                print(f"Successfully loaded and optimized model from {self.model_path}")
+            except Exception as e:
+                print(f"Error loading model: {e}")
+                return
+                
+        if self.model is not None:
+            try:
+                env_config = VexEnvConfig(
+                    game_name=game.get_game_name(),
+                    communication_mode=game.communication_mode,
+                    render_mode='none',
+                    experiment_path="",
+                    randomize=False,
+                    deterministic=False
+                )
+                dummy_env = VexMultiAgentEnv(game=game, config=env_config)
+                
+                obs_space = dummy_env.observation_space(self.agent_name)
+                if hasattr(obs_space, "spaces") and "observations" in obs_space.spaces:
+                    obs_shape = obs_space["observations"].shape
+                else:
+                    obs_shape = obs_space.shape
+                dummy_input = torch.randn(1, *obs_shape, device=self.device)
+                # Determine action mask dim
+                action_space = game.get_game_action_space(self.agent_name)
+                if hasattr(action_space, 'spaces') and len(action_space.spaces) > 0 and hasattr(action_space.spaces[0], 'n'):
+                    mask_dim = action_space.spaces[0].n
+                elif hasattr(action_space, 'n'):
+                    mask_dim = action_space.n
+                else:
+                    mask_dim = obs_shape[0]
+                dummy_mask = torch.ones(1, mask_dim, device=self.device)
+                with torch.no_grad():
+                    _ = self.model(dummy_input, dummy_mask)
+                print(f"Model warmed up and ready for inference for {self.agent_name}")
+            except Exception as e:
+                print(f"Error warming up model: {e}")
 
-            env_config = VexEnvConfig(
-                game_name=game.get_game_name(),
-                communication_mode=game.communication_mode,
-                render_mode='none',
-                experiment_path="",
-                randomize=False,
-                deterministic=False
-            )
-            dummy_env = VexMultiAgentEnv(game=game, config=env_config)
-            
-            sample_agent = game.possible_agents[0]
-            obs_space = dummy_env.observation_space(sample_agent)
-            if hasattr(obs_space, "spaces") and "observations" in obs_space.spaces:
-                obs_shape = obs_space["observations"].shape
-            else:
-                obs_shape = obs_space.shape
-            dummy_input = torch.randn(1, *obs_shape, device=self.device)
-            # Determine action mask dim
-            action_space = game.get_game_action_space(game.possible_agents[0])
-            if hasattr(action_space, 'spaces') and len(action_space.spaces) > 0 and hasattr(action_space.spaces[0], 'n'):
-                mask_dim = action_space.spaces[0].n
-            elif hasattr(action_space, 'n'):
-                mask_dim = action_space.n
-            else:
-                mask_dim = obs_shape[0]
-            dummy_mask = torch.ones(1, mask_dim, device=self.device)
-            with torch.no_grad():
-                _ = self.model(dummy_input, dummy_mask)
-            print("Model warmed up and ready for inference")
-            
-        except Exception as e:
-            print(f"Error loading model: {e}")
-            return
-
-    def get_prediction(self, observation: np.ndarray):
+    def get_prediction(self, observation: np.ndarray, action_mask: np.ndarray = None):
         """
         Runs inference on the model to get the predicted action and message vector.
         
@@ -75,6 +81,7 @@ class VexModelRunner:
 
         Args:
             observation: The current observation for the agent.
+            action_mask: Optional pre-computed action mask.
             
         Returns:
             Tuple of (action: int, message_vector: np.ndarray or None)
@@ -86,27 +93,29 @@ class VexModelRunner:
         obs_np = observation.astype(np.float32) if observation.dtype != np.float32 else observation
         obs_tensor = torch.from_numpy(obs_np).unsqueeze(0).to(self.device)
 
-        # Compute action mask using is_valid_action for all actions
-        action_space = self.game.get_game_action_space(self.game.possible_agents[0])
-        if hasattr(action_space, 'spaces') and len(action_space.spaces) > 0 and hasattr(action_space.spaces[0], 'n'):
-            num_actions = action_space.spaces[0].n
-        elif hasattr(action_space, 'n'):
-            num_actions = action_space.n
-        else:
-            num_actions = 14  # fallback
-        
-        action_mask = np.array(
-            [1.0 if self.game.is_valid_action(self.robot.name, i, observation) else 0.0 for i in range(num_actions)],
-            dtype=np.float32
-        )
-        mask_tensor = torch.from_numpy(action_mask).unsqueeze(0).to(self.device)
+        # Compute action mask using is_valid_action for all actions if not provided
+        if action_mask is None:
+            action_space = self.game.get_game_action_space(self.agent_name)
+            if hasattr(action_space, 'spaces') and len(action_space.spaces) > 0 and hasattr(action_space.spaces[0], 'n'):
+                num_actions = action_space.spaces[0].n
+            elif hasattr(action_space, 'n'):
+                num_actions = action_space.n
+            else:
+                num_actions = 14  # fallback
+            
+            action_mask = np.array(
+                [1.0 if self.game.is_valid_action(self.agent_name, i, observation) else 0.0 for i in range(num_actions)],
+                dtype=np.float32
+            )
+            
+        mask_tensor = torch.from_numpy(action_mask.astype(np.float32)).unsqueeze(0).to(self.device)
 
         with torch.no_grad():
             model_output = self.model(obs_tensor, mask_tensor)
         
         # Handle both Discrete and Tuple action spaces.
         # Tuple structure is (Discrete(action), Box(message)).
-        action_space = self.game.get_game_action_space(self.game.possible_agents[0])
+        action_space = self.game.get_game_action_space(self.agent_name)
         if hasattr(action_space, 'n'):
             action_dim = action_space.n
         elif hasattr(action_space, 'spaces') and len(action_space.spaces) > 0 and hasattr(action_space.spaces[0], 'n'):
@@ -149,13 +158,13 @@ class VexModelRunner:
                 action = self.game.fallback_action()
                 
             # If the model still somehow chooses an invalid action, fallback gracefully
-            if not self.game.is_valid_action(self.robot.name, action, observation):
+            if not self.game.is_valid_action(self.agent_name, action, observation):
                 action = self.game.fallback_action()
         else:
             sorted_actions = torch.argsort(scaled_logits, dim=1, descending=True).squeeze(0).tolist()
             action = None
             for candidate_action in sorted_actions:
-                if self.game.is_valid_action(self.robot.name, candidate_action, observation):
+                if self.game.is_valid_action(self.agent_name, candidate_action, observation):
                     action = candidate_action
                     break
             if action is None:
@@ -171,7 +180,7 @@ class VexModelRunner:
         """
 
         observation = self.game.update_observation_from_tracker(
-            agent=self.robot.name,
+            agent=self.agent_name,
             observation=observation
         )
 
@@ -190,7 +199,7 @@ class VexModelRunner:
         Updates tracker only (no full simulation needed for inference).
         """
         # Update tracker fields based on completed action (uses game.state)
-        self.game.update_tracker(agent=self.robot.name, action=action)
+        self.game.update_tracker(agent=self.agent_name, action=action)
 
 
 """
