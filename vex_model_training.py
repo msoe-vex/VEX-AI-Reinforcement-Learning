@@ -245,16 +245,44 @@ class VexScoreCallback(RLlibCallback):
             
             if warm_start and restore_path:
                 print(f"*** WARM START: Loading weights only from {restore_path} ***")
-                from ray.rllib.algorithms.algorithm import Algorithm
                 import os
+                import pickle
                 try:
                     restore_abs = os.path.abspath(restore_path)
                     if not restore_abs.startswith("file://"):
-                        restore_abs = "file://" + restore_abs
-                    temp_algo = Algorithm.from_checkpoint(restore_abs)
-                    algorithm.set_weights(temp_algo.get_weights())
-                    temp_algo.stop()
-                    print("Successfully loaded weights for warm start.")
+                        restore_abs_file = "file://" + restore_abs
+                    else:
+                        restore_abs_file = restore_abs
+                        restore_abs = restore_abs.replace("file://", "")
+                        
+                    # Fast path: Extract RLModule weights directly from checkpoint to avoid resource deadlock
+                    rl_module_dir = os.path.join(restore_abs, "learner_group", "learner", "rl_module")
+                    fast_load_success = False
+                    
+                    if os.path.exists(rl_module_dir):
+                        policy_ids = [d for d in os.listdir(rl_module_dir) if os.path.isdir(os.path.join(rl_module_dir, d))]
+                        multi_agent_state = {}
+                        
+                        for policy_id in policy_ids:
+                            pkl_path = os.path.join(rl_module_dir, policy_id, "module_state.pkl")
+                            if os.path.exists(pkl_path):
+                                with open(pkl_path, 'rb') as f:
+                                    multi_agent_state[policy_id] = pickle.load(f)
+                                print(f"Loaded {len(multi_agent_state[policy_id])} weight tensors for {policy_id}")
+                                
+                        if multi_agent_state:
+                            algorithm.set_weights(multi_agent_state)
+                            print("Successfully injected raw RLModule weights for warm start.")
+                            fast_load_success = True
+                            
+                    if not fast_load_success:
+                        print("Fallback: Using full Algorithm restore (warning: may hang if cluster resources are exhausted)")
+                        from ray.rllib.algorithms.algorithm import Algorithm
+                        temp_algo = Algorithm.from_checkpoint(restore_abs_file)
+                        algorithm.set_weights(temp_algo.get_weights())
+                        temp_algo.stop()
+                        print("Successfully loaded weights via Algorithm fallback for warm start.")
+                        
                 except Exception as e:
                     print(f"Failed to perform warm start weight load from algorithm: {e}")
                     import traceback
