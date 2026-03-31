@@ -3,8 +3,8 @@ import numpy as np
 
 # Import from new modular architecture
 from vex_core.base_game import VexGame
-from vex_core.config import VexEnvConfig, CommunicationOption
-from vex_core.base_env import MESSAGE_SIZE, VexMultiAgentEnv
+from vex_core.config import CommunicationOption
+from vex_core.base_env import MESSAGE_SIZE
 from typing import Dict
 
 class VexModelRunner:
@@ -20,8 +20,37 @@ class VexModelRunner:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Using device: {self.device}")
         self.temperature = max(1e-6, float(temperature))
+        self._base_obs_dim = 0
+        self._expected_obs_dim = 0
+        self._comm_mode_name = "none"
 
         self.model = model
+
+        # Normalize communication mode to a lowercase string so this runner
+        # remains stable even if CommunicationOption enums come from different modules.
+        comm_mode = getattr(self.game, "communication_mode", CommunicationOption.NONE)
+        self._comm_mode_name = str(getattr(comm_mode, "value", comm_mode)).lower()
+
+        # Derive expected observation size directly from game space + comm mode.
+        # This avoids fragile dependence on enum identity when constructing dummy envs.
+        game_obs_space = self.game.get_game_observation_space(self.agent_name)
+        if hasattr(game_obs_space, "shape") and len(game_obs_space.shape) > 0:
+            self._base_obs_dim = int(game_obs_space.shape[0])
+        else:
+            self._base_obs_dim = 81
+
+        if self._comm_mode_name == "attention":
+            self._expected_obs_dim = self._base_obs_dim + MESSAGE_SIZE
+        elif self._comm_mode_name == "copy":
+            my_team = self.game.get_team_for_agent(self.agent_name)
+            num_teammates = sum(
+                1
+                for a in self.game.possible_agents
+                if self.game.get_team_for_agent(a) == my_team and a != self.agent_name
+            )
+            self._expected_obs_dim = self._base_obs_dim + (self._base_obs_dim * num_teammates)
+        else:
+            self._expected_obs_dim = self._base_obs_dim
 
         # Load the TorchScript model
         if self.model is None and self.model_path:
@@ -38,24 +67,8 @@ class VexModelRunner:
                 
         if self.model is not None:
             try:
-                env_config = VexEnvConfig(
-                    game_name=game.get_game_name(),
-                    communication_mode=game.communication_mode,
-                    render_mode='none',
-                    experiment_path="",
-                    randomize=False,
-                    deterministic=False
-                )
-                dummy_env = VexMultiAgentEnv(game=game, config=env_config)
-                
-                obs_space = dummy_env.observation_space(self.agent_name)
-                if hasattr(obs_space, "spaces") and "observations" in obs_space.spaces:
-                    obs_shape = obs_space["observations"].shape
-                else:
-                    obs_shape = obs_space.shape
-                comm_mode = getattr(game, "communication_mode", None)
-                comm_mode_value = getattr(comm_mode, "value", str(comm_mode))
-                print(f"Warmup observation shape: {obs_shape}, communication_mode: {comm_mode_value}")
+                obs_shape = (self._expected_obs_dim,)
+                print(f"Warmup observation shape: {obs_shape}, communication_mode: {self._comm_mode_name}")
                 dummy_input = torch.randn(1, *obs_shape, device=self.device)
                 # Determine action mask dim
                 action_space = game.get_game_action_space(self.agent_name)
@@ -71,6 +84,21 @@ class VexModelRunner:
                 print(f"Model warmed up and ready for inference for {self.agent_name}")
             except Exception as e:
                 print(f"Error warming up model: {e}")
+
+    def _prepare_model_observation(self, observation: np.ndarray) -> np.ndarray:
+        """Normalize observation length for TorchScript model input."""
+        obs = np.nan_to_num(observation, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
+        current_dim = int(obs.shape[0])
+
+        if current_dim == self._expected_obs_dim:
+            return obs
+
+        if current_dim > self._expected_obs_dim:
+            return obs[:self._expected_obs_dim]
+
+        padded = np.zeros(self._expected_obs_dim, dtype=np.float32)
+        padded[:current_dim] = obs
+        return padded
 
     def get_prediction(self, observation: np.ndarray, action_mask: np.ndarray = None):
         """
@@ -89,11 +117,10 @@ class VexModelRunner:
         Returns:
             Tuple of (action: int, message_vector: np.ndarray or None)
         """
-        observation = np.nan_to_num(observation, nan=0.0, posinf=0.0, neginf=0.0)
         # Zero-Copy Tensor Creation: Use from_numpy() instead of tensor()
         # Avoids memory copy if numpy array is already contiguous and correct dtype
         # This is faster and reduces memory usage
-        obs_np = observation.astype(np.float32) if observation.dtype != np.float32 else observation
+        obs_np = self._prepare_model_observation(observation)
         obs_tensor = torch.from_numpy(obs_np).unsqueeze(0).to(self.device)
 
         # Compute action mask using is_valid_action for all actions if not provided
