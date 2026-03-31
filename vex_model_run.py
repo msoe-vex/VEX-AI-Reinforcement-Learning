@@ -53,6 +53,9 @@ class VexModelRunner:
                     obs_shape = obs_space["observations"].shape
                 else:
                     obs_shape = obs_space.shape
+                comm_mode = getattr(game, "communication_mode", None)
+                comm_mode_value = getattr(comm_mode, "value", str(comm_mode))
+                print(f"Warmup observation shape: {obs_shape}, communication_mode: {comm_mode_value}")
                 dummy_input = torch.randn(1, *obs_shape, device=self.device)
                 # Determine action mask dim
                 action_space = game.get_game_action_space(self.agent_name)
