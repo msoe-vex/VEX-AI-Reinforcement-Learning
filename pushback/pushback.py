@@ -2349,7 +2349,7 @@ class PushBackGame(VexGame):
         elif action == Actions.TURN_TOWARD_CENTER.value:
             target_camera_angle = vex_atan2(-robot_pos[0], -robot_pos[1])
             camera_offset = float(getattr(robot, "camera_rotation_offset", 0.0))
-            target_body_angle_deg = np.degrees(target_camera_angle - camera_offset)
+            target_body_angle_deg = vex_normalize_angle(target_camera_angle - camera_offset)
             actions.append(f"TURN_TO;{target_body_angle_deg:.1f};40")
 
         elif action == Actions.IDLE.value:
