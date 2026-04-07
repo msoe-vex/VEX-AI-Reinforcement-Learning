@@ -17,8 +17,8 @@ from enum import Enum
 DEFAULT_REWARD_WEIGHT_TEAM_DELTA = 0.25 # (Points scored for my team by teammates - Points scored for opp team by teammates)
 DEFAULT_REWARD_WEIGHT_OPP_DELTA = -0.0 # (Points scored for opp team by opponents - Points scored for my team by opponents)
 DEFAULT_REWARD_WEIGHT_INDIVIDUAL_DELTA = 0.75 # (Points scored for my team by me - Points scored for opp team by me)
-DEFAULT_REWARD_WEIGHT_INDIVIDUAL_PENALTY = -0.0 # (Penalty for actions performed by me)
-DEFAULT_REWARD_WEIGHT_TEAM_PENALTY = -0.0 # (Penalty for actions performed by teammates)
+DEFAULT_REWARD_WEIGHT_INDIVIDUAL_PENALTY = -0.001 # (Penalty for actions performed by me)
+DEFAULT_REWARD_WEIGHT_TEAM_PENALTY = -0.00001 # (Penalty for actions performed by teammates)
 from vex_core.robot import Robot, Team, RobotSize
 from vex_core.config import CommunicationOption
 
