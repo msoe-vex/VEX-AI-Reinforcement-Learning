@@ -1365,6 +1365,7 @@ class PushBackGame(VexGame):
         )
 
         penalty = 0.0
+        NON_MAJORITY_HELD_PENALTY = 0.5
         # Calculate non-majority penalty
         held_indices = [
             i for i, b in enumerate(self.state.get("blocks", [])) 
@@ -1422,7 +1423,7 @@ class PushBackGame(VexGame):
                 if b_idx in temp_slots:
                     b_team = self.state["blocks"][b_idx].get("team", "red")
                     if b_team != majority_color:
-                        penalty += 3.0
+                        penalty += NON_MAJORITY_HELD_PENALTY
 
         return steps, penalty
     

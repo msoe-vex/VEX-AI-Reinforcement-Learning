@@ -436,6 +436,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         opp_delta = opponent_opp_delta - opponent_team_delta
 
         individual_penalty = float(stored.get("penalty", 0.0))
+        action_name = str(stored.get("action_name", "--"))
 
         reward = self.game.combine_reward_components(
             agent=agent,
@@ -445,7 +446,12 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             individual_penalty=individual_penalty,
             team_penalty=team_penalty,
         )
-        return reward, str(stored.get("action_name", "--"))
+
+        # Encourage completing score actions that actually add points.
+        if action_name.startswith("SCORE_IN_") and individual_team_delta > 0.0:
+            reward += 0.5
+
+        return reward, action_name
 
     def _mark_action_completed(self, agent: str, rewards: Dict[str, float], infos: Dict[str, Dict]) -> None:
         """Apply shared completion updates for an agent finishing an action."""
