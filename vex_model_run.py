@@ -161,10 +161,9 @@ class VexModelRunner:
             # Message mean is the first MESSAGE_SIZE values after action logits
             message_mean = model_output[:, action_dim:action_dim + MESSAGE_SIZE]
             
-            # If stochastic and log_std is available, sample from Normal distribution
+            # If log_std is available, sample from Normal distribution using temperature.
             # Otherwise use mean.
-            is_deterministic = hasattr(self.game, 'deterministic') and self.game.deterministic
-            if not is_deterministic and remaining >= 2 * MESSAGE_SIZE:
+            if remaining >= 2 * MESSAGE_SIZE:
                 msg_log_std = model_output[:, action_dim + MESSAGE_SIZE:action_dim + 2 * MESSAGE_SIZE]
                 msg_std = torch.exp(msg_log_std) * getattr(self, "temperature", 1.0)
                 msg_dist = torch.distributions.Normal(message_mean, msg_std)
@@ -176,29 +175,18 @@ class VexModelRunner:
         scaled_logits = action_logits / max(1e-6, getattr(self, "temperature", 1.0))
         probs = torch.softmax(scaled_logits, dim=-1)
         
-        is_deterministic = hasattr(self.game, 'deterministic') and self.game.deterministic
-        if not is_deterministic:
-            action_probs = probs.squeeze(0).cpu().numpy().copy()
-            
-            prob_sum = action_probs.sum()
-            if prob_sum > 0:
-                action_probs = action_probs / prob_sum
-                action = np.random.choice(action_dim, p=action_probs)
-            else:
-                action = self.game.fallback_action()
-                
-            # If the model still somehow chooses an invalid action, fallback gracefully
-            if not self.game.is_valid_action(self.agent_name, action, observation):
-                action = self.game.fallback_action()
+        action_probs = probs.squeeze(0).cpu().numpy().copy()
+
+        prob_sum = action_probs.sum()
+        if prob_sum > 0:
+            action_probs = action_probs / prob_sum
+            action = np.random.choice(action_dim, p=action_probs)
         else:
-            sorted_actions = torch.argsort(scaled_logits, dim=1, descending=True).squeeze(0).tolist()
-            action = None
-            for candidate_action in sorted_actions:
-                if self.game.is_valid_action(self.agent_name, candidate_action, observation):
-                    action = candidate_action
-                    break
-            if action is None:
-                action = self.game.fallback_action()
+            action = self.game.fallback_action()
+
+        # If the model still somehow chooses an invalid action, fallback gracefully
+        if not self.game.is_valid_action(self.agent_name, action, observation):
+            action = self.game.fallback_action()
         
         return action, message_vector
 

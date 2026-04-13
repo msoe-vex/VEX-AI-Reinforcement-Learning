@@ -1364,67 +1364,31 @@ class PushBackGame(VexGame):
             post_action_events=score_events,
         )
 
-        penalty = 0.0
-        # Calculate non-majority penalty
         held_indices = [
             i for i, b in enumerate(self.state.get("blocks", [])) 
             if b["status"] == BlockStatus.HELD and b.get("held_by") == agent_name
         ]
-        
-        if held_indices:
-            temp_slots = list(goal.slots)
-            for block_idx in held_indices:
-                if scoring_side == "left":
-                    entry_idx = 0
-                    push_direction = 1
-                    exit_idx = goal.capacity - 1
-                else:
-                    entry_idx = goal.capacity - 1
-                    push_direction = -1
-                    exit_idx = 0
-                    
-                if temp_slots[entry_idx] is not None:
-                    chain_end = entry_idx
-                    while True:
-                        next_idx = chain_end + push_direction
-                        if (push_direction > 0 and next_idx > exit_idx) or \
-                           (push_direction < 0 and next_idx < exit_idx):
-                            current = chain_end
-                            while current != entry_idx:
-                                prev = current - push_direction
-                                temp_slots[current] = temp_slots[prev]
-                                current = prev
-                            break
-                        if temp_slots[next_idx] is None:
-                            current = next_idx
-                            while current != entry_idx:
-                                prev = current - push_direction
-                                temp_slots[current] = temp_slots[prev]
-                                current = prev
-                            break
-                        chain_end = next_idx
-                temp_slots[entry_idx] = block_idx
-            
-            new_counts = {"red": 0, "blue": 0}
-            for b_idx in temp_slots:
-                if b_idx is not None and 0 <= b_idx < len(self.state.get("blocks", [])):
-                    team = self.state["blocks"][b_idx].get("team", "red")
-                    if team in new_counts:
-                        new_counts[team] += 1
-            
-            majority_color = None
-            if new_counts["red"] > new_counts["blue"]:
-                majority_color = "red"
-            elif new_counts["blue"] > new_counts["red"]:
-                majority_color = "blue"
+        penalty = self._compute_goal_shaping_penalty(
+            agent_state=agent_state,
+            goal_type=goal_type,
+            scoring_side=scoring_side,
+            held_indices=held_indices,
+        )
 
-            for b_idx in held_indices:
-                if b_idx in temp_slots:
-                    b_team = self.state["blocks"][b_idx].get("team", "red")
-                    if b_team != majority_color:
-                        penalty += 3.0
+        return steps, float(penalty)
 
-        return steps, penalty
+    def _compute_goal_shaping_penalty(
+        self,
+        agent_state: Dict,
+        goal_type: GoalType,
+        scoring_side: str,
+        held_indices: List[int],
+    ) -> float:
+        """Variant hook for optional reward shaping during goal scoring.
+
+        Base behavior has no extra shaping penalty.
+        """
+        return 0.0
     
     def _update_goal_block_positions(
         self, goal: GoalQueue, target_status: int

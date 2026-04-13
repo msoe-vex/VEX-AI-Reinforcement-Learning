@@ -11,7 +11,7 @@ Rules per VAIRS:
 from typing import Dict, List, Tuple, Optional
 import numpy as np
 
-from .pushback import PushBackGame, BlockStatus, LOADERS, NUM_BLOCKS_FIELD, GoalType, GOALS
+from .pushback import PushBackGame, BlockStatus, LOADERS, NUM_BLOCKS_FIELD, GoalType, GOALS, GoalQueue
 from vex_core.robot import Robot, RobotSize, Team
 from vex_core.config import CommunicationOption
 
@@ -32,7 +32,7 @@ class VexAISkillsGame(PushBackGame):
     
     @property
     def default_total_time(self) -> float:
-        return 60.0
+        return 60.0 # TODO: Revert this back to 60.0 for actual VAIRS matches, but using 4x time for better learning signal during development/testing.
 
     def get_team_for_agent(self, agent: str) -> str:
         """Skills is cooperative: all agents contribute to shared red score."""
@@ -128,6 +128,61 @@ class VexAISkillsGame(PushBackGame):
         score += parked_count * PARK_ROBOT
         
         return {"red": score}
+
+    def _majority_color_for_slots(self, slots: List[Optional[int]]) -> Optional[str]:
+        """Return majority color in a goal's slots, or None if tied/empty."""
+        counts = {"red": 0, "blue": 0}
+        blocks = self.state.get("blocks", [])
+
+        for block_idx in slots:
+            if block_idx is None or block_idx < 0 or block_idx >= len(blocks):
+                continue
+            team = str(blocks[block_idx].get("team", "red"))
+            if team in counts:
+                counts[team] += 1
+
+        if counts["red"] > counts["blue"]:
+            return "red"
+        if counts["blue"] > counts["red"]:
+            return "blue"
+        return None
+
+    def _compute_goal_shaping_penalty(
+        self,
+        agent_state: Dict,
+        goal_type: GoalType,
+        scoring_side: str,
+        held_indices: List[int],
+    ) -> float:
+        """Apply AI Skills shaping penalties for non-contributing inserts/ejections."""
+        if not held_indices:
+            return 0.0
+
+        goal = self.goal_manager.get_goal(goal_type)
+        sim_goal = GoalQueue(goal.goal_type, goal.capacity)
+        sim_goal.slots = list(goal.slots)
+
+        blocks = self.state.get("blocks", [])
+        block_points_penalty = 3.0
+        penalty = 0.0
+
+        for block_idx in held_indices:
+            if block_idx < 0 or block_idx >= len(blocks):
+                continue
+
+            ejected_idx = sim_goal.add_block(block_idx, scoring_side)
+            majority_color = self._majority_color_for_slots(sim_goal.slots)
+
+            inserted_team = str(blocks[block_idx].get("team", "red"))
+            if majority_color is None or inserted_team != majority_color:
+                penalty += block_points_penalty
+
+            if ejected_idx is not None and 0 <= ejected_idx < len(blocks):
+                ejected_team = str(blocks[ejected_idx].get("team", "red"))
+                if majority_color is not None and ejected_team == majority_color:
+                    penalty += block_points_penalty
+
+        return penalty
     
     def _get_initial_blocks(
         self, randomize: bool, seed: Optional[int]
