@@ -154,7 +154,12 @@ class VexAISkillsGame(PushBackGame):
         scoring_side: str,
         held_indices: List[int],
     ) -> float:
-        """Apply AI Skills shaping penalties for non-contributing inserts/ejections."""
+        """Apply AI Skills shaping penalties based on FINAL post-insert majority.
+
+        We first simulate all held block inserts, then compute majority once from the
+        final slots. This prevents early inserts from being penalized against
+        transient intermediate majorities.
+        """
         if not held_indices:
             return 0.0
 
@@ -165,22 +170,32 @@ class VexAISkillsGame(PushBackGame):
         blocks = self.state.get("blocks", [])
         block_points_penalty = 3.0
         penalty = 0.0
+        inserted_teams: List[str] = []
+        ejected_teams: List[str] = []
 
         for block_idx in held_indices:
             if block_idx < 0 or block_idx >= len(blocks):
                 continue
 
             ejected_idx = sim_goal.add_block(block_idx, scoring_side)
-            majority_color = self._majority_color_for_slots(sim_goal.slots)
-
             inserted_team = str(blocks[block_idx].get("team", "red"))
-            if majority_color is None or inserted_team != majority_color:
-                penalty += block_points_penalty
+            inserted_teams.append(inserted_team)
 
             if ejected_idx is not None and 0 <= ejected_idx < len(blocks):
                 ejected_team = str(blocks[ejected_idx].get("team", "red"))
-                if majority_color is not None and ejected_team == majority_color:
-                    penalty += block_points_penalty
+                ejected_teams.append(ejected_team)
+
+        final_majority_color = self._majority_color_for_slots(sim_goal.slots)
+        if final_majority_color is None:
+            return 0.0
+
+        for inserted_team in inserted_teams:
+            if inserted_team != final_majority_color:
+                penalty += block_points_penalty
+
+        for ejected_team in ejected_teams:
+            if ejected_team == final_majority_color:
+                penalty += block_points_penalty
 
         return penalty
     
