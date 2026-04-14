@@ -2214,6 +2214,10 @@ class PushBackGame(VexGame):
         SCORE_HIGH
         SCORE_LOW
         SCORE_MIDDLE
+        OPEN_ALIGNER
+        CLOSE_ALIGNER
+        OPEN_GRABBER
+        CLOSE_GRABBER
         STOP_TRANSFER
         CLEAR_LOADER
         """
@@ -2279,11 +2283,15 @@ class PushBackGame(VexGame):
             actions.append(f"TURN_TO_POINT;({goal.center[0]:.1f},{goal.center[1]:.1f});30")
             if score_cmd == "SCORE_HIGH":
                 actions.append("OPEN_ALIGNER")
+            elif score_cmd == "SCORE_MIDDLE":
+                actions.append("OPEN_GRABBER")
             actions.append("DRIVE;18;30")
             actions.append(score_cmd)
             actions.append("WAIT;2.5")
             if score_cmd == "SCORE_HIGH":
                 actions.append("CLOSE_ALIGNER")
+            elif score_cmd == "SCORE_MIDDLE":
+                actions.append("CLOSE_GRABBER")
 
         elif action in LOADER_ACTIONS:
             loader_idx = LOADER_ACTIONS[action]
