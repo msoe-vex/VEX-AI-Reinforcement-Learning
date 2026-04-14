@@ -167,8 +167,8 @@ class GoalPosition:
 GOALS: Dict[GoalType, GoalPosition] = {
     GoalType.LONG_1: GoalPosition(
         center=np.array([0.0, 48.0]),
-        left_entry=np.array([-24.0, 48.0]),
-        right_entry=np.array([24.0, 48.0]),
+        left_entry=np.array([-48.0, 48.0]),
+        right_entry=np.array([48.0, 48.0]),
         capacity=LONG_GOAL_CAPACITY,
         control_threshold=LONG_GOAL_CONTROL_THRESHOLD,
         goal_type=GoalType.LONG_1,
@@ -176,8 +176,8 @@ GOALS: Dict[GoalType, GoalPosition] = {
     ),
     GoalType.LONG_2: GoalPosition(
         center=np.array([0.0, -48.0]),
-        left_entry=np.array([-24.0, -48.0]),
-        right_entry=np.array([24.0, -48.0]),
+        left_entry=np.array([-48.0, -48.0]),
+        right_entry=np.array([48.0, -48.0]),
         capacity=LONG_GOAL_CAPACITY,
         control_threshold=LONG_GOAL_CONTROL_THRESHOLD,
         goal_type=GoalType.LONG_2,
@@ -2279,7 +2279,7 @@ class PushBackGame(VexGame):
             actions.append(f"TURN_TO_POINT;({goal.center[0]:.1f},{goal.center[1]:.1f});30")
             if score_cmd == "SCORE_HIGH":
                 actions.append("OPEN_ALIGNER")
-            actions.append("DRIVE;6;30")
+            actions.append("DRIVE;18;30")
             actions.append(score_cmd)
             actions.append("WAIT;2.5")
             if score_cmd == "SCORE_HIGH":
@@ -2289,12 +2289,12 @@ class PushBackGame(VexGame):
             loader_idx = LOADER_ACTIONS[action]
             loader = LOADERS[loader_idx]
             # Approach from inside the field (12 inches from wall)
-            offset = 12.0 if loader.position[0] < 0 else -12.0
+            offset = 24.0 if loader.position[0] < 0 else -24.0
             approach_pos = [loader.position[0] + offset, loader.position[1]]
             
             actions.append(f"FOLLOW;{get_path(start_pos, approach_pos)};50")
             actions.append(f"TURN_TO_POINT;({loader.position[0]:.1f},{loader.position[1]:.1f});40")
-            actions.append("DRIVE;6;30")
+            actions.append("DRIVE;18;30")
             actions.append("CLEAR_LOADER")
 
         elif action in (Actions.PARK_FRIENDLY.value, Actions.PARK_OPPONENT.value):
