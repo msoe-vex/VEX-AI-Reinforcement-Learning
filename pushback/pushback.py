@@ -2281,7 +2281,7 @@ class PushBackGame(VexGame):
                 actions.append("OPEN_ALIGNER")
             actions.append("DRIVE;6;30")
             actions.append(score_cmd)
-            actions.append("WAIT;3")
+            actions.append("WAIT;2.5")
             if score_cmd == "SCORE_HIGH":
                 actions.append("CLOSE_ALIGNER")
 
