@@ -2297,8 +2297,8 @@ class PushBackGame(VexGame):
             loader_idx = LOADER_ACTIONS[action]
             loader = LOADERS[loader_idx]
             # Approach from inside the field (12 inches from wall)
-            offset = 24.0 if loader.position[1] < 0 else -24.0
-            approach_pos = [loader.position[0], loader.position[1] + offset]
+            offset = 24.0 if loader.position[0] < 0 else -24.0
+            approach_pos = [loader.position[0] + offset, loader.position[1]]
             
             actions.append(f"FOLLOW;{get_path(start_pos, approach_pos)};50")
             actions.append(f"TURN_TO_POINT;({loader.position[0]:.1f},{loader.position[1]:.1f});40")
