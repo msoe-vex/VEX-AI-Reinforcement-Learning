@@ -167,8 +167,8 @@ class GoalPosition:
 GOALS: Dict[GoalType, GoalPosition] = {
     GoalType.LONG_1: GoalPosition(
         center=np.array([0.0, 48.0]),
-        left_entry=np.array([-48.0, 48.0]),
-        right_entry=np.array([48.0, 48.0]),
+        left_entry=np.array([-24.0, 48.0]),
+        right_entry=np.array([24.0, 48.0]),
         capacity=LONG_GOAL_CAPACITY,
         control_threshold=LONG_GOAL_CONTROL_THRESHOLD,
         goal_type=GoalType.LONG_1,
@@ -176,8 +176,8 @@ GOALS: Dict[GoalType, GoalPosition] = {
     ),
     GoalType.LONG_2: GoalPosition(
         center=np.array([0.0, -48.0]),
-        left_entry=np.array([-48.0, -48.0]),
-        right_entry=np.array([48.0, -48.0]),
+        left_entry=np.array([-24.0, -48.0]),
+        right_entry=np.array([24.0, -48.0]),
         capacity=LONG_GOAL_CAPACITY,
         control_threshold=LONG_GOAL_CONTROL_THRESHOLD,
         goal_type=GoalType.LONG_2,
@@ -2277,8 +2277,19 @@ class PushBackGame(VexGame):
             goal_type, score_cmd = SCORING_ACTIONS[action]
             goal = GOALS[goal_type]
             nearest_entry = goal.get_nearest_entry(robot_pos)
-            target_pos = [nearest_entry[0], nearest_entry[1]]
-            
+
+            if (score_cmd == "SCORE_HIGH"):
+                offsetX = -24.0 if nearest_entry[0] < 0 else 24.0
+                offsetY = 0.0
+            elif (score_cmd == "SCORE_MIDDLE"):
+                offsetX = -15.5 if loader.position[0] < 0 else 15.5
+                offsetY = -15.5 if loader.position[1] < 0 else 15.5
+            else:
+                offsetX = 0.0
+                offsetY = 0.0
+
+            target_pos = [nearest_entry[0] + offsetX, nearest_entry[1] + offsetY]
+
             actions.append(f"FOLLOW;{get_path(start_pos, target_pos)};50")
             actions.append(f"TURN_TO_POINT;({goal.center[0]:.1f},{goal.center[1]:.1f});30")
             if score_cmd == "SCORE_HIGH":
