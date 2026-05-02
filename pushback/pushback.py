@@ -2281,7 +2281,7 @@ class PushBackGame(VexGame):
             if (score_cmd == "SCORE_HIGH"):
                 offsetX = -24.0 if nearest_entry[0] < 0 else 24.0
                 offsetY = 0.0
-            elif (score_cmd == "SCORE_MIDDLE"):
+            elif (score_cmd == "SCORE_MIDDLE" or score_cmd == "SCORE_LOW"):
                 offsetX = -15.5 if loader.position[0] < 0 else 15.5
                 offsetY = -15.5 if loader.position[1] < 0 else 15.5
             else:
@@ -2303,6 +2303,7 @@ class PushBackGame(VexGame):
                 actions.append("CLOSE_ALIGNER")
             elif score_cmd == "SCORE_MIDDLE":
                 actions.append("CLOSE_GRABBER")
+            actions.append("STOP_TRANSFER")
 
         elif action in LOADER_ACTIONS:
             loader_idx = LOADER_ACTIONS[action]
