@@ -2313,6 +2313,7 @@ class PushBackGame(VexGame):
             approach_pos = [loader.position[0] + offset, loader.position[1]]
             
             actions.append(f"FOLLOW;{get_path(start_pos, approach_pos)};50")
+            actions.append(f"WAIT;0.5")
             actions.append(f"TURN_TO_POINT;({loader.position[0]:.1f},{loader.position[1]:.1f});40")
             actions.append("DRIVE;18;30")
             actions.append("CLEAR_LOADER")
