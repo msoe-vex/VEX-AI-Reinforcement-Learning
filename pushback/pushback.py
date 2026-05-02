@@ -2291,6 +2291,7 @@ class PushBackGame(VexGame):
             target_pos = [nearest_entry[0] + offsetX, nearest_entry[1] + offsetY]
 
             actions.append(f"FOLLOW;{get_path(start_pos, target_pos)};50")
+            actions.append(f"WAIT;0.5")
             actions.append(f"TURN_TO_POINT;({goal.center[0]:.1f},{goal.center[1]:.1f});30")
             if score_cmd == "SCORE_HIGH":
                 actions.append("OPEN_ALIGNER")
