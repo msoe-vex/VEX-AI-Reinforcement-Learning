@@ -2334,6 +2334,7 @@ class PushBackGame(VexGame):
                 approach_pos = [park_zone.center[0] - 24, park_zone.center[1]]
             
             actions.append(f"FOLLOW;{get_path(start_pos, approach_pos)};60")
+            actions.apppend(f"WAIT;0.5")
             actions.append(f"TURN_TO_POINT;({target_pos[0]:.1f},{target_pos[1]:.1f});40")
             actions.append("DRIVE;24;30")
 
