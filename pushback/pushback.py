@@ -2291,7 +2291,6 @@ class PushBackGame(VexGame):
             target_pos = [nearest_entry[0] + offsetX, nearest_entry[1] + offsetY]
 
             actions.append(f"FOLLOW;{get_path(start_pos, target_pos)};50")
-            actions.append(f"WAIT;0.5")
             actions.append(f"TURN_TO_POINT;({goal.center[0]:.1f},{goal.center[1]:.1f});30")
             if score_cmd == "SCORE_HIGH":
                 actions.append("OPEN_ALIGNER")
@@ -2314,7 +2313,6 @@ class PushBackGame(VexGame):
             approach_pos = [loader.position[0] + offset, loader.position[1]]
             
             actions.append(f"FOLLOW;{get_path(start_pos, approach_pos)};50")
-            actions.append(f"WAIT;0.5")
             actions.append(f"TURN_TO_POINT;({loader.position[0]:.1f},{loader.position[1]:.1f});40")
             actions.append("DRIVE;18;30")
             actions.append("CLEAR_LOADER")
@@ -2334,7 +2332,6 @@ class PushBackGame(VexGame):
                 approach_pos = [park_zone.center[0] - 24, park_zone.center[1]]
             
             actions.append(f"FOLLOW;{get_path(start_pos, approach_pos)};60")
-            actions.apppend(f"WAIT;0.5")
             actions.append(f"TURN_TO_POINT;({target_pos[0]:.1f},{target_pos[1]:.1f});40")
             actions.append("DRIVE;24;30")
 
