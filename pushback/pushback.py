@@ -2297,7 +2297,10 @@ class PushBackGame(VexGame):
                 actions.append("OPEN_ALIGNER")
             elif score_cmd == "SCORE_MIDDLE":
                 actions.append("OPEN_GRABBER")
-            actions.append("DRIVE;24;30")
+            #actions.append("DRIVE;24;30")
+
+            actions.append(f"FOLLOW;{get_path(target_pos, [nearest_entry[0], nearest_entry[1]])};50")
+
             actions.append(score_cmd)
             actions.append("WAIT;2.5")
             if score_cmd == "SCORE_HIGH":
