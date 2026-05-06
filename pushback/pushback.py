@@ -2293,13 +2293,17 @@ class PushBackGame(VexGame):
             actions.append(f"FOLLOW;{get_path(start_pos, target_pos)};50")
             actions.append("WAIT;0.5")
             actions.append(f"TURN_TO_POINT;({goal.center[0]:.1f},{goal.center[1]:.1f});30")
+            actions.append("WAIT;1.0")
             if score_cmd == "SCORE_HIGH":
                 actions.append("OPEN_ALIGNER")
             elif score_cmd == "SCORE_MIDDLE":
                 actions.append("OPEN_GRABBER")
             #actions.append("DRIVE;24;30")
 
-            actions.append(f"FOLLOW;{get_path(target_pos, [nearest_entry[0], nearest_entry[1]])};50")
+            actions.append(f"FOLLOW;{get_path(target_pos, 
+                            [nearest_entry[0] + (offsetX / 12.0), 
+                             nearest_entry[1] + (offsetY / 12.0)]
+                        )};50")
 
             actions.append(score_cmd)
             actions.append("WAIT;2.5")
