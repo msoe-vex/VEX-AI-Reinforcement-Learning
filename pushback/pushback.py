@@ -2300,10 +2300,7 @@ class PushBackGame(VexGame):
                 actions.append("OPEN_GRABBER")
             #actions.append("DRIVE;24;30")
 
-            actions.append(f"FOLLOW;{get_path(target_pos, 
-                            [nearest_entry[0] + (offsetX / 12.0), 
-                             nearest_entry[1] + (offsetY / 12.0)]
-                        )};50")
+            actions.append(f"FOLLOW;{get_path(target_pos, [nearest_entry[0] + (offsetX / 12.0), nearest_entry[1] + (offsetY / 12.0)])};50")
 
             actions.append(score_cmd)
             actions.append("WAIT;2.5")
