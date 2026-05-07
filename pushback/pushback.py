@@ -2268,9 +2268,9 @@ class PushBackGame(VexGame):
 
             target_pos = [nearest_block_x, nearest_block_y]
             
-            actions.append("INTAKE;100")
             actions.append(f"FOLLOW;{get_path(start_pos, target_pos)};50")
-            actions.append("WAIT;0.5")
+            actions.append("INTAKE;100")
+            actions.append("WAIT;1.0")
             actions.append("STOP_TRANSFER")
 
         elif action in SCORING_ACTIONS:
@@ -2293,12 +2293,12 @@ class PushBackGame(VexGame):
             actions.append(f"FOLLOW;{get_path(start_pos, target_pos)};50")
             actions.append("WAIT;0.5")
             actions.append(f"TURN_TO_POINT;({goal.center[0]:.1f},{goal.center[1]:.1f});30")
-            actions.append("WAIT;1.0")
+            actions.append("WAIT;0.5")
             if score_cmd == "SCORE_HIGH":
                 actions.append("OPEN_ALIGNER")
             elif score_cmd == "SCORE_MIDDLE":
                 actions.append("OPEN_GRABBER")
-            actions.append("DRIVE2;1.5;30")
+            actions.append("DRIVE2;3.0;30")
 
             #actions.append(f"FOLLOW;{get_path(target_pos, [nearest_entry[0] + (offsetX / 12.0), nearest_entry[1] + (offsetY / 12.0)])};50")
 
