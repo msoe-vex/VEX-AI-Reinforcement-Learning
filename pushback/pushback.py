@@ -2306,6 +2306,7 @@ class PushBackGame(VexGame):
             elif score_cmd == "SCORE_MIDDLE":
                 actions.append("CLOSE_GRABBER")
             actions.append("STOP_TRANSFER")
+            actions.append("DRIVE_TIMED;0.5;-30")
 
         elif action in LOADER_ACTIONS:
             loader_idx = LOADER_ACTIONS[action]
@@ -2319,6 +2320,7 @@ class PushBackGame(VexGame):
             actions.append(f"TURN_TO_POINT;({loader.position[0]:.1f},{loader.position[1]:.1f});40")
             actions.append("DRIVE;18;30")
             actions.append("CLEAR_LOADER")
+            actions.append("DRIVE_TIMED;0.5;-30")
 
         elif action in (Actions.PARK_FRIENDLY.value, Actions.PARK_OPPONENT.value):
             robot_team = str(robot.team.value)
