@@ -167,8 +167,8 @@ class GoalPosition:
 GOALS: Dict[GoalType, GoalPosition] = {
     GoalType.LONG_1: GoalPosition(
         center=np.array([0.0, 48.0]),
-        left_entry=np.array([-48.0, 48.0]),
-        right_entry=np.array([48.0, 48.0]),
+        left_entry=np.array([-24.0, 48.0]),
+        right_entry=np.array([24.0, 48.0]),
         capacity=LONG_GOAL_CAPACITY,
         control_threshold=LONG_GOAL_CONTROL_THRESHOLD,
         goal_type=GoalType.LONG_1,
@@ -176,8 +176,8 @@ GOALS: Dict[GoalType, GoalPosition] = {
     ),
     GoalType.LONG_2: GoalPosition(
         center=np.array([0.0, -48.0]),
-        left_entry=np.array([-48.0, -48.0]),
-        right_entry=np.array([48.0, -48.0]),
+        left_entry=np.array([-24.0, -48.0]),
+        right_entry=np.array([24.0, -48.0]),
         capacity=LONG_GOAL_CAPACITY,
         control_threshold=LONG_GOAL_CONTROL_THRESHOLD,
         goal_type=GoalType.LONG_2,
@@ -2270,28 +2270,43 @@ class PushBackGame(VexGame):
             
             actions.append("INTAKE;100")
             actions.append(f"FOLLOW;{get_path(start_pos, target_pos)};50")
-            actions.append("WAIT;0.5")
+            actions.append("DEPLOY_PISTONS")
+            actions.append("WAIT;1.0")
             actions.append("STOP_TRANSFER")
 
         elif action in SCORING_ACTIONS:
             goal_type, score_cmd = SCORING_ACTIONS[action]
             goal = GOALS[goal_type]
             nearest_entry = goal.get_nearest_entry(robot_pos)
-            target_pos = [nearest_entry[0], nearest_entry[1]]
-            
+
+            if (score_cmd == "SCORE_HIGH"):
+                offsetX = -24.0 if nearest_entry[0] < 0 else 24.0
+                offsetY = 0.0 #-4.0 if nearest_entry[1] > 0 else 4.0
+            elif (score_cmd == "SCORE_MIDDLE" or score_cmd == "SCORE_LOW"):
+                offsetX = -15.5 if loader.position[0] < 0 else 15.5
+                offsetY = -15.5 if loader.position[1] < 0 else 15.5
+            else:
+                offsetX = 0.0
+                offsetY = 0.0
+
+            target_pos = [nearest_entry[0] + offsetX, nearest_entry[1] + offsetY]
+
             actions.append(f"FOLLOW;{get_path(start_pos, target_pos)};50")
+            actions.append("WAIT;0.5")
             actions.append(f"TURN_TO_POINT;({goal.center[0]:.1f},{goal.center[1]:.1f});30")
             if score_cmd == "SCORE_HIGH":
                 actions.append("OPEN_ALIGNER")
             elif score_cmd == "SCORE_MIDDLE":
                 actions.append("OPEN_GRABBER")
-            actions.append("DRIVE;18;30")
+            actions.append("DRIVE_TIMED;1.5;30")
             actions.append(score_cmd)
-            actions.append("WAIT;2.5")
+            actions.append("WAIT;10.0")
             if score_cmd == "SCORE_HIGH":
                 actions.append("CLOSE_ALIGNER")
             elif score_cmd == "SCORE_MIDDLE":
                 actions.append("CLOSE_GRABBER")
+            actions.append("STOP_TRANSFER")
+            actions.append("DRIVE_TIMED;0.5;-30")
 
         elif action in LOADER_ACTIONS:
             loader_idx = LOADER_ACTIONS[action]
@@ -2301,9 +2316,11 @@ class PushBackGame(VexGame):
             approach_pos = [loader.position[0] + offset, loader.position[1]]
             
             actions.append(f"FOLLOW;{get_path(start_pos, approach_pos)};50")
+            actions.append("WAIT;0.5")
             actions.append(f"TURN_TO_POINT;({loader.position[0]:.1f},{loader.position[1]:.1f});40")
             actions.append("DRIVE;18;30")
             actions.append("CLEAR_LOADER")
+            actions.append("DRIVE_TIMED;0.5;-30")
 
         elif action in (Actions.PARK_FRIENDLY.value, Actions.PARK_OPPONENT.value):
             robot_team = str(robot.team.value)
@@ -2320,6 +2337,7 @@ class PushBackGame(VexGame):
                 approach_pos = [park_zone.center[0] - 24, park_zone.center[1]]
             
             actions.append(f"FOLLOW;{get_path(start_pos, approach_pos)};60")
+            actions.append("WAIT;0.5")
             actions.append(f"TURN_TO_POINT;({target_pos[0]:.1f},{target_pos[1]:.1f});40")
             actions.append("DRIVE;24;30")
 
