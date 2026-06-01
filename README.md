@@ -1,16 +1,89 @@
 # VEX AI Reinforcement Learning
 
-This project involves training and running reinforcement learning agents in a custom VEX environment using Gymnasium/PettingZoo and RLlib. It simulates the VEX High Stakes game (2024-2025) variations: VEX U Competition, VEX U Skills, VEX AI Competition, and VEX AI Skills.
+This project involves training and running reinforcement learning agents in a custom VEX environment using Gymnasium/PettingZoo and RLlib. It simulates the VEX games including variations: VEX U Competition, VEX U Skills, VEX AI Competition, and VEX AI Skills.
+
+For general setup instructions such as VS Code, Git, SSH keys, Python installation, and cloning repositories, follow [CONTROLS_SETUP.md](CONTROLS_SETUP.md) first.
+
+This README covers the setup and workflow that are specific to this repository. For best results, use WSL or run the code on the MSOE computing cluster (ROSIE) with SLURM. The environment is designed to be flexible and can be run locally for testing, but training is optimized for ROSIE's resources.
 
 ## Setup
 
-Create and activate the conda environment:
+First follow instructions in [CONTROLS_SETUP.md](CONTROLS_SETUP.md) to complete your general development setup. Then continue here for the repository-specific workflow.
+
+### Connect to ROSIE
+
+Follow these instructions to set up your local machine to get access to ROSIE: <https://msoe-maic.com/library/?nav=Articles&article=1-getting-rosie-access>.
+
+Once you've verified you can sign in, you can follow these instructions to set up an SSH key for passwordless authentication from your local machine to ROSIE:
+
+1. **Open the ssh config file:**
+
+```powershell
+code C:\Users\%USERNAME%\.ssh\config
+```
+
+2. **Add the following configuration:**
+
+```plaintext
+Host ROSIE
+    HostName dh-mgmt2.hpc.msoe.edu
+    User username@ad.msoe.edu
+```
+
+> Note: Replace `username` with your actual MSOE username.
+
+3. **Create the SSH key:**
+
+First, check if you already have an SSH key:
+
+```powershell
+dir C:\Users\%USERNAME%\.ssh
+```
+
+If you see files like `id_ed25519` and `id_ed25519.pub`, you already have an SSH key. If not, create one:
+
+```powershell
+ssh-keygen -t ed25519 -C "your_email@example.com"
+```
+
+> Note: Replace `your_email@example.com` with your actual email address.
+
+4. **Add the SSH key to authorized keys**
+
+```powershell
+Get-Service ssh-agent | Set-Service -StartupType Automatic
+Start-Service ssh-agent
+Get-Content $env:USERPROFILE\.ssh\id_ed25519.pub | ssh ROSIE "cat >> ~/.ssh/authorized_keys"
+```
+
+5. **Test the connection**
+
+```powershell
+ssh ROSIE
+```
+
+If you see a welcome message and a command prompt, you're successfully connected to ROSIE!
+
+### Clone the repository
+
+Once in WSL or on ROSIE, clone the repository in your desired directory:
 
 ```bash
-conda create -n vexai python=3.12
-conda activate vexai
+git clone git@github.com:msoe-vex/VAIC_25_26.git
+cd VAIC_25_26
+```
+
+### Create a virtual environment
+
+Once the repository is cloned and you are in the project directory, create and activate the virtual environment:
+
+```bash
+python -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 ```
+
+If you are using a local Windows shell instead of WSL or ROSIE, use the activation command that matches your shell.
 
 ## Features
 

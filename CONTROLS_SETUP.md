@@ -1,144 +1,113 @@
-# VEX AI & Robotics Development Environment Setup Guide (Windows)
+# VEX AI and Robotics Development Environment Setup Guide
 
-Welcome to the team! This guide will walk you through installing the required global software and cloning our core repositories to get your Windows machine ready for development.
+This guide is the general setup checklist for new contributors. Follow it in order so your machine is ready for cloning repositories, editing code in VS Code, and using Git safely.
 
----
+## Step 1: Install VS Code
 
-## Step 1: Install VSCode & Extensions
+1. Download VS Code from [code.visualstudio.com](https://code.visualstudio.com/).
+2. Run the installer and accept the default options.
+3. Make sure the option to add VS Code to your PATH is enabled if the installer offers it.
+4. Launch VS Code once the install is complete.
 
-1. **Download & Install VSCode:**
+## Step 2: Install the recommended VS Code extensions
 
-    * Go to the [Official VSCode Download Page](https://code.visualstudio.com/) and download the Windows installer.
-    * Run the installer and accept the defaults (making sure **"Add to PATH"** is checked).
+Open the Extensions view in VS Code with Ctrl+Shift+X and install these extensions:
 
-2. **Install the VSCode Extensions:**
+1. [**Python** by Microsoft](https://marketplace.visualstudio.com/items?itemName=ms-python.python).
+2. [**C/C++** by Microsoft](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools).
+3. [**VEX Robotics** by VEX Robotics](https://marketplace.visualstudio.com/items?itemName=VEXRobotics.vexcode).
+4. [**Remote - SSH** by Microsoft](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh).
+5. [**WSL** by Microsoft](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-wsl).
 
-    * Open VSCode.
-    * Click on the **Extensions** icon on the left sidebar (or press `Ctrl + Shift + X`).
-    * Install the following extensions:
-        * **C/C++** by Microsoft (for C++ development code navigation).
-        * **Python** by Microsoft (for AI development and virtual environment support).
-        * **VEX Robotics** by VEX Robotics. *Note: This extension automatically installs the necessary underlying C++ toolchain/compiler for VEX hardware.*
+The Python extension gives you interpreter selection and virtual environment support. The C/C++ extension improves navigation and IntelliSense. The VEX Robotics extension provides VEX-specific tooling.
 
----
+## Step 3: Install Python 3.12
 
-## Step 2: Install Python 3.12 (For AI/Reinforcement Learning)
+This project uses Python 3.12. Install that version unless a repository README says something different.
 
-Because our AI and Reinforcement Learning libraries (like PyTorch) have explicit version requirements, you must install Python 3.12.
-
-1. **Download Python 3.12:**
-
-* Go to the [Python Downloads Page](https://www.python.org/downloads/).
-* Look for **Python 3.12.x** (do not get 3.13+ unless explicitly instructed).
-
-2. **Install Python:**
-
-* Run the installer.
-* **CRITICAL:** Check the box at the bottom that says **"Add python.exe to PATH"** before clicking Install Now.
-
-3. **Verify Installation:**
-
-* Open a new PowerShell window or Command Prompt and type:
+1. Download Python 3.12.x from [python.org](https://www.python.org/downloads/).
+2. Run the installer.
+3. Check the box that says Add python.exe to PATH before you finish the install.
+4. Open a new PowerShell window or Command Prompt.
+5. Verify the install with:
 
 ```powershell
 python --version
-
 ```
 
-* It should return `Python 3.12.x`.
+You should see Python 3.12.x. If you do not, stop and fix the PATH or installation before continuing.
 
----
+## Step 4: Install Git
 
-## Step 3: Install Git & Set Up GitHub
+1. Download Git from [git-scm.com](https://git-scm.com/download/win).
+2. Run the installer and accept the default settings unless you have a reason not to.
+3. Open a new terminal and verify Git is installed:
 
-If you don't already have a GitHub account, go to [github.com](https://github.com/) and create one. **Once created, send your username to the team lead so you can be added to the `msoe-vex` organization.**
+```powershell
+git --version
+```
 
-### 1. Install Git
+If the command is not found, Git was not installed correctly or your terminal needs to be restarted.
 
-* Download the installer from [git-scm.com](https://git-scm.com/download/win).
-* Run the installer. You can safely click "Next" on the default settings.
+## Step 5: Create your GitHub account and set your identity
 
-### 2. Configure Your Git Identity
+If you do not already have a GitHub account, create one at [github.com](https://github.com/).
 
-Open PowerShell or Terminal and run the following commands with your info:
+Once you have an account, set your global Git name and email. Use the same email address that is attached to your GitHub account:
 
 ```powershell
 git config --global user.name "Your Name"
 git config --global user.email "your-github-email@example.com"
-
 ```
 
-### 3. Generate and Set Up an SSH Key
+Verify the values with:
 
-Using SSH keys allows you to securely push and pull from GitHub without typing your credentials every time.
+```powershell
+git config --global --list
+```
 
-* **Generate the key:** Open your terminal and paste the following (replace with your GitHub email):
+## Step 6: Generate and add an SSH key
+
+SSH keys let Git authenticate to GitHub without asking for your password every time.
+
+You may need to repeat this step if you also want to use SSH to use GitHub from WSL or ROSIE, but start with setting it up on your local machine first.
+
+You can also reuse this same SSH key for both GitHub and ROSIE if you want, but that is optional. If you want to use the same key, add it to GitHub first, then follow the ROSIE instructions to add the same key there.
+
+1. Open PowerShell or Command Prompt.
+2. Generate a key:
 
 ```powershell
 ssh-keygen -t ed25519 -C "your-github-email@example.com"
-
 ```
 
-Press `Enter` to accept the default file location, and optionally enter a memorable passphrase.
-
-* **Copy the key to your clipboard:**
+3. Press Enter to accept the default file location.
+4. If prompted for a passphrase, choose one you can remember.
+5. Copy the public key to your clipboard:
 
 ```powershell
 clip < ~/.ssh/id_ed25519.pub
-
 ```
 
-* **Add it to GitHub:**
+6. In GitHub, go to Settings, then SSH and GPG keys.
+7. Click New SSH key.
+8. Give the key a clear title, such as your laptop name.
+9. Paste the key into the box and save it.
 
-1. Go to GitHub, click your profile picture in the top-right, and select **Settings**.
-2. In the left sidebar, click **SSH and GPG keys**.
-3. Click **New SSH key**, give it a title (e.g., "Windows Laptop"), and paste your key into the box.
-4. Click **Add SSH key**.
-
----
-
-## Step 4: Cloning the Repositories
-
-Now that your SSH key is authorized, navigate to the folder where you want to store your team projects (e.g., `cd Documents`), and clone the target repositories:
+Test the connection after adding the key:
 
 ```powershell
-# Clone the Reinforcement Learning Repository
-git clone git@github.com:msoe-vex/VEX-AI-Reinforcement-Learning.git
-
-# Clone the Push-Back Repository
-git clone git@github.com:msoe-vex/Push-Back.git
-
+ssh -T git@github.com
 ```
 
----
+The first time you connect, GitHub may ask you to confirm its host key. That is normal.
 
-## Step 5: Git Crash Course (Daily Workflow)
+## Step 7: Set up the repositories
 
-If you haven't used Git much before you can use the VS Code Source Control interface (use `Ctrl+Shift+G` to open it), or you can use the command line. Make sure you use `cd` to enter the specific project directory before running these commands. This is the baseline workflow we use every day:
+After the general setup above, follow the setup instructions for each repository you plan to work with:
 
-| Command | What it does | When to use it |
-| --- | --- | --- |
-| `git pull` | Fetches the latest code from GitHub and merges it locally. | **First thing** before you start writing any new code. |
-| `git status` | Shows you what files you have changed or created. | Regular sanity check to see your progress. |
-| `git add .` | Stages all your changes, preparing them to be saved. | When you've finished a feature or a chunk of work. |
-| `git commit -m "msg"` | Saves your staged changes locally with a descriptive message. | Right after running `git add`. |
-| `git push` | Sends your saved commits up to GitHub for the team to see. | When you're ready to share or back up your work. |
+1. [msoe-vex/Push-Back](https://github.com/msoe-vex/Push-Back)
+2. [msoe-vex/VEX-AI-Reinforcement-Learning](https://github.com/msoe-vex/VEX-AI-Reinforcement-Learning)
+3. [msoe-vex/VAIC_25_26](https://github.com/msoe-vex/VAIC_25_26)
 
-### The Standard Development Loop
-
-```powershell
-cd VEX-AI-Reinforcement-Learning   # Navigate to your active project folder
-git pull                           # Always get the latest updates first
-# ... write code in VSCode ...
-git status                         # Review your local modifications
-git add .                          # Stage your files
-git commit -m "Updated local tracking nodes"   # Commit changes locally
-git push                           # Push back up to the organization
-
-```
-
----
-
-## Next Steps: Repo-Specific Setup
-
-Now that your core environment is live, open the cloned project folders in VSCode. Each repository contains a unique `README.md` file detailing exactly how to spin up its localized Python virtual environments (`.venv`), configure specific package dependencies (`requirements.txt`), and build/test the code.
+Each repository has its own README with the project-specific clone, environment, run, and workflow instructions.
