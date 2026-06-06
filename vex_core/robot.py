@@ -38,7 +38,7 @@ class Robot:
             self.width = float(self.size.value)
         # Default orientation: face toward center (red=270, blue=90)
         if self.start_orientation is None:
-            self.start_orientation = 270.0 if self.team == Team.RED else 90.0
+            self.start_orientation = 90.0 if self.team == Team.RED else 270.0
         # Camera rotation is stored as an offset from the robot body orientation.
         try:
             self.camera_rotation_offset = float(self.camera_rotation)

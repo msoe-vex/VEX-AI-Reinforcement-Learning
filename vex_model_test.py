@@ -147,8 +147,8 @@ def run_simulation(
 
     team_score_totals = {}
     team_score_counts = {}
-    total_reward_totals = {}
-    total_reward_counts = {}
+    total_reward_total = 0.0
+    total_reward_count = 0
     inference_time_total_s = 0.0
     inference_call_count = 0
     os.makedirs(output_dir, exist_ok=True)
@@ -293,6 +293,7 @@ def run_simulation(
                 "steps": step_count,
                 "env_steps": env.num_steps,
                 "internal_ticks": env.num_ticks,
+                "total_reward": float(total_reward),
             }
             if iteration_inference_calls > 0:
                 row["avg_inference_ms"] = (iteration_inference_time_s / iteration_inference_calls) * 1000.0
@@ -306,13 +307,14 @@ def run_simulation(
                 "env_steps": env.num_steps,
                 "internal_ticks": env.num_ticks,
                 "score": env.score,
+                "total_reward": float(total_reward),
             }
             if iteration_inference_calls > 0:
                 row["avg_inference_ms"] = (iteration_inference_time_s / iteration_inference_calls) * 1000.0
             iteration_results.append(row)
         
-        total_reward_totals[team_name] = total_reward_totals.get(team_name, 0.0) + float(total_reward)
-        total_reward_counts[team_name] = total_reward_counts.get(team_name, 0) + 1
+        total_reward_total += float(total_reward)
+        total_reward_count += 1
 
         if render_mode == "image":
             print("Creating GIF of the simulation...")
@@ -327,12 +329,11 @@ def run_simulation(
         print("  No per-team score dictionary found on env.score.")
 
     print("\nAverage total rewards across all iterations:")
-    if total_reward_totals:
-        for team_name in sorted(total_reward_totals.keys()):
-            avg_reward = total_reward_totals[team_name] / max(total_reward_counts.get(team_name, 1), 1)
-            print(f"  {team_name}: {avg_reward:.3f}")
+    if total_reward_count > 0:
+        avg_reward = total_reward_total / total_reward_count
+        print(f"  overall: {avg_reward:.3f}")
     else:
-        print("  No per-team total reward dictionary found on env.score.")
+        print("  No total reward values were recorded.")
 
     print("\nAverage model inference time:")
     if inference_call_count > 0:

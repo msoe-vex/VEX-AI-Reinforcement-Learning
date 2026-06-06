@@ -22,11 +22,11 @@ class VexAICompGame(PushBackGame):
         if robots is None:
             robots = [
                 Robot(name="red_robot_0", team=Team.RED, size=RobotSize.INCH_24, 
-                      start_position=np.array([-42.0, 24.0], dtype=np.float32)),
+                      start_position=np.array([-42.0, 24.0], dtype=np.float32), length=15, width=15),
                 Robot(name="red_robot_1", team=Team.RED, size=RobotSize.INCH_15, 
                       start_position=np.array([-46.5, -24.0], dtype=np.float32)),
                 Robot(name="blue_robot_0", team=Team.BLUE, size=RobotSize.INCH_24, 
-                      start_position=np.array([42.0, 24.0], dtype=np.float32)),
+                      start_position=np.array([42.0, 24.0], dtype=np.float32), length=15, width=15),
                 Robot(name="blue_robot_1", team=Team.BLUE, size=RobotSize.INCH_15, 
                       start_position=np.array([46.5, -24.0], dtype=np.float32)),
             ]
