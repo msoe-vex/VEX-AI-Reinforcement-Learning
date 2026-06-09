@@ -693,10 +693,10 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         # 2. Projected collision check (only newly started actions)
         # ──────────────────────────────────────────────────────────────
         failed_agents: set[str] = set()
-        try:
-            failed_agents = self._resolve_projected_collisions(all_agents, newly_actioned)
-        except Exception:
-            failed_agents = set()
+        # try:
+        #     failed_agents = self._resolve_projected_collisions(all_agents, newly_actioned)
+        # except Exception:
+        #     failed_agents = set()
 
         for agent in failed_agents:
             busy = self.busy_state.get(agent)
