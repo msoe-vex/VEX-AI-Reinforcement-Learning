@@ -1684,6 +1684,12 @@ class PushBackGame(VexGame):
             # Parking is only valid if not already parked
             if observation[ObsIndex.PARKED] >= 1:
                 return False
+
+            friendly_color = self.get_team_for_agent(agent)
+            opponent_color = "blue" if friendly_color == "red" else "red"
+            park_zone_color = friendly_color if action == Actions.PARK_FRIENDLY.value else opponent_color
+            if not self._can_park_in_zone(self.state["agents"][agent], park_zone_color):
+                return False
         
         # IDLE is masked unless the agent is parked (parked agents should idle)
         if action == Actions.IDLE.value:
