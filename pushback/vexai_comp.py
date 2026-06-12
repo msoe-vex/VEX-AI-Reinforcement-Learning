@@ -153,16 +153,6 @@ class VexAICompGame(PushBackGame):
     def is_valid_action(self, agent: str, action: int, observation: np.ndarray) -> bool:
         if not super().is_valid_action(agent, action, observation):
             return False
-            
-        robot = self.get_robot_for_agent(agent)
-        if robot and robot.size.value == 24:
-            from .pushback import is_scoring_action, Actions
-            try:
-                if is_scoring_action(Actions(action)):
-                    return False
-            except ValueError:
-                pass
-                
         return True
     
 
