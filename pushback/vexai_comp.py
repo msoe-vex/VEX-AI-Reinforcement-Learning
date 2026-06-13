@@ -151,6 +151,13 @@ class VexAICompGame(PushBackGame):
         return scores
     
     def is_valid_action(self, agent: str, action: int, observation: np.ndarray) -> bool:
+        agent_size = self.state["agents"][agent].get("robot_size")
+        if time_remaining <= 15 and agent_size == RobotSize.INCH_24.value:
+            if action == Actions.PARK_FRIENDLY.value:
+                return True
+            else:
+                return False
+        
         if not super().is_valid_action(agent, action, observation):
             return False
     
@@ -160,13 +167,13 @@ class VexAICompGame(PushBackGame):
             if action in [Actions.PARK_FRIENDLY.value, Actions.PARK_OPPONENT.value]:
                 return False
 
-        agent_size = self.state["agents"][agent].get("robot_size")
-        if time_remaining <= 15 and agent_size == RobotSize.INCH_24.value:
-            parked = observation[ObsIndex.PARKED] == 1
-            if not parked and action != Actions.PARK_FRIENDLY.value:
-                return False
-            if parked and action != Actions.IDLE.value:
-                return False
+        if time_remaining > 45 and action in [
+            Actions.SCORE_IN_CENTER_UPPER.value,
+            Actions.SCORE_IN_CENTER_LOWER.value,
+            Actions.SCORE_IN_LONG_GOAL_1.value,
+            Actions.SCORE_IN_LONG_GOAL_2.value,
+        ]:
+            return False
 
         return True
     
