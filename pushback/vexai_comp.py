@@ -156,8 +156,12 @@ class VexAICompGame(PushBackGame):
     
         time_remaining = observation[ObsIndex.TIME_REMAINING]
 
-        if time_remaining <= 15:
-            if action not in [Actions.PARK_FRIENDLY.value, Actions.IDLE.value]:
+        agent_size = self.state["agents"][agent].get("robot_size")
+        if time_remaining <= 15 and agent_size == RobotSize.INCH_24.value:
+            parked = observation[ObsIndex.PARKED] == 1
+            if not parked and action != Actions.PARK_FRIENDLY.value:
+                return False
+            if parked and action != Actions.IDLE.value:
                 return False
 
         return True
