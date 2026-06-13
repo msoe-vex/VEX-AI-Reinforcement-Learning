@@ -10,7 +10,7 @@ Rules per VAISC:
 from typing import Dict, List, Tuple, Optional
 import numpy as np
 
-from .pushback import PushBackGame, BlockStatus, LOADERS, NUM_BLOCKS_FIELD, GoalType, GOALS
+from .pushback import PushBackGame, BlockStatus, LOADERS, NUM_BLOCKS_FIELD, GoalType, GOALS, ObsIndex, Actions
 from vex_core.robot import Robot, RobotSize, Team
 from vex_core.config import CommunicationOption
 
@@ -153,6 +153,13 @@ class VexAICompGame(PushBackGame):
     def is_valid_action(self, agent: str, action: int, observation: np.ndarray) -> bool:
         if not super().is_valid_action(agent, action, observation):
             return False
+    
+        time_remaining = observation[ObsIndex.TIME_REMAINING]
+
+        if time_remaining <= 15:
+            if action not in [Actions.PARK_FRIENDLY.value, Actions.IDLE.value]:
+                return False
+
         return True
     
 
