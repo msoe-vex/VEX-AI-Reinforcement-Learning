@@ -157,8 +157,9 @@ class VexAICompGame(PushBackGame):
         if time_remaining <= 15 and agent_size == RobotSize.INCH_24.value:
             park_zone = PARK_ZONES.get(agent_color)
             x_min, x_max, y_min, y_max = park_zone.bounds
-            position = self.state["agents"][agent]["position"]
-            within_park_zone = x_min <= position[0] <= x_max and y_min <= position[1] <= y_max
+            pos_x = observation[ObsIndex.SELF_POS_X]
+            pos_y = observation[ObsIndex.SELF_POS_Y]
+            within_park_zone = x_min <= pos_x <= x_max and y_min <= pos_y <= y_max
 
             if not within_park_zone:
                 return action == Actions.PARK_FRIENDLY.value
