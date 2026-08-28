@@ -27,7 +27,12 @@ code C:\Users\%USERNAME%\.ssh\config
 ```plaintext
 Host ROSIE
     HostName dh-mgmt2.hpc.msoe.edu
-    User username@ad.msoe.edu
+    User needhama@ad.msoe.edu
+
+Host dh-node*
+    HostName %h
+    User needhama@ad.msoe.edu
+    ProxyJump ROSIE
 ```
 
 > Note: Replace `username` with your actual MSOE username.
