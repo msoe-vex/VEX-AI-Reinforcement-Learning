@@ -1,5 +1,4 @@
-"""
-VEX U implementation of the 2026-2027 VEX V5 Override game."""
+# VEX U implementation of the 2026-2027 VEX V5 Override game.
 
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
@@ -114,11 +113,12 @@ def _get_game_class(game_name: str):
 
 
 class OverrideGame(VexGame):
-    """Override mechanics exposed through the shared VEX game interface."""
+    # Override mechanics exposed through the shared VEX game interface.
 
     def __init__(self, robots: Optional[list] = None,
                  communication_mode: CommunicationOption = CommunicationOption.NONE,
                  deterministic: bool = True):
+        # Create an Override game with the supplied or default robot roster.
         robots = robots or [
             Robot("red_robot_0", Team.RED, RobotSize.INCH_24, np.array([-48.0, 24.0], dtype=np.float32)),
             Robot("red_robot_1", Team.RED, RobotSize.INCH_15, np.array([-48.0, -24.0], dtype=np.float32)),
@@ -133,38 +133,47 @@ class OverrideGame(VexGame):
     @staticmethod
     def get_game(game_name: str, communication_mode: CommunicationOption = CommunicationOption.NONE,
                  deterministic: bool = True) -> VexGame:
+        # Construct a registered Override variant by name.
         return _get_game_class(game_name)(communication_mode=communication_mode, deterministic=deterministic)
 
     @property
     def field_size_inches(self) -> float:
+        # Return the square field width in inches.
         return FIELD_SIZE_INCHES
 
     @property
     def total_time(self) -> float:
+        # Return the default total match duration in seconds.
         return MATCH_TIME
 
     @property
     def num_actions(self) -> int:
+        # Return the number of high-level robot actions.
         return len(Actions)
 
     @property
     def fallback_action(self) -> int:
+        # Return the safe action used when no action is available.
         return Actions.TURN_TOWARD_CENTER.value
 
     def get_action_name(self, action: int) -> str:
+        # Convert an action value into its enum name.
         try:
             return Actions(int(action)).name
         except (TypeError, ValueError):
             return str(action)
 
     def reset(self) -> None:
+        # Clear the current game state before the environment reinitializes it.
         self.state = None
 
     def _object(self, kind: str, position: np.ndarray, team: Optional[str] = None) -> Dict:
+        # Create a field object record for a Pin or Cup.
         return {"kind": kind, "position": np.asarray(position, dtype=np.float32),
                 "team": team, "status": ObjectStatus.ON_FIELD, "held_by": None, "goal": None}
 
     def get_initial_state(self, randomize: bool = False, seed: Optional[int] = None) -> Dict:
+        # Create robots, field objects, Toggles, and available Loaders.
         if seed is not None:
             np.random.seed(seed)
         agents = {}
@@ -195,6 +204,7 @@ class OverrideGame(VexGame):
         return self.state
 
     def _visible(self, agent: str, kind: str) -> List[Tuple[float, int]]:
+        # Return visible field objects of a type sorted by distance.
         state = self.state["agents"][agent]
         camera = vex_normalize_angle(float(state["orientation"][0]) + state["camera_rotation_offset"])
         visible = []
@@ -208,6 +218,7 @@ class OverrideGame(VexGame):
         return sorted(visible)
 
     def get_game_observation(self, agent: str, game_time: float = 0.0) -> np.ndarray:
+        # Build the agent's partial observation, including tracker fields.
         state = self.state["agents"][agent]
         pin_visible = self._visible(agent, "pin")
         cup_visible = self._visible(agent, "cup")
@@ -224,12 +235,15 @@ class OverrideGame(VexGame):
         return np.asarray(values, dtype=np.float32)
 
     def get_game_observation_space(self, agent: str) -> spaces.Space:
+        # Return the fixed-size continuous observation space.
         return spaces.Box(-1e10, 1e10, shape=(ObsIndex.TOTAL,), dtype=np.float32)
 
     def get_game_action_space(self, agent: str) -> spaces.Space:
+        # Return the discrete Override action space.
         return spaces.Discrete(self.num_actions)
 
     def _move(self, agent: str, target: np.ndarray, event: ActionEvent) -> List[ActionStep]:
+        # Create a turn, movement, and event-completion action plan.
         state = self.state["agents"][agent]
         start = state["position"].copy()
         movement = np.asarray(target, dtype=np.float32) - start
@@ -241,6 +255,7 @@ class OverrideGame(VexGame):
                 ActionStep(DEFAULT_DURATION, target, orientation), ActionStep(DEFAULT_DURATION, target, orientation, [event])]
 
     def execute_action(self, agent: str, action: int) -> Tuple[List[ActionStep], float]:
+        # Translate a high-level action into timed steps and a penalty.
         state = self.state["agents"][agent]
         try:
             selected = Actions(int(action))
@@ -285,6 +300,7 @@ class OverrideGame(VexGame):
         return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
 
     def update_tracker(self, agent: str, action: int) -> None:
+        # Update inferred held-object, parking, and Toggle state after an action.
         state = self.state["agents"][agent]
         try:
             selected = Actions(int(action))
@@ -310,6 +326,7 @@ class OverrideGame(VexGame):
             state["inferred_toggle_colors"] = toggle_colors
 
     def update_observation_from_tracker(self, agent: str, observation: np.ndarray) -> np.ndarray:
+        # Overlay inferred state onto an externally supplied observation.
         state = self.state["agents"][agent]
         observation[ObsIndex.HELD_PINS] = state["held_pins"]
         observation[ObsIndex.HELD_CUPS] = state["held_cups"]
@@ -321,6 +338,7 @@ class OverrideGame(VexGame):
         return observation
 
     def apply_events(self, agent: str, events: List[ActionEvent]) -> None:
+        # Apply completed action events to objects, robots, Toggles, and Loaders.
         state = self.state["agents"][agent]
         for event in events:
             if event.type == "pickup":
@@ -355,6 +373,7 @@ class OverrideGame(VexGame):
                 state["orientation"] = np.array([event.data["angle"]], dtype=np.float32)
 
     def compute_score(self) -> Dict[str, int]:
+        # Calculate alliance scores from scored Pins, parking, and bonuses.
         scores = {"red": 0, "blue": 0}
         for obj in self.state["objects"]:
             if obj["status"] == ObjectStatus.SCORED and obj["kind"] == "pin" and obj["team"] in scores:
@@ -367,12 +386,15 @@ class OverrideGame(VexGame):
         return scores
 
     def get_team_for_agent(self, agent: str) -> str:
+        # Return the alliance color assigned to an agent.
         return str(self.state["agents"].get(agent, {}).get("team", "red"))
 
     def is_agent_terminated(self, agent: str, game_time: float = 0.0) -> bool:
+        # Return whether the agent's match clock has expired.
         return game_time >= self.total_time
 
     def is_valid_action(self, agent: str, action: int, observation: np.ndarray) -> bool:
+        # Check whether an action is currently compatible with the observation.
         try:
             selected = Actions(int(action))
         except (TypeError, ValueError):
@@ -395,9 +417,11 @@ class OverrideGame(VexGame):
         return not (selected == Actions.PARK_MIDFIELD and observation[ObsIndex.PARKED] >= 1)
 
     def get_permanent_obstacles(self) -> List[Obstacle]:
+        # Return field structures used by the path planner.
         return PERMANENT_OBSTACLES
 
     def split_action(self, action: int, observation: np.ndarray, robot: Robot) -> List[str]:
+        # Convert a high-level action into controller command strings.
         if action == Actions.IDLE.value:
             return ["WAIT;0.5"]
         if action == Actions.TURN_TOWARD_CENTER.value:
@@ -410,9 +434,11 @@ class OverrideGame(VexGame):
         return ["WAIT;0.5"]
 
     def action_to_name(self, action: int) -> str:
+        # Return the display name for an action value.
         return self.get_action_name(action)
 
     def render_game_elements(self, ax: Any) -> None:
+        # Draw Goals, Toggles, and visible field objects on a Matplotlib axis.
         import matplotlib.patches as patches
         for position in GOAL_POSITIONS.values():
             ax.add_patch(patches.Circle(position, 5.0, fill=False, color="black"))
@@ -426,6 +452,7 @@ class OverrideGame(VexGame):
                           rewards: Optional[Dict] = None, num_steps: int = 0,
                           agent_times: Optional[Dict[str, float]] = None,
                           action_time_remaining: Optional[Dict[str, float]] = None) -> None:
+        # Draw agent holdings and current alliance scores in the info panel.
         ax_info.axis("off")
         ax_info.text(0.05, 0.95, "Override", fontweight="bold", va="top")
         y = 0.85
@@ -437,7 +464,8 @@ class OverrideGame(VexGame):
 
 
 class VexUOverrideGame(OverrideGame):
-    """VEX U Override competition variant."""
+    # VEX U Override competition variant.
+    pass
 
 
 Override = VexUOverrideGame
