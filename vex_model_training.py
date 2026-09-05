@@ -64,6 +64,12 @@ GAME_CLASSES = {
     "override": OverrideGame,
 }
 
+PUSHBACK_GAMES = {"vexu_skills", "vexu_comp", "vexai_skills", "vexai_comp"}
+
+
+def get_game_class(game_name):
+    return PushBackGame if game_name.lower() in PUSHBACK_GAMES else OverrideGame
+
 
 def build_active_training_phases(phases, supports_message_params=True):
     """Return phases adjusted to model capabilities, defaulting zero-train phases to action-only."""
@@ -390,7 +396,7 @@ def env_creator(config=None):
         copy_message_dropout_prob=float(config.get("copy_message_dropout_prob", 0.0)),
     )
     
-    game_class = GAME_CLASSES[GAME]
+    game_class = get_game_class(game_name)
     game = game_class.get_game(
         game_name,
         communication_mode=communication_mode,

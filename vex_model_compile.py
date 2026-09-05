@@ -25,6 +25,12 @@ GAME_CLASSES = {
     "override": OverrideGame,
 }
 
+PUSHBACK_GAMES = {"vexu_skills", "vexu_comp", "vexai_skills", "vexai_comp"}
+
+
+def get_game_class(game_name):
+    return PushBackGame if game_name.lower() in PUSHBACK_GAMES else OverrideGame
+
 
 def find_latest_checkpoint(experiment_path: str):
     """Find the latest RLlib checkpoint directory under an experiment path."""
@@ -253,7 +259,7 @@ if __name__ == "__main__":
         raise FileNotFoundError(f"No checkpoint directories found under: {experiment_path}")
 
     print(f"Using checkpoint: {checkpoint_path}")
-    game_class = GAME_CLASSES[GAME]
+    game_class = get_game_class(env_config.game_name)
     game = game_class.get_game(env_config.game_name, communication_mode=env_config.communication_mode)
     
     compile_checkpoint_to_torchscript(game, checkpoint_path, experiment_path, env_config)

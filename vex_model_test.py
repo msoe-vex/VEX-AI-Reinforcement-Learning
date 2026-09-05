@@ -22,6 +22,12 @@ GAME_CLASSES = {
     "override": OverrideGame,
 }
 
+VEX_GAMES = {"vexu_skills", "vexu_comp", "vexai_skills", "vexai_comp"}
+
+
+def get_game_class(game_name):
+    return PushBackGame if game_name.lower() in VEX_GAMES else OverrideGame
+
 def load_agent_models(model_dir, agents, device):
     """
     Load models for each agent from the model directory.
@@ -104,7 +110,7 @@ def run_simulation(
     print(f"Using device: {device}")
 
     # Initialize the game/environment with matching communication configuration
-    game_class = GAME_CLASSES[GAME]
+    game_class = get_game_class(config.game_name)
     game = game_class.get_game(
         config.game_name,
         communication_mode=config.communication_mode,
