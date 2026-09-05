@@ -1276,10 +1276,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         ax_info.set_ylim(0, 1)
         ax_info.axis('off')
         
-        # Draw auto line
-        ax.plot([-field_half, field_half], [0, 0], color='#d0d0d0', linewidth=2)
-        
-        # Render game-specific elements
+        # Render game-specific field markings and elements
+        self.game.render_field_markings(ax)
         self.game.render_game_elements(ax)
         
         # Draw robot paths
@@ -1425,10 +1423,10 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             cam_angle_std_deg = math.degrees(vex_to_standard_radians(cam_angle_vex))
             
             # Get the FOV from the game logic
-            fov_deg = 90.0 # Standard FOV from pushback.py
+            fov_deg = self.game.camera_fov_degrees()
             
             # Gradient Render (Segmented wedges for radial alpha dropoff)
-            fov_radius = 72
+            fov_radius = self.game.camera_range_inches()
             fov_start_angle = cam_angle_std_deg - (fov_deg / 2)
             fov_end_angle = cam_angle_std_deg + (fov_deg / 2)
             
