@@ -13,8 +13,17 @@ from vex_core.base_game import VexGame
 from vex_core.base_env import VexMultiAgentEnv
 from vex_core.config import VexEnvConfig
 from pushback import PushBackGame
+from override.override import OverrideGame
 # Import your custom model class to ensure pickle can find it
 from vex_custom_model import VexCustomPPO
+
+
+# Select the game family used when compiling the model.
+GAME = "override"
+GAME_CLASSES = {
+    "pushback": PushBackGame,
+    "override": OverrideGame,
+}
 
 
 def find_latest_checkpoint(experiment_path: str):
@@ -244,6 +253,7 @@ if __name__ == "__main__":
         raise FileNotFoundError(f"No checkpoint directories found under: {experiment_path}")
 
     print(f"Using checkpoint: {checkpoint_path}")
-    game = PushBackGame.get_game(env_config.game_name, communication_mode=env_config.communication_mode)
+    game_class = GAME_CLASSES[GAME]
+    game = game_class.get_game(env_config.game_name, communication_mode=env_config.communication_mode)
     
     compile_checkpoint_to_torchscript(game, checkpoint_path, experiment_path, env_config)
