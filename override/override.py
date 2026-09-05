@@ -14,6 +14,7 @@ from vex_core.utils import vex_atan2, vex_normalize_angle, vex_shortest_angular_
 
 FIELD_SIZE_INCHES = 144.0
 FIELD_HALF = FIELD_SIZE_INCHES / 2.0
+MIDFIELD_SIZE_INCHES = 24.0
 NUM_CUPS = 56
 NUM_PINS = 63
 NUM_TOGGLES = 4
@@ -93,6 +94,12 @@ TOGGLE_POSITIONS = [
     np.array([66.0, 0.0], dtype=np.float32),
     np.array([0.0, -66.0], dtype=np.float32),
     np.array([-66.0, 0.0], dtype=np.float32),
+]
+LOADER_POSITIONS = [
+    np.array([-60.0, 48.0], dtype=np.float32),
+    np.array([60.0, 48.0], dtype=np.float32),
+    np.array([-60.0, -48.0], dtype=np.float32),
+    np.array([60.0, -48.0], dtype=np.float32),
 ]
 PERMANENT_OBSTACLES = [Obstacle(0.0, 0.0, 8.0, False)] + [
     Obstacle(float(p[0]), float(p[1]), 4.0, False) for p in TOGGLE_POSITIONS
@@ -287,9 +294,7 @@ class OverrideGame(VexGame):
             loader_count = self.state["loaders"][loader_index]
             if loader_count <= 0 or state["held_cups"] >= MAX_HELD_CUPS:
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
-            loader_position = np.array(
-                [-60.0 if loader_index % 2 == 0 else 60.0,
-                 48.0 if loader_index < 2 else -48.0], dtype=np.float32)
+            loader_position = LOADER_POSITIONS[loader_index]
             event = ActionEvent("clear_loader", {"loader_index": loader_index})
             return self._move(agent, loader_position, event), 0.0
         if selected == Actions.TOGGLE_QUADRANT:
@@ -421,14 +426,43 @@ class OverrideGame(VexGame):
         return PERMANENT_OBSTACLES
 
     def render_field_markings(self, ax: Any) -> None:
-        # Override has no Push Back autonomous center line.
+        # Render the square Midfield, diagonal Autonomous Lines, and Load Zones.
         import matplotlib.patches as patches
 
         field_half = self.field_size_inches / 2
+        ax.set_facecolor("#d7d7d7")
         ax.add_patch(patches.Rectangle(
             (-field_half, -field_half), self.field_size_inches, self.field_size_inches,
             fill=False, edgecolor="black", linewidth=1.5,
         ))
+
+        midfield_half = MIDFIELD_SIZE_INCHES / 2
+        ax.add_patch(patches.Rectangle(
+            (-midfield_half, -midfield_half), MIDFIELD_SIZE_INCHES, MIDFIELD_SIZE_INCHES,
+            fill=False, edgecolor="white", linewidth=2.5, zorder=1,
+        ))
+
+        for offset in (-24.0, 24.0):
+            ax.plot(
+                [-field_half, field_half],
+                [field_half + offset, -field_half + offset],
+                color="white", linewidth=2.0, zorder=1,
+            )
+
+        for x, color in ((-field_half, "red"), (field_half, "blue")):
+            for y in (48.0, -48.0):
+                zone_x = -field_half if x < 0 else field_half - 18.0
+                ax.add_patch(patches.Rectangle(
+                    (zone_x, y - 12.0),
+                    18.0, 24.0,
+                    fill=False, edgecolor=color, linewidth=2.0, zorder=1,
+                ))
+
+    def camera_fov_degrees(self) -> float:
+        return FOV
+
+    def camera_range_inches(self) -> float:
+        return 72.0
 
     def split_action(self, action: int, observation: np.ndarray, robot: Robot) -> List[str]:
         # Convert a high-level action into controller command strings.
@@ -450,10 +484,38 @@ class OverrideGame(VexGame):
     def render_game_elements(self, ax: Any) -> None:
         # Draw Goals, Toggles, and visible field objects on a Matplotlib axis.
         import matplotlib.patches as patches
-        for position in GOAL_POSITIONS.values():
-            ax.add_patch(patches.Circle(position, 5.0, fill=False, color="black"))
+
+        goal_colors = {
+            GoalType.RED_1: "red", GoalType.RED_2: "red",
+            GoalType.BLUE_1: "blue", GoalType.BLUE_2: "blue",
+        }
+        for goal_type, position in GOAL_POSITIONS.items():
+            ax.add_patch(patches.RegularPolygon(
+                position, numVertices=8, radius=5.0,
+                orientation=np.pi / 8,
+                fill=False, edgecolor=goal_colors.get(goal_type, "black"),
+                linewidth=2.0, zorder=3,
+            ))
+
         for index, position in enumerate(TOGGLE_POSITIONS):
-            ax.add_patch(patches.Circle(position, 3.0, color=self.state["toggles"][index] or "gray"))
+            angle = np.arctan2(position[1], position[0])
+            ax.add_patch(patches.RegularPolygon(
+                position, numVertices=3, radius=6.0,
+                orientation=angle, color=self.state["toggles"][index] or "gray",
+                zorder=3,
+            ))
+
+        for index, position in enumerate(LOADER_POSITIONS):
+            loader_count = self.state["loaders"][index]
+            loader_color = "red" if position[0] < 0 else "blue"
+            ax.add_patch(patches.Rectangle(
+                (position[0] - 6.0, position[1] - 3.0), 12.0, 6.0,
+                fill=False, edgecolor=loader_color, linewidth=2.0, zorder=3,
+            ))
+            ax.text(
+                position[0], position[1], str(loader_count),
+                ha="center", va="center", fontsize=7, color=loader_color, zorder=4,
+            )
         for obj in self.state["objects"]:
             if obj["status"] == ObjectStatus.ON_FIELD:
                 ax.add_patch(patches.Circle(obj["position"], 2.4, color=obj["team"] or "gold"))

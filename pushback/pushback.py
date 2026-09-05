@@ -2003,6 +2003,17 @@ class PushBackGame(VexGame):
     # =========================================================================
     # Rendering
     # =========================================================================
+
+    def render_field_markings(self, ax: Any) -> None:
+        """Render Push Back field markings."""
+        field_half = self.field_size_inches / 2
+        ax.plot([-field_half, field_half], [0, 0], color='#d0d0d0', linewidth=2)
+
+    def camera_fov_degrees(self) -> float:
+        return FOV
+
+    def camera_range_inches(self) -> float:
+        return 72.0
     
     def render_game_elements(self, ax: Any) -> None:
         """Render Push Back game elements."""
