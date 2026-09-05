@@ -346,6 +346,19 @@ class VexGame(ABC):
     # =========================================================================
     # Rendering
     # =========================================================================
+
+    def render_field_markings(self, ax: Any) -> None:
+        """Render field markings shared by the game's PNG output."""
+        field_half = self.field_size_inches / 2
+        ax.plot([-field_half, field_half], [0, 0], color='#d0d0d0', linewidth=2)
+
+    def camera_fov_degrees(self) -> float:
+        """Return the camera field of view used by the renderer."""
+        return 90.0
+
+    def camera_range_inches(self) -> float:
+        """Return the camera range used by the renderer."""
+        return 72.0
     
     @abstractmethod
     def render_game_elements(self, ax: Any) -> None:

@@ -420,6 +420,16 @@ class OverrideGame(VexGame):
         # Return field structures used by the path planner.
         return PERMANENT_OBSTACLES
 
+    def render_field_markings(self, ax: Any) -> None:
+        # Override has no Push Back autonomous center line.
+        import matplotlib.patches as patches
+
+        field_half = self.field_size_inches / 2
+        ax.add_patch(patches.Rectangle(
+            (-field_half, -field_half), self.field_size_inches, self.field_size_inches,
+            fill=False, edgecolor="black", linewidth=1.5,
+        ))
+
     def split_action(self, action: int, observation: np.ndarray, robot: Robot) -> List[str]:
         # Convert a high-level action into controller command strings.
         if action == Actions.IDLE.value:
