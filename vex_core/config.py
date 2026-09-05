@@ -30,7 +30,7 @@ class VexEnvConfig:
     def add_cli_args(
         cls, 
         parser: argparse.ArgumentParser, 
-        game: Optional[str] = "vexai_skills",
+        game: Optional[str] = "override",
         render_mode: Optional[str] = "image",
         experiment_path: Optional[str] = "vex_env_output",
         randomize: Optional[bool] = True,
@@ -150,7 +150,7 @@ class VexEnvConfig:
         metadata_overrides = cls.read_from_metadata(experiment_path, {})
 
         # Resolve final values: prefer CLI args, then metadata, then hardcoded defaults
-        game_name = args.game if (hasattr(args, "game") and args.game is not None) else metadata_overrides.get("game", "vexai_skills")
+        game_name = args.game if (hasattr(args, "game") and args.game is not None) else metadata_overrides.get("game", "override")
         communication_mode_str = args.communication_mode if (hasattr(args, "communication_mode") and args.communication_mode is not None) else metadata_overrides.get("communication_mode", "none")
         randomize = args.randomize if (hasattr(args, "randomize") and args.randomize is not None) else metadata_overrides.get("randomize", True)
         deterministic = args.deterministic if (hasattr(args, "deterministic") and args.deterministic is not None) else metadata_overrides.get("deterministic", False)

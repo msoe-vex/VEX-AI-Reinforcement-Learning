@@ -16,6 +16,7 @@ import glob
 from vex_core.base_env import VexMultiAgentEnv
 from vex_core.config import VexEnvConfig, CommunicationOption
 from pushback import PushBackGame
+from override import OverrideGame
 from vex_custom_model import VexCustomPPO
 
 from vex_model_compile import compile_checkpoint_to_torchscript
@@ -55,6 +56,13 @@ TRAINING_PHASES = [
 
 # Populated at runtime based on model capabilities (e.g., communication disabled => no message params).
 ACTIVE_TRAINING_PHASES = TRAINING_PHASES
+
+# Select the game family used for training.
+GAME = "override"
+GAME_CLASSES = {
+    "pushback": PushBackGame,
+    "override": OverrideGame,
+}
 
 
 def build_active_training_phases(phases, supports_message_params=True):
@@ -370,7 +378,7 @@ def env_creator(config=None):
         communication_mode = CommunicationOption.ATTENTION if enable_comm else CommunicationOption.NONE
         
     deterministic = config.get("deterministic", True)
-    game_name = config.get("game", "vexai_skills")
+    game_name = config.get("game", "override")
     
     env_config = VexEnvConfig(
         game_name=game_name,
@@ -382,7 +390,8 @@ def env_creator(config=None):
         copy_message_dropout_prob=float(config.get("copy_message_dropout_prob", 0.0)),
     )
     
-    game = PushBackGame.get_game(
+    game_class = GAME_CLASSES[GAME]
+    game = game_class.get_game(
         game_name,
         communication_mode=communication_mode,
         deterministic=deterministic,

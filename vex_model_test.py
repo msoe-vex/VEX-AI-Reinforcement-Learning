@@ -14,6 +14,14 @@ from pushback import PushBackGame
 from override import OverrideGame
 import json
 
+
+# Select the game family used for simulation.
+GAME = "override"
+GAME_CLASSES = {
+    "pushback": PushBackGame,
+    "override": OverrideGame,
+}
+
 def load_agent_models(model_dir, agents, device):
     """
     Load models for each agent from the model directory.
@@ -96,7 +104,8 @@ def run_simulation(
     print(f"Using device: {device}")
 
     # Initialize the game/environment with matching communication configuration
-    game = PushBackGame.get_game(
+    game_class = GAME_CLASSES[GAME]
+    game = game_class.get_game(
         config.game_name,
         communication_mode=config.communication_mode,
         deterministic=config.deterministic,
