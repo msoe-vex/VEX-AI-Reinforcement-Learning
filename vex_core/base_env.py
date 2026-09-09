@@ -1269,8 +1269,13 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         field_half = self.game.field_size_inches / 2
         ax.set_xlim(-field_half, field_half)
         ax.set_ylim(-field_half, field_half)
-        ax.set_facecolor('white')
+        ax.set_facecolor('#d7d7d7')
         ax.set_aspect('equal')
+        tile_size = 12.0
+        tile_edges = np.arange(-field_half + tile_size, field_half, tile_size)
+        for edge in tile_edges:
+            ax.axvline(edge, color='#c8c8c8', linewidth=0.45, zorder=0)
+            ax.axhline(edge, color='#c8c8c8', linewidth=0.45, zorder=0)
         
         ax_info.set_xlim(0, 1)
         ax_info.set_ylim(0, 1)
@@ -1287,7 +1292,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self._render_robots_and_info(ax, ax_info, action_dict, rewards)
         
         # Title
-        ax.set_title("VEX Environment", fontsize=14, fontweight='bold')
+        ax.set_title("VEX Override Field", fontsize=14, fontweight='bold')
         
         # Save or display
         if self.render_mode == "human":

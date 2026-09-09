@@ -96,10 +96,10 @@ TOGGLE_POSITIONS = [
     np.array([-66.0, 0.0], dtype=np.float32),
 ]
 LOADER_POSITIONS = [
-    np.array([-60.0, 48.0], dtype=np.float32),
-    np.array([60.0, 48.0], dtype=np.float32),
-    np.array([-60.0, -48.0], dtype=np.float32),
-    np.array([60.0, -48.0], dtype=np.float32),
+    np.array([0.0, FIELD_HALF], dtype=np.float32),
+    np.array([FIELD_HALF, 0.0], dtype=np.float32),
+    np.array([0.0, -FIELD_HALF], dtype=np.float32),
+    np.array([-FIELD_HALF, 0.0], dtype=np.float32),
 ]
 PERMANENT_OBSTACLES = [Obstacle(0.0, 0.0, 8.0, False)] + [
     Obstacle(float(p[0]), float(p[1]), 4.0, False) for p in TOGGLE_POSITIONS
@@ -442,21 +442,31 @@ class OverrideGame(VexGame):
             fill=False, edgecolor="white", linewidth=2.5, zorder=1,
         ))
 
-        for offset in (-24.0, 24.0):
+        for field_x, field_y, square_x, square_y in (
+            (-field_half, field_half, -midfield_half, midfield_half),
+            (field_half, field_half, midfield_half, midfield_half),
+            (-field_half, -field_half, -midfield_half, -midfield_half),
+            (field_half, -field_half, midfield_half, -midfield_half),
+        ):
             ax.plot(
-                [-field_half, field_half],
-                [field_half + offset, -field_half + offset],
+                [field_x, square_x], [field_y, square_y],
                 color="white", linewidth=2.0, zorder=1,
             )
 
+        zone_inset = 12.0
+        zone_length = 24.0
         for x, color in ((-field_half, "red"), (field_half, "blue")):
-            for y in (48.0, -48.0):
-                zone_x = -field_half if x < 0 else field_half - 18.0
-                ax.add_patch(patches.Rectangle(
-                    (zone_x, y - 12.0),
-                    18.0, 24.0,
-                    fill=False, edgecolor=color, linewidth=2.0, zorder=1,
-                ))
+            inner_x = x + zone_inset if x < 0 else x - zone_inset
+            for y in (field_half, -field_half):
+                inner_y = y - zone_length if y > 0 else y + zone_length
+                ax.plot(
+                    [x, inner_x], [inner_y, inner_y],
+                    color=color, linewidth=2.0, zorder=1,
+                )
+                ax.plot(
+                    [inner_x, inner_x], [inner_y, y],
+                    color=color, linewidth=2.0, zorder=1,
+                )
 
     def camera_fov_degrees(self) -> float:
         return FOV
@@ -472,9 +482,11 @@ class OverrideGame(VexGame):
             return ["TURN_TO_POINT;(0.0,0.0);40"]
         if Actions.TAKE_FROM_LOADER_TL.value <= action <= Actions.TAKE_FROM_LOADER_BR.value:
             loader_index = action - Actions.TAKE_FROM_LOADER_TL.value
-            loader_x = -60.0 if loader_index % 2 == 0 else 60.0
-            loader_y = 48.0 if loader_index < 2 else -48.0
-            return [f"FOLLOW;({loader_x:.1f}, {loader_y:.1f});50", "CLEAR_LOADER"]
+            loader_position = LOADER_POSITIONS[loader_index]
+            return [
+                f"FOLLOW;({loader_position[0]:.1f}, {loader_position[1]:.1f});50",
+                "CLEAR_LOADER",
+            ]
         return ["WAIT;0.5"]
 
     def action_to_name(self, action: int) -> str:
@@ -507,9 +519,18 @@ class OverrideGame(VexGame):
 
         for index, position in enumerate(LOADER_POSITIONS):
             loader_count = self.state["loaders"][index]
-            loader_color = "red" if position[0] < 0 else "blue"
+            loader_color = "#f4df00"
+            if position[1] > 0:
+                loader_xy = (position[0] - 6.0, position[1] - 12.0)
+            elif position[1] < 0:
+                loader_xy = (position[0] - 6.0, position[1])
+            elif position[0] > 0:
+                loader_xy = (position[0] - 12.0, position[1] - 6.0)
+            else:
+                loader_xy = (position[0], position[1] - 6.0)
             ax.add_patch(patches.Rectangle(
-                (position[0] - 6.0, position[1] - 3.0), 12.0, 6.0,
+                loader_xy,
+                12.0, 12.0,
                 fill=False, edgecolor=loader_color, linewidth=2.0, zorder=3,
             ))
             ax.text(
