@@ -1271,7 +1271,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         ax.set_ylim(-field_half, field_half)
         ax.set_facecolor('#d7d7d7')
         ax.set_aspect('equal')
-        tile_size = 12.0
+        tile_size = 24.0
         tile_edges = np.arange(-field_half + tile_size, field_half, tile_size)
         for edge in tile_edges:
             ax.axvline(edge, color='#c8c8c8', linewidth=0.45, zorder=0)

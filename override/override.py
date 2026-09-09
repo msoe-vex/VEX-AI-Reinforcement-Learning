@@ -79,27 +79,47 @@ class GoalType(Enum):
 
 
 GOAL_POSITIONS = {
-    GoalType.SHORT_1: np.array([-36.0, 36.0], dtype=np.float32),
-    GoalType.SHORT_2: np.array([36.0, 36.0], dtype=np.float32),
-    GoalType.SHORT_3: np.array([-36.0, -36.0], dtype=np.float32),
-    GoalType.SHORT_4: np.array([36.0, -36.0], dtype=np.float32),
+    GoalType.SHORT_1: np.array([48.0, 24.0], dtype=np.float32),
+    GoalType.SHORT_2: np.array([24.0, 48.0], dtype=np.float32),
+    GoalType.SHORT_3: np.array([-48.0, -24.0], dtype=np.float32),
+    GoalType.SHORT_4: np.array([-24.0, -48.0], dtype=np.float32),
     GoalType.TALL: np.array([0.0, 0.0], dtype=np.float32),
-    GoalType.RED_1: np.array([-60.0, 24.0], dtype=np.float32),
-    GoalType.RED_2: np.array([-60.0, -24.0], dtype=np.float32),
-    GoalType.BLUE_1: np.array([60.0, 24.0], dtype=np.float32),
-    GoalType.BLUE_2: np.array([60.0, -24.0], dtype=np.float32),
+    GoalType.RED_1: np.array([-48.0, 24.0], dtype=np.float32),
+    GoalType.RED_2: np.array([-24.0, 48.0], dtype=np.float32),
+    GoalType.BLUE_1: np.array([48.0, -24.0], dtype=np.float32),
+    GoalType.BLUE_2: np.array([24.0, -48.0], dtype=np.float32),
 }
 TOGGLE_POSITIONS = [
-    np.array([0.0, 66.0], dtype=np.float32),
-    np.array([66.0, 0.0], dtype=np.float32),
-    np.array([0.0, -66.0], dtype=np.float32),
-    np.array([-66.0, 0.0], dtype=np.float32),
-]
-LOADER_POSITIONS = [
     np.array([0.0, FIELD_HALF], dtype=np.float32),
     np.array([FIELD_HALF, 0.0], dtype=np.float32),
     np.array([0.0, -FIELD_HALF], dtype=np.float32),
     np.array([-FIELD_HALF, 0.0], dtype=np.float32),
+]
+LOADER_POSITIONS = [
+    np.array([-FIELD_HALF, 60.0], dtype=np.float32),
+    np.array([FIELD_HALF, 60.0], dtype=np.float32),
+    np.array([-FIELD_HALF, -60.0], dtype=np.float32),
+    np.array([FIELD_HALF, -60.0], dtype=np.float32),
+]
+PIN_CLUSTER_OFFSETS = (
+    (-10.0, 0.0), (-6.0, 6.0), (0.0, 10.0), (6.0, 6.0),
+    (10.0, 0.0), (-6.0, -6.0), (0.0, -10.0), (6.0, -6.0),
+    (-8.0, 3.0), (8.0, 3.0), (-3.0, 8.0), (3.0, -8.0),
+)
+PIN_CLUSTER_CENTERS = (
+    (-24.0, 24.0), (24.0, 24.0), (-24.0, -24.0), (24.0, -24.0),
+    (0.0, 0.0), (-24.0, 0.0), (0.0, 24.0), (24.0, 0.0), (0.0, -24.0),
+)
+PIN_START_POSITIONS = [
+    np.array([x + dx, y + dy], dtype=np.float32)
+    for x, y in PIN_CLUSTER_CENTERS
+    for dx, dy in PIN_CLUSTER_OFFSETS[:7]
+]
+CUP_START_POSITIONS = [
+    *[np.array([x, FIELD_HALF - 6.0], dtype=np.float32) for x in np.linspace(-60.0, 60.0, 14)],
+    *[np.array([FIELD_HALF - 6.0, y], dtype=np.float32) for y in np.linspace(-60.0, 60.0, 14)],
+    *[np.array([x, -FIELD_HALF + 6.0], dtype=np.float32) for x in np.linspace(60.0, -60.0, 14)],
+    *[np.array([-FIELD_HALF + 6.0, y], dtype=np.float32) for y in np.linspace(60.0, -60.0, 14)],
 ]
 PERMANENT_OBSTACLES = [Obstacle(0.0, 0.0, 8.0, False)] + [
     Obstacle(float(p[0]), float(p[1]), 4.0, False) for p in TOGGLE_POSITIONS
@@ -174,10 +194,12 @@ class OverrideGame(VexGame):
         # Clear the current game state before the environment reinitializes it.
         self.state = None
 
-    def _object(self, kind: str, position: np.ndarray, team: Optional[str] = None) -> Dict:
+    def _object(self, kind: str, position: np.ndarray, team: Optional[str] = None,
+                face_up: Optional[bool] = None) -> Dict:
         # Create a field object record for a Pin or Cup.
         return {"kind": kind, "position": np.asarray(position, dtype=np.float32),
-                "team": team, "status": ObjectStatus.ON_FIELD, "held_by": None, "goal": None}
+                "team": team, "face_up": face_up, "status": ObjectStatus.ON_FIELD,
+                "held_by": None, "goal": None}
 
     def get_initial_state(self, randomize: bool = False, seed: Optional[int] = None) -> Dict:
         # Create robots, field objects, Toggles, and available Loaders.
@@ -197,15 +219,16 @@ class OverrideGame(VexGame):
             }
         objects = []
         for index in range(NUM_PINS):
-            position = np.array([np.linspace(-66, 66, NUM_PINS)[index], 0], dtype=np.float32)
+            position = PIN_START_POSITIONS[index].copy()
             if randomize:
                 position = np.random.uniform(-66, 66, 2).astype(np.float32)
-            objects.append(self._object("pin", position, "red" if index % 2 == 0 else "blue"))
+            pin_color = ("red", "blue", "yellow")[index % 3]
+            objects.append(self._object("pin", position, pin_color))
         for index in range(NUM_CUPS):
-            position = np.array([0, np.linspace(-60, 60, NUM_CUPS)[index]], dtype=np.float32)
+            position = CUP_START_POSITIONS[index].copy()
             if randomize:
                 position = np.random.uniform(-66, 66, 2).astype(np.float32)
-            objects.append(self._object("cup", position))
+            objects.append(self._object("cup", position, face_up=(index % 2 == 0)))
         self.state = {"agents": agents, "objects": objects, "toggles": [None] * NUM_TOGGLES,
                   "loaders": [6] * NUM_TOGGLES, "autonomous_winner": None}
         return self.state
@@ -439,14 +462,16 @@ class OverrideGame(VexGame):
         midfield_half = MIDFIELD_SIZE_INCHES / 2
         ax.add_patch(patches.Rectangle(
             (-midfield_half, -midfield_half), MIDFIELD_SIZE_INCHES, MIDFIELD_SIZE_INCHES,
-            fill=False, edgecolor="white", linewidth=2.5, zorder=1,
+            fill=False, edgecolor="white", linewidth=2.5, angle=45,
+            rotation_point="center", zorder=1,
         ))
 
+        square_side_midpoint = midfield_half / np.sqrt(2.0)
         for field_x, field_y, square_x, square_y in (
-            (-field_half, field_half, -midfield_half, midfield_half),
-            (field_half, field_half, midfield_half, midfield_half),
-            (-field_half, -field_half, -midfield_half, -midfield_half),
-            (field_half, -field_half, midfield_half, -midfield_half),
+            (-field_half, field_half, -square_side_midpoint, square_side_midpoint),
+            (field_half, field_half, square_side_midpoint, square_side_midpoint),
+            (-field_half, -field_half, -square_side_midpoint, -square_side_midpoint),
+            (field_half, -field_half, square_side_midpoint, -square_side_midpoint),
         ):
             ax.plot(
                 [field_x, square_x], [field_y, square_y],
@@ -510,27 +535,30 @@ class OverrideGame(VexGame):
             ))
 
         for index, position in enumerate(TOGGLE_POSITIONS):
-            angle = np.arctan2(position[1], position[0])
-            ax.add_patch(patches.RegularPolygon(
-                position, numVertices=3, radius=6.0,
-                orientation=angle, color=self.state["toggles"][index] or "gray",
-                zorder=3,
+            toggle_color = self.state["toggles"][index] or "yellow"
+            if position[0] == 0:
+                toggle_xy = (position[0] - 12.0, position[1] - 2.0)
+                toggle_width, toggle_height = 24.0, 4.0
+            else:
+                toggle_xy = (position[0] - 2.0, position[1] - 12.0)
+                toggle_width, toggle_height = 4.0, 24.0
+            ax.add_patch(patches.Rectangle(
+                toggle_xy, toggle_width, toggle_height,
+                facecolor=toggle_color, edgecolor="black", linewidth=1.0, zorder=3,
             ))
 
         for index, position in enumerate(LOADER_POSITIONS):
             loader_count = self.state["loaders"][index]
             loader_color = "#f4df00"
-            if position[1] > 0:
-                loader_xy = (position[0] - 6.0, position[1] - 12.0)
-            elif position[1] < 0:
-                loader_xy = (position[0] - 6.0, position[1])
-            elif position[0] > 0:
-                loader_xy = (position[0] - 12.0, position[1] - 6.0)
+            if position[0] < 0:
+                loader_xy = (position[0], position[1] - 3.0)
+                loader_width, loader_height = 4.0, 6.0
             else:
-                loader_xy = (position[0], position[1] - 6.0)
+                loader_xy = (position[0] - 4.0, position[1] - 3.0)
+                loader_width, loader_height = 4.0, 6.0
             ax.add_patch(patches.Rectangle(
                 loader_xy,
-                12.0, 12.0,
+                loader_width, loader_height,
                 fill=False, edgecolor=loader_color, linewidth=2.0, zorder=3,
             ))
             ax.text(
@@ -539,7 +567,26 @@ class OverrideGame(VexGame):
             )
         for obj in self.state["objects"]:
             if obj["status"] == ObjectStatus.ON_FIELD:
-                ax.add_patch(patches.Circle(obj["position"], 2.4, color=obj["team"] or "gold"))
+                if obj["kind"] == "cup":
+                    cup_radius = 2.4
+                    upper_color = "#d9d9d9" if obj["face_up"] else "#666666"
+                    lower_color = "#666666" if obj["face_up"] else "#d9d9d9"
+                    ax.add_patch(patches.Wedge(
+                        obj["position"], cup_radius, 0.0, 180.0,
+                        facecolor=upper_color, edgecolor="black", linewidth=0.7,
+                    ))
+                    ax.add_patch(patches.Wedge(
+                        obj["position"], cup_radius, 180.0, 360.0,
+                        facecolor=lower_color, edgecolor="black", linewidth=0.7,
+                    ))
+                    ax.add_patch(patches.Circle(
+                        obj["position"], cup_radius, fill=False,
+                        edgecolor="black", linewidth=0.8,
+                    ))
+                else:
+                    ax.add_patch(patches.Circle(
+                        obj["position"], 2.4, color=obj["team"] or "gold"
+                    ))
 
     def render_info_panel(self, ax_info: Any, agents: List[str] = None, actions: Optional[Dict] = None,
                           rewards: Optional[Dict] = None, num_steps: int = 0,
