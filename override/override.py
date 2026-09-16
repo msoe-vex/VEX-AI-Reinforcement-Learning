@@ -136,33 +136,50 @@ CENTER_STACK_CUP_POSITIONS = [
     (-CENTER_SQUARE_CORNER, 0.0),
 ]
 CENTER_STACK_PIN_POSITIONS = [
-    (0.0, CENTER_SQUARE_CORNER), (0.0, CENTER_SQUARE_CORNER),
-    (CENTER_SQUARE_CORNER, 0.0), (CENTER_SQUARE_CORNER, 0.0),
-    (0.0, -CENTER_SQUARE_CORNER), (0.0, -CENTER_SQUARE_CORNER),
-    (-CENTER_SQUARE_CORNER, 0.0), (-CENTER_SQUARE_CORNER, 0.0),
+    (0.0, CENTER_SQUARE_CORNER),
+    (CENTER_SQUARE_CORNER, 0.0),
+    (0.0, -CENTER_SQUARE_CORNER),
+    (-CENTER_SQUARE_CORNER, 0.0),
 ]
 YELLOW_STACK_CUP_POSITIONS = [
     (24.0, 24.0), (-24.0, -24.0),
     (48.0, 48.0), (-48.0, -48.0),
 ]
 YELLOW_STACK_PIN_POSITIONS = YELLOW_STACK_CUP_POSITIONS.copy()
+TOGGLE_STACK_CUP_POSITIONS = [
+    (-24.0, FIELD_HALF - 2.4), (-19.2, FIELD_HALF - 2.4), (-14.4, FIELD_HALF - 2.4),
+    (14.4, FIELD_HALF - 2.4), (19.2, FIELD_HALF - 2.4), (24.0, FIELD_HALF - 2.4),
+    (FIELD_HALF - 2.4, -24.0), (FIELD_HALF - 2.4, -19.2), (FIELD_HALF - 2.4, -14.4),
+    (FIELD_HALF - 2.4, 14.4), (FIELD_HALF - 2.4, 19.2), (FIELD_HALF - 2.4, 24.0),
+    (-24.0, -FIELD_HALF + 2.4), (-19.2, -FIELD_HALF + 2.4), (-14.4, -FIELD_HALF + 2.4),
+    (14.4, -FIELD_HALF + 2.4), (19.2, -FIELD_HALF + 2.4), (24.0, -FIELD_HALF + 2.4),
+    (-FIELD_HALF + 2.4, -24.0), (-FIELD_HALF + 2.4, -19.2), (-FIELD_HALF + 2.4, -14.4),
+    (-FIELD_HALF + 2.4, 14.4), (-FIELD_HALF + 2.4, 19.2), (-FIELD_HALF + 2.4, 24.0),
+]
+TOGGLE_STACK_PIN_POSITIONS = [
+    (-19.2, FIELD_HALF - 2.4), (19.2, FIELD_HALF - 2.4),
+    (FIELD_HALF - 2.4, -19.2), (FIELD_HALF - 2.4, 19.2),
+    (-19.2, -FIELD_HALF + 2.4), (19.2, -FIELD_HALF + 2.4),
+    (-FIELD_HALF + 2.4, -19.2), (-FIELD_HALF + 2.4, 19.2),
+]
 RED_YELLOW_PIN_POSITIONS = [
-    (-48.0, 24.0), (-48.0, 0.0), (-48.0, -24.0), (0.0, -36.0),
+       (-48.0, 24.0), (-48.0, 0.0), (-48.0, -24.0), (0.0, -36.0),
     (-24.0, 48.0), (-24.0, 0.0), (-24.0, -48.0), (-12.0, -12.0),
-    (-60.0, 36.0), (-60.0, 12.0), (-60.0, -12.0), (-60.0, -36.0),
+       (-60.0, 36.0), (-60.0, 12.0), (-60.0, -12.0), (-60.0, -36.0),
 ]
 BLUE_YELLOW_PIN_POSITIONS = [
     (48.0, 24.0), (48.0, 0.0), (48.0, -24.0), (12.0, -12.0),
     (24.0, 48.0), (24.0, 0.0), (0.0, -24.0), (24.0, -48.0),
     (60.0, 36.0), (60.0, 12.0), (60.0, -12.0), (60.0, -36.0),
 ]
+RED_EXTRA_PIN_POSITIONS = [(30.0, 30.0), (30.0, -30.0)]
+BLUE_EXTRA_PIN_POSITIONS = [(-30.0, 30.0), (-30.0, -30.0)]
 YELLOW_YELLOW_PIN_POSITIONS = [
-    (-12.0, 24.0), (0.0, 24.0), (12.0, 24.0),
-    (-12.0, 12.0), (0.0, 12.0), (12.0, 12.0),
-    (-24.0, 12.0), (24.0, 12.0),
+    *TOGGLE_STACK_PIN_POSITIONS,
+    (24.0, 12.0),
     (-36.0, 0.0), (-12.0, 0.0), (12.0, 0.0), (36.0, 0.0),
     (0.0, -12.0),
-    (-12.0, -24.0), (12.0, -24.0),
+    (0.0, -24.0),
     *YELLOW_STACK_PIN_POSITIONS,
 ]
 PIN_START_POSITIONS = [
@@ -176,11 +193,12 @@ PIN_START_POSITIONS = [
         + HORIZONTAL_PIN_POSITIONS
         + RED_YELLOW_PIN_POSITIONS[:-4]
         + BLUE_YELLOW_PIN_POSITIONS[:-4]
+        + RED_EXTRA_PIN_POSITIONS
+        + BLUE_EXTRA_PIN_POSITIONS
         + YELLOW_YELLOW_PIN_POSITIONS
     )
 ]
-CUP_WALL_OFFSETS = (-63.0, -54.0, -45.0, -36.0, -27.0, -18.0, -9.0,
-                    9.0, 18.0, 27.0, 36.0, 45.0, 54.0, 63.0)
+CUP_WALL_OFFSETS = (-63.0, -54.0, -18.0, 18.0, 54.0, 63.0)
 CUP_START_POSITIONS = [
     np.array(SPECIAL_CUP_POSITION, dtype=np.float32),
     np.array(MIRRORED_CUP_POSITION, dtype=np.float32),
@@ -188,10 +206,11 @@ CUP_START_POSITIONS = [
     np.array(LOWER_LEFT_CUP_POSITION, dtype=np.float32),
     *[np.array(position, dtype=np.float32) for position in CENTER_STACK_CUP_POSITIONS],
     *[np.array(position, dtype=np.float32) for position in YELLOW_STACK_CUP_POSITIONS],
+    *[np.array(position, dtype=np.float32) for position in TOGGLE_STACK_CUP_POSITIONS],
     *[np.array([x, FIELD_HALF - 6.0], dtype=np.float32) for x in CUP_WALL_OFFSETS],
     *[np.array([FIELD_HALF - 6.0, y], dtype=np.float32) for y in CUP_WALL_OFFSETS],
     *[np.array([x, -FIELD_HALF + 6.0], dtype=np.float32) for x in reversed(CUP_WALL_OFFSETS)],
-    *[np.array([-FIELD_HALF + 6.0, y], dtype=np.float32) for y in reversed(CUP_WALL_OFFSETS[:-12])],
+    *[np.array([-FIELD_HALF + 6.0, y], dtype=np.float32) for y in reversed(CUP_WALL_OFFSETS[:-4])],
 ]
 PIN_COLOR_PAIRS = (
     ("red", "yellow"), ("blue", "yellow"),
@@ -202,13 +221,14 @@ PIN_COLOR_PAIRS = (
     ("blue", "yellow"), ("red", "yellow"),
     ("red", "yellow"), ("blue", "yellow"),
     ("blue", "yellow"), ("red", "yellow"),
-    ("blue", "yellow"), ("red", "yellow"),
-    ("blue", "yellow"), ("red", "yellow"),
-    ("blue", "yellow"), ("red", "yellow"),
-    ("blue", "yellow"), ("red", "yellow"),
-    ("red", "blue"), ("red", "blue"), ("red", "blue"), ("red", "blue"),
+    ("red", "blue"), ("red", "blue"),
+    ("red", "blue"), ("red", "blue"),
+    ("red", "yellow"), ("red", "yellow"),
+    ("blue", "yellow"), ("blue", "yellow"),
     *[("red", "yellow")] * 8,
     *[("blue", "yellow")] * 8,
+    ("red", "yellow"), ("red", "yellow"),
+    ("blue", "yellow"), ("blue", "yellow"),
     *[("yellow", "yellow")] * 19,
 )
 PERMANENT_OBSTACLES = [
@@ -327,9 +347,20 @@ class OverrideGame(VexGame):
             if randomize:
                 position = np.random.uniform(-66, 66, 2).astype(np.float32)
             primary_color, secondary_color = PIN_COLOR_PAIRS[index]
-            stack_pin = 16 <= index < 24 or index >= NUM_PINS - len(YELLOW_STACK_PIN_POSITIONS)
+            yellow_stack_count = len(YELLOW_STACK_PIN_POSITIONS) + len(TOGGLE_STACK_PIN_POSITIONS)
+            yellow_cue_positions = {
+                tuple(round(float(value), 3) for value in position)
+                for position in YELLOW_STACK_PIN_POSITIONS + TOGGLE_STACK_PIN_POSITIONS
+            }
+            stack_pin = (
+                16 <= index < 20
+                or index >= NUM_PINS - yellow_stack_count
+                or tuple(round(float(value), 3) for value in position) in yellow_cue_positions
+            )
+            center_pin_face_up = index >= 18 if 16 <= index < 20 else None
             pin = self._object("pin", position, team=primary_color,
-                               face_up=True if stack_pin else (index % 2 == 0))
+                               face_up=center_pin_face_up if center_pin_face_up is not None
+                               else (True if stack_pin else (index % 2 == 0)))
             pin["front_color"] = primary_color
             pin["back_color"] = secondary_color
             objects.append(pin)
@@ -337,7 +368,7 @@ class OverrideGame(VexGame):
             position = CUP_START_POSITIONS[index].copy()
             if randomize:
                 position = np.random.uniform(-66, 66, 2).astype(np.float32)
-            stack_cup = 4 <= index < 12
+            stack_cup = 4 <= index < 36
             objects.append(self._object("cup", position, face_up=True if stack_cup else (index % 2 == 0)))
 
         preload_candidates = {
@@ -358,14 +389,36 @@ class OverrideGame(VexGame):
             agent_state["held_stack"] = [preload_index]
 
         black_goal_types = [GoalType.TALL]
+        protected_goal_pin_positions = {
+            tuple(round(float(value), 3) for value in position)
+            for position in YELLOW_STACK_PIN_POSITIONS + TOGGLE_STACK_PIN_POSITIONS
+        }
         yellow_pin_indices = [
             index for index, obj in enumerate(objects)
-            if obj["kind"] == "pin" and obj.get("front_color") == "yellow" and obj.get("back_color") == "yellow"
+            if obj["kind"] == "pin"
+            and obj.get("front_color") == "yellow"
+            and obj.get("back_color") == "yellow"
+            and tuple(round(float(value), 3) for value in obj["position"]) not in protected_goal_pin_positions
         ]
         for goal_type, obj_index in zip(black_goal_types, yellow_pin_indices[:len(black_goal_types)]):
             objects[obj_index]["status"] = ObjectStatus.SCORED
             objects[obj_index]["goal"] = goal_type.value
             objects[obj_index]["held_by"] = None
+
+        protected_yellow_positions = {
+            tuple(float(value) for value in position)
+            for position in YELLOW_STACK_PIN_POSITIONS + TOGGLE_STACK_PIN_POSITIONS
+        }
+        removable_yellow_indices = [
+            index for index, obj in enumerate(objects)
+            if obj["kind"] == "pin"
+            and obj["status"] == ObjectStatus.ON_FIELD
+            and obj.get("front_color") == "yellow"
+            and obj.get("back_color") == "yellow"
+            and tuple(float(value) for value in obj["position"]) not in protected_yellow_positions
+        ]
+        for object_index in sorted(removable_yellow_indices[-6:], reverse=True):
+            objects.pop(object_index)
 
         loader_teams = ("red", "blue", "red", "blue")
         loader_pin_candidates = {
@@ -379,11 +432,21 @@ class OverrideGame(VexGame):
             ]
             for team in ("red", "blue")
         }
+        visible_cup_positions = {
+            tuple(round(float(value), 3) for value in position)
+            for position in (
+                [SPECIAL_CUP_POSITION, MIRRORED_CUP_POSITION,
+                 UPPER_RIGHT_CUP_POSITION, LOWER_LEFT_CUP_POSITION]
+                + CENTER_STACK_CUP_POSITIONS
+                + YELLOW_STACK_CUP_POSITIONS
+                + TOGGLE_STACK_CUP_POSITIONS
+            )
+        }
         loader_cup_candidates = [
             index for index, obj in enumerate(objects)
-            if index >= NUM_PINS + 12
-            and obj["kind"] == "cup"
+            if obj["kind"] == "cup"
             and obj["status"] == ObjectStatus.ON_FIELD
+            and tuple(round(float(value), 3) for value in obj["position"]) not in visible_cup_positions
         ]
         loader_reserves = [5] * len(loader_teams)
         for loader_index, team in enumerate(loader_teams):
@@ -397,6 +460,23 @@ class OverrideGame(VexGame):
                         loader_index=loader_index,
                         loader_stack=stack_index,
                     )
+
+        extra_loader_cups = (1, 2, 2, 1)
+        for loader_index, extra_count in enumerate(extra_loader_cups):
+            for extra_index in range(extra_count):
+                extra_pin = self._object(
+                    "pin", LOADER_POSITIONS[loader_index].copy(), team="yellow", face_up=True,
+                )
+                extra_pin["front_color"] = "yellow"
+                extra_pin["back_color"] = "yellow"
+                extra_pin.update(
+                    status=ObjectStatus.LOADER,
+                    held_by=None,
+                    loader_index=loader_index,
+                    loader_stack=5 + extra_index,
+                )
+                objects.append(extra_pin)
+                loader_reserves[loader_index] += 1
 
         self.state = {"agents": agents, "objects": objects, "toggles": [None] * NUM_TOGGLES,
                   "loaders": [6] * NUM_TOGGLES, "loader_reserves": loader_reserves,
@@ -874,6 +954,12 @@ class OverrideGame(VexGame):
                     cup_radius = 2.4
                     upper_color = "#d9d9d9" if obj["face_up"] else "#666666"
                     lower_color = "#666666" if obj["face_up"] else "#d9d9d9"
+                    has_stacked_pin = any(
+                        other["kind"] == "pin"
+                        and other["status"] == ObjectStatus.ON_FIELD
+                        and np.allclose(other["position"], obj["position"])
+                        for other in self.state["objects"]
+                    )
                     ax.add_patch(patches.Wedge(
                         obj["position"], cup_radius, 0.0, 180.0,
                         facecolor=upper_color, edgecolor="black", linewidth=0.7, zorder=6,
@@ -886,21 +972,33 @@ class OverrideGame(VexGame):
                         obj["position"], cup_radius, fill=False,
                         edgecolor="black", linewidth=0.8, zorder=7,
                     ))
+                    if has_stacked_pin:
+                        ax.add_patch(patches.Circle(
+                            obj["position"], cup_radius + 0.6, fill=False,
+                            edgecolor="#f4df00", linewidth=1.0, zorder=5,
+                        ))
                 else:
                     pin_front = obj.get("front_color") or (obj["team"] or "yellow")
                     pin_back = obj.get("back_color") or pin_front
                     upper_color = pin_front if obj.get("face_up", True) else pin_back
                     lower_color = pin_back if obj.get("face_up", True) else pin_front
+                    has_stacked_cup = any(
+                        other["kind"] == "cup"
+                        and other["status"] == ObjectStatus.ON_FIELD
+                        and np.allclose(other["position"], obj["position"])
+                        for other in self.state["objects"]
+                    )
+                    pin_radius = 1.7 if has_stacked_cup else 2.4
                     ax.add_patch(patches.Wedge(
-                        obj["position"], 2.4, 0.0, 180.0,
+                        obj["position"], pin_radius, 0.0, 180.0,
                         facecolor=upper_color, edgecolor="black", linewidth=0.7, zorder=6,
                     ))
                     ax.add_patch(patches.Wedge(
-                        obj["position"], 2.4, 180.0, 360.0,
+                        obj["position"], pin_radius, 180.0, 360.0,
                         facecolor=lower_color, edgecolor="black", linewidth=0.7, zorder=6,
                     ))
                     ax.add_patch(patches.Circle(
-                        obj["position"], 2.4, fill=False,
+                        obj["position"], pin_radius, fill=False,
                         edgecolor="black", linewidth=0.8, zorder=7,
                     ))
 
