@@ -41,12 +41,15 @@ class Actions(Enum):
     TAKE_FROM_LOADER_BL = 9
     TAKE_FROM_LOADER_BR = 10
     IDLE = 11
+    ORIENT_NEXT_PIN = 12
+    ORIENT_NEXT_CUP = 13
 
 
 class ObjectStatus:
     ON_FIELD = 0
     HELD = 1
     SCORED = 2
+    LOADER = 3
 
 
 class ObsIndex:
@@ -101,27 +104,122 @@ LOADER_POSITIONS = [
     np.array([-FIELD_HALF, -60.0], dtype=np.float32),
     np.array([FIELD_HALF, -60.0], dtype=np.float32),
 ]
-PIN_CLUSTER_OFFSETS = (
-    (-10.0, 0.0), (-6.0, 6.0), (0.0, 10.0), (6.0, 6.0),
-    (10.0, 0.0), (-6.0, -6.0), (0.0, -10.0), (6.0, -6.0),
-    (-8.0, 3.0), (8.0, 3.0), (-3.0, 8.0), (3.0, -8.0),
-)
-PIN_CLUSTER_CENTERS = (
-    (-24.0, 24.0), (24.0, 24.0), (-24.0, -24.0), (24.0, -24.0),
-    (0.0, 0.0), (-24.0, 0.0), (0.0, 24.0), (24.0, 0.0), (0.0, -24.0),
-)
+HORIZONTAL_PIN_POSITIONS = [
+    (-36.0, 24.0), (0.0, 48.0),
+    (36.0, -24.0), (48.0, -48.0),
+]
+SPECIAL_CUP_POSITION = (-24.0, 24.0)
+SPECIAL_PIN_POSITIONS = [
+    (-32.0, 24.0), (-16.0, 24.0),
+    (-24.0, 32.0), (-24.0, 16.0),
+]
+MIRRORED_CUP_POSITION = (24.0, -24.0)
+MIRRORED_PIN_POSITIONS = [
+    (24.0, -32.0), (24.0, -16.0),
+    (32.0, -24.0), (16.0, -24.0),
+]
+UPPER_RIGHT_CUP_POSITION = (48.0, -48.0)
+UPPER_RIGHT_PIN_POSITIONS = [
+    (40.0, -48.0), (56.0, -48.0),
+    (48.0, -40.0), (48.0, -56.0),
+]
+LOWER_LEFT_CUP_POSITION = (-48.0, 48.0)
+LOWER_LEFT_PIN_POSITIONS = [
+    (-56.0, 48.0), (-40.0, 48.0),
+    (-48.0, 56.0), (-48.0, 40.0),
+]
+CENTER_SQUARE_CORNER = MIDFIELD_SIZE_INCHES / np.sqrt(2.0)
+CENTER_STACK_CUP_POSITIONS = [
+    (0.0, CENTER_SQUARE_CORNER),
+    (CENTER_SQUARE_CORNER, 0.0),
+    (0.0, -CENTER_SQUARE_CORNER),
+    (-CENTER_SQUARE_CORNER, 0.0),
+]
+CENTER_STACK_PIN_POSITIONS = [
+    (0.0, CENTER_SQUARE_CORNER), (0.0, CENTER_SQUARE_CORNER),
+    (CENTER_SQUARE_CORNER, 0.0), (CENTER_SQUARE_CORNER, 0.0),
+    (0.0, -CENTER_SQUARE_CORNER), (0.0, -CENTER_SQUARE_CORNER),
+    (-CENTER_SQUARE_CORNER, 0.0), (-CENTER_SQUARE_CORNER, 0.0),
+]
+YELLOW_STACK_CUP_POSITIONS = [
+    (24.0, 24.0), (-24.0, -24.0),
+    (48.0, 48.0), (-48.0, -48.0),
+]
+YELLOW_STACK_PIN_POSITIONS = YELLOW_STACK_CUP_POSITIONS.copy()
+RED_YELLOW_PIN_POSITIONS = [
+    (-48.0, 24.0), (-48.0, 0.0), (-48.0, -24.0), (0.0, -36.0),
+    (-24.0, 48.0), (-24.0, 0.0), (-24.0, -48.0), (-12.0, -12.0),
+    (-60.0, 36.0), (-60.0, 12.0), (-60.0, -12.0), (-60.0, -36.0),
+]
+BLUE_YELLOW_PIN_POSITIONS = [
+    (48.0, 24.0), (48.0, 0.0), (48.0, -24.0), (12.0, -12.0),
+    (24.0, 48.0), (24.0, 0.0), (0.0, -24.0), (24.0, -48.0),
+    (60.0, 36.0), (60.0, 12.0), (60.0, -12.0), (60.0, -36.0),
+]
+YELLOW_YELLOW_PIN_POSITIONS = [
+    (-12.0, 24.0), (0.0, 24.0), (12.0, 24.0),
+    (-12.0, 12.0), (0.0, 12.0), (12.0, 12.0),
+    (-24.0, 12.0), (24.0, 12.0),
+    (-36.0, 0.0), (-12.0, 0.0), (12.0, 0.0), (36.0, 0.0),
+    (0.0, -12.0),
+    (-12.0, -24.0), (12.0, -24.0),
+    *YELLOW_STACK_PIN_POSITIONS,
+]
 PIN_START_POSITIONS = [
-    np.array([x + dx, y + dy], dtype=np.float32)
-    for x, y in PIN_CLUSTER_CENTERS
-    for dx, dy in PIN_CLUSTER_OFFSETS[:7]
+    np.array(position, dtype=np.float32)
+    for position in (
+        SPECIAL_PIN_POSITIONS
+        + MIRRORED_PIN_POSITIONS
+        + UPPER_RIGHT_PIN_POSITIONS
+        + LOWER_LEFT_PIN_POSITIONS
+        + CENTER_STACK_PIN_POSITIONS
+        + HORIZONTAL_PIN_POSITIONS
+        + RED_YELLOW_PIN_POSITIONS[:-4]
+        + BLUE_YELLOW_PIN_POSITIONS[:-4]
+        + YELLOW_YELLOW_PIN_POSITIONS
+    )
 ]
+CUP_WALL_OFFSETS = (-63.0, -54.0, -45.0, -36.0, -27.0, -18.0, -9.0,
+                    9.0, 18.0, 27.0, 36.0, 45.0, 54.0, 63.0)
 CUP_START_POSITIONS = [
-    *[np.array([x, FIELD_HALF - 6.0], dtype=np.float32) for x in np.linspace(-60.0, 60.0, 14)],
-    *[np.array([FIELD_HALF - 6.0, y], dtype=np.float32) for y in np.linspace(-60.0, 60.0, 14)],
-    *[np.array([x, -FIELD_HALF + 6.0], dtype=np.float32) for x in np.linspace(60.0, -60.0, 14)],
-    *[np.array([-FIELD_HALF + 6.0, y], dtype=np.float32) for y in np.linspace(60.0, -60.0, 14)],
+    np.array(SPECIAL_CUP_POSITION, dtype=np.float32),
+    np.array(MIRRORED_CUP_POSITION, dtype=np.float32),
+    np.array(UPPER_RIGHT_CUP_POSITION, dtype=np.float32),
+    np.array(LOWER_LEFT_CUP_POSITION, dtype=np.float32),
+    *[np.array(position, dtype=np.float32) for position in CENTER_STACK_CUP_POSITIONS],
+    *[np.array(position, dtype=np.float32) for position in YELLOW_STACK_CUP_POSITIONS],
+    *[np.array([x, FIELD_HALF - 6.0], dtype=np.float32) for x in CUP_WALL_OFFSETS],
+    *[np.array([FIELD_HALF - 6.0, y], dtype=np.float32) for y in CUP_WALL_OFFSETS],
+    *[np.array([x, -FIELD_HALF + 6.0], dtype=np.float32) for x in reversed(CUP_WALL_OFFSETS)],
+    *[np.array([-FIELD_HALF + 6.0, y], dtype=np.float32) for y in reversed(CUP_WALL_OFFSETS[:-12])],
 ]
-PERMANENT_OBSTACLES = [Obstacle(0.0, 0.0, 8.0, False)] + [
+PIN_COLOR_PAIRS = (
+    ("red", "yellow"), ("blue", "yellow"),
+    ("blue", "yellow"), ("red", "yellow"),
+    ("red", "yellow"), ("blue", "yellow"),
+    ("blue", "yellow"), ("red", "yellow"),
+    ("red", "yellow"), ("blue", "yellow"),
+    ("blue", "yellow"), ("red", "yellow"),
+    ("red", "yellow"), ("blue", "yellow"),
+    ("blue", "yellow"), ("red", "yellow"),
+    ("blue", "yellow"), ("red", "yellow"),
+    ("blue", "yellow"), ("red", "yellow"),
+    ("blue", "yellow"), ("red", "yellow"),
+    ("blue", "yellow"), ("red", "yellow"),
+    ("red", "blue"), ("red", "blue"), ("red", "blue"), ("red", "blue"),
+    *[("red", "yellow")] * 8,
+    *[("blue", "yellow")] * 8,
+    *[("yellow", "yellow")] * 19,
+)
+PERMANENT_OBSTACLES = [
+    Obstacle(float(position[0]), float(position[1]), 6.0, False)
+    for goal_type, position in GOAL_POSITIONS.items()
+    if goal_type not in {GoalType.RED_1, GoalType.RED_2, GoalType.BLUE_1, GoalType.BLUE_2}
+] + [
+    Obstacle(float(position[0]), float(position[1]), 12.0, False)
+    for goal_type, position in GOAL_POSITIONS.items()
+    if goal_type in {GoalType.RED_1, GoalType.RED_2, GoalType.BLUE_1, GoalType.BLUE_2}
+] + [
     Obstacle(float(p[0]), float(p[1]), 4.0, False) for p in TOGGLE_POSITIONS
 ]
 
@@ -147,10 +245,14 @@ class OverrideGame(VexGame):
                  deterministic: bool = True):
         # Create an Override game with the supplied or default robot roster.
         robots = robots or [
-            Robot("red_robot_0", Team.RED, RobotSize.INCH_24, np.array([-48.0, 24.0], dtype=np.float32)),
-            Robot("red_robot_1", Team.RED, RobotSize.INCH_15, np.array([-48.0, -24.0], dtype=np.float32)),
-            Robot("blue_robot_0", Team.BLUE, RobotSize.INCH_24, np.array([48.0, 24.0], dtype=np.float32)),
-            Robot("blue_robot_1", Team.BLUE, RobotSize.INCH_15, np.array([48.0, -24.0], dtype=np.float32)),
+            Robot("red_robot_0", Team.RED, RobotSize.INCH_24,
+                np.array([0.0, -FIELD_HALF + 12.0], dtype=np.float32), start_orientation=0.0),
+            Robot("red_robot_1", Team.RED, RobotSize.INCH_15,
+                np.array([-FIELD_HALF + 7.5, 0.0], dtype=np.float32), start_orientation=90.0),
+            Robot("blue_robot_0", Team.BLUE, RobotSize.INCH_24,
+                np.array([0.0, FIELD_HALF - 12.0], dtype=np.float32), start_orientation=180.0),
+            Robot("blue_robot_1", Team.BLUE, RobotSize.INCH_15,
+                np.array([FIELD_HALF - 7.5, 0.0], dtype=np.float32), start_orientation=270.0),
         ]
         super().__init__(robots, communication_mode=communication_mode)
         self.deterministic = bool(deterministic)
@@ -213,8 +315,10 @@ class OverrideGame(VexGame):
                 "camera_rotation_offset": float(robot.camera_rotation_offset),
                 "team": robot.team.value, "robot_size": robot.size.value,
                 "held_pins": 1, "held_cups": 0, "parked": False,
+                "held_stack": [],
                 "parked_zone": None, "toggled": [0] * NUM_TOGGLES,
                 "inferred_toggle_colors": [None] * NUM_TOGGLES,
+                "next_pin_color": None, "next_cup_face_up": None,
                 "agent_name": robot.name, "current_action": None,
             }
         objects = []
@@ -222,15 +326,81 @@ class OverrideGame(VexGame):
             position = PIN_START_POSITIONS[index].copy()
             if randomize:
                 position = np.random.uniform(-66, 66, 2).astype(np.float32)
-            pin_color = ("red", "blue", "yellow")[index % 3]
-            objects.append(self._object("pin", position, pin_color))
+            primary_color, secondary_color = PIN_COLOR_PAIRS[index]
+            stack_pin = 16 <= index < 24 or index >= NUM_PINS - len(YELLOW_STACK_PIN_POSITIONS)
+            pin = self._object("pin", position, team=primary_color,
+                               face_up=True if stack_pin else (index % 2 == 0))
+            pin["front_color"] = primary_color
+            pin["back_color"] = secondary_color
+            objects.append(pin)
         for index in range(NUM_CUPS):
             position = CUP_START_POSITIONS[index].copy()
             if randomize:
                 position = np.random.uniform(-66, 66, 2).astype(np.float32)
-            objects.append(self._object("cup", position, face_up=(index % 2 == 0)))
+            stack_cup = 4 <= index < 12
+            objects.append(self._object("cup", position, face_up=True if stack_cup else (index % 2 == 0)))
+
+        preload_candidates = {
+            team: [
+                index for index, obj in enumerate(objects)
+                if index >= 24
+                and obj["kind"] == "pin"
+                and obj["status"] == ObjectStatus.ON_FIELD
+                and obj.get("front_color") == team
+                and obj.get("back_color") == "yellow"
+            ]
+            for team in ("red", "blue")
+        }
+        for agent_name, agent_state in agents.items():
+            team = agent_state["team"]
+            preload_index = preload_candidates[team].pop(0)
+            objects[preload_index].update(status=ObjectStatus.HELD, held_by=agent_name)
+            agent_state["held_stack"] = [preload_index]
+
+        black_goal_types = [GoalType.TALL]
+        yellow_pin_indices = [
+            index for index, obj in enumerate(objects)
+            if obj["kind"] == "pin" and obj.get("front_color") == "yellow" and obj.get("back_color") == "yellow"
+        ]
+        for goal_type, obj_index in zip(black_goal_types, yellow_pin_indices[:len(black_goal_types)]):
+            objects[obj_index]["status"] = ObjectStatus.SCORED
+            objects[obj_index]["goal"] = goal_type.value
+            objects[obj_index]["held_by"] = None
+
+        loader_teams = ("red", "blue", "red", "blue")
+        loader_pin_candidates = {
+            team: [
+                index for index, obj in enumerate(objects)
+                if index >= 16
+                and obj["kind"] == "pin"
+                and obj["status"] == ObjectStatus.ON_FIELD
+                and obj.get("front_color") == team
+                and obj.get("back_color") == "yellow"
+            ]
+            for team in ("red", "blue")
+        }
+        loader_cup_candidates = [
+            index for index, obj in enumerate(objects)
+            if index >= NUM_PINS + 12
+            and obj["kind"] == "cup"
+            and obj["status"] == ObjectStatus.ON_FIELD
+        ]
+        loader_reserves = [5] * len(loader_teams)
+        for loader_index, team in enumerate(loader_teams):
+            for stack_index in range(5):
+                pin_index = loader_pin_candidates[team].pop(0)
+                cup_index = loader_cup_candidates.pop(0)
+                for object_index in (pin_index, cup_index):
+                    objects[object_index].update(
+                        status=ObjectStatus.LOADER,
+                        held_by=None,
+                        loader_index=loader_index,
+                        loader_stack=stack_index,
+                    )
+
         self.state = {"agents": agents, "objects": objects, "toggles": [None] * NUM_TOGGLES,
-                  "loaders": [6] * NUM_TOGGLES, "autonomous_winner": None}
+                  "loaders": [6] * NUM_TOGGLES, "loader_reserves": loader_reserves,
+                  "autonomous_winner": None}
         return self.state
 
     def _visible(self, agent: str, kind: str) -> List[Tuple[float, int]]:
@@ -296,6 +466,16 @@ class OverrideGame(VexGame):
         if selected == Actions.TURN_TOWARD_CENTER:
             angle = vex_atan2(-state["position"][0], -state["position"][1]) - state["camera_rotation_offset"]
             return [ActionStep(DEFAULT_DURATION, state["position"].copy(), np.array([angle], dtype=np.float32), [ActionEvent("turn", {"angle": angle})])], 0.0
+        if selected == Actions.ORIENT_NEXT_PIN:
+            return [ActionStep(
+                DEFAULT_DURATION, state["position"].copy(), state["orientation"].copy(),
+                [ActionEvent("orient_next", {"kind": "pin", "color": state["team"]})],
+            )], 0.0
+        if selected == Actions.ORIENT_NEXT_CUP:
+            return [ActionStep(
+                DEFAULT_DURATION, state["position"].copy(), state["orientation"].copy(),
+                [ActionEvent("orient_next", {"kind": "cup", "face_up": True})],
+            )], 0.0
         if selected in (Actions.PICKUP_PIN, Actions.PICKUP_CUP):
             kind = "pin" if selected == Actions.PICKUP_PIN else "cup"
             visible = self._visible(agent, kind)
@@ -310,7 +490,14 @@ class OverrideGame(VexGame):
             if state[f"held_{kind}s"] <= 0:
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
             goal = GoalType.RED_1 if state["team"] == "red" else GoalType.BLUE_1
-            return self._move(agent, GOAL_POSITIONS[goal], ActionEvent("score", {"kind": kind, "goal": goal.value})), 0.0
+            paired = state["held_pins"] > 0 and state["held_cups"] > 0
+            scoring_kind = "pin" if paired else kind
+            if not self._goal_allows_scoring(goal.value, scoring_kind):
+                return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
+            return self._move(
+                agent, GOAL_POSITIONS[goal],
+                ActionEvent("score", {"kind": kind, "goal": goal.value, "paired": paired}),
+            ), 0.0
         if selected in (Actions.TAKE_FROM_LOADER_TL, Actions.TAKE_FROM_LOADER_TR,
                         Actions.TAKE_FROM_LOADER_BL, Actions.TAKE_FROM_LOADER_BR):
             loader_index = selected.value - Actions.TAKE_FROM_LOADER_TL.value
@@ -365,6 +552,17 @@ class OverrideGame(VexGame):
                 observation[ObsIndex.TOGGLES + index] = float(color == state["team"])
         return observation
 
+    def _goal_allows_scoring(self, goal_value: str, kind: str) -> bool:
+        # Goals must begin with a pin and then alternate cup/pin for each additional score.
+        scored_objects = [
+            obj for obj in self.state["objects"]
+            if obj.get("goal") == goal_value and obj["status"] == ObjectStatus.SCORED
+        ]
+        if not scored_objects:
+            return kind == "pin"
+        last_kind = scored_objects[-1]["kind"]
+        return last_kind != kind
+
     def apply_events(self, agent: str, events: List[ActionEvent]) -> None:
         # Apply completed action events to objects, robots, Toggles, and Loaders.
         state = self.state["agents"][agent]
@@ -374,14 +572,78 @@ class OverrideGame(VexGame):
                 held_key = f"held_{obj['kind']}s"
                 capacity = MAX_HELD_PINS if obj["kind"] == "pin" else MAX_HELD_CUPS
                 if obj["status"] == ObjectStatus.ON_FIELD and state[held_key] < capacity:
+                    if obj["kind"] == "pin":
+                        desired_color = state.get("next_pin_color")
+                        if desired_color == obj.get("front_color"):
+                            obj["face_up"] = True
+                        elif desired_color == obj.get("back_color"):
+                            obj["face_up"] = False
+                        state["next_pin_color"] = None
+                    else:
+                        desired_face_up = state.get("next_cup_face_up")
+                        if desired_face_up is not None:
+                            obj["face_up"] = bool(desired_face_up)
+                        state["next_cup_face_up"] = None
                     obj.update(status=ObjectStatus.HELD, held_by=agent)
                     state[held_key] += 1
+                    held_indices = [
+                        index for index, held_obj in enumerate(self.state["objects"])
+                        if held_obj["status"] == ObjectStatus.HELD and held_obj["held_by"] == agent
+                    ]
+                    for partner in self.state["objects"]:
+                        same_position = np.allclose(partner["position"], obj["position"])
+                        partner_key = f"held_{partner['kind']}s"
+                        partner_capacity = MAX_HELD_PINS if partner["kind"] == "pin" else MAX_HELD_CUPS
+                        if (partner is not obj and same_position
+                                and partner["kind"] != obj["kind"]
+                                and partner["status"] == ObjectStatus.ON_FIELD
+                                and state[partner_key] < partner_capacity):
+                            if partner["kind"] == "pin":
+                                desired_color = state.get("next_pin_color")
+                                if desired_color == partner.get("front_color"):
+                                    partner["face_up"] = True
+                                elif desired_color == partner.get("back_color"):
+                                    partner["face_up"] = False
+                                state["next_pin_color"] = None
+                            else:
+                                desired_face_up = state.get("next_cup_face_up")
+                                if desired_face_up is not None:
+                                    partner["face_up"] = bool(desired_face_up)
+                                state["next_cup_face_up"] = None
+                            partner.update(status=ObjectStatus.HELD, held_by=agent)
+                            state[partner_key] += 1
+                    held_indices = [
+                        index for index, held_obj in enumerate(self.state["objects"])
+                        if held_obj["status"] == ObjectStatus.HELD and held_obj["held_by"] == agent
+                    ]
+                    state["held_stack"] = sorted(
+                        held_indices,
+                        key=lambda index: 0 if self.state["objects"][index]["kind"] == "cup" else 1,
+                    )
             elif event.type == "score":
                 kind = event.data["kind"]
+                goal_value = event.data["goal"]
+                if not self._goal_allows_scoring(goal_value, kind):
+                    state[f"held_{kind}s"] = max(0, state[f"held_{kind}s"])
+                    continue
+                scored_kinds = {kind}
+                if event.data.get("paired") and state["held_pins"] > 0 and state["held_cups"] > 0:
+                    scored_kinds = {"pin", "cup"}
                 for obj in self.state["objects"]:
-                    if obj["status"] == ObjectStatus.HELD and obj["held_by"] == agent and obj["kind"] == kind:
-                        obj.update(status=ObjectStatus.SCORED, held_by=None, goal=event.data["goal"])
-                state[f"held_{kind}s"] = 0
+                    if (obj["status"] == ObjectStatus.HELD and obj["held_by"] == agent
+                            and obj["kind"] in scored_kinds):
+                        obj.update(status=ObjectStatus.SCORED, held_by=None, goal=goal_value)
+                for scored_kind in scored_kinds:
+                    state[f"held_{scored_kind}s"] = 0
+                state["held_stack"] = [
+                    index for index in state.get("held_stack", [])
+                    if self.state["objects"][index]["status"] == ObjectStatus.HELD
+                ]
+            elif event.type == "orient_next":
+                if event.data["kind"] == "pin":
+                    state["next_pin_color"] = event.data["color"]
+                else:
+                    state["next_cup_face_up"] = bool(event.data["face_up"])
             elif event.type == "toggle":
                 toggle_index = int(event.data["index"])
                 self.state["toggles"][toggle_index] = state["team"]
@@ -395,6 +657,10 @@ class OverrideGame(VexGame):
                         MAX_HELD_CUPS, state["held_cups"] + 1
                     )
                     self.state["loaders"][loader_index] = 0
+                    reserve_count = self.state.get("loader_reserves", [0] * NUM_TOGGLES)[loader_index]
+                    if reserve_count > 0:
+                        self.state["loaders"][loader_index] = reserve_count
+                        self.state["loader_reserves"][loader_index] = 0
             elif event.type == "park":
                 state.update(parked=True, parked_zone="midfield")
             elif event.type == "turn":
@@ -526,13 +792,50 @@ class OverrideGame(VexGame):
             GoalType.RED_1: "red", GoalType.RED_2: "red",
             GoalType.BLUE_1: "blue", GoalType.BLUE_2: "blue",
         }
-        for goal_type, position in GOAL_POSITIONS.items():
+        goal_label_order = [
+            GoalType.SHORT_1, GoalType.SHORT_2, GoalType.SHORT_3, GoalType.SHORT_4,
+            GoalType.TALL,
+            GoalType.RED_1, GoalType.RED_2,
+            GoalType.BLUE_1, GoalType.BLUE_2,
+        ]
+        for goal_index, goal_type in enumerate(goal_label_order, start=1):
+            position = GOAL_POSITIONS[goal_type]
             ax.add_patch(patches.RegularPolygon(
                 position, numVertices=8, radius=5.0,
                 orientation=np.pi / 8,
                 fill=False, edgecolor=goal_colors.get(goal_type, "black"),
                 linewidth=2.0, zorder=3,
             ))
+            ax.text(position[0], position[1] + 8.5, str(goal_index),
+                    ha="center", va="center", fontsize=9, fontweight="bold",
+                    color="black", zorder=6)
+
+        scored_pins_by_goal: Dict[str, List[Dict]] = {goal.value: [] for goal in GoalType}
+        for obj in self.state["objects"]:
+            if obj["status"] == ObjectStatus.SCORED and obj["kind"] == "pin" and obj.get("goal"):
+                scored_pins_by_goal.setdefault(obj["goal"], []).append(obj)
+
+        for goal_type, position in GOAL_POSITIONS.items():
+            pins = scored_pins_by_goal.get(goal_type.value, [])
+            for offset_index, obj in enumerate(pins):
+                pin_front = obj.get("front_color") or (obj["team"] or "yellow")
+                pin_back = obj.get("back_color") or pin_front
+                pin_x = position[0]
+                pin_y = position[1] + offset_index * 2.2
+                upper_color = pin_front if obj.get("face_up", True) else pin_back
+                lower_color = pin_back if obj.get("face_up", True) else pin_front
+                ax.add_patch(patches.Wedge(
+                    (pin_x, pin_y), 2.1, 0.0, 180.0,
+                    facecolor=upper_color, edgecolor="black", linewidth=0.6, zorder=4,
+                ))
+                ax.add_patch(patches.Wedge(
+                    (pin_x, pin_y), 2.1, 180.0, 360.0,
+                    facecolor=lower_color, edgecolor="black", linewidth=0.6, zorder=4,
+                ))
+                ax.add_patch(patches.Circle(
+                    (pin_x, pin_y), 2.1, fill=False,
+                    edgecolor="black", linewidth=0.7, zorder=5,
+                ))
 
         for index, position in enumerate(TOGGLE_POSITIONS):
             toggle_color = self.state["toggles"][index] or "yellow"
@@ -573,19 +876,32 @@ class OverrideGame(VexGame):
                     lower_color = "#666666" if obj["face_up"] else "#d9d9d9"
                     ax.add_patch(patches.Wedge(
                         obj["position"], cup_radius, 0.0, 180.0,
-                        facecolor=upper_color, edgecolor="black", linewidth=0.7,
+                        facecolor=upper_color, edgecolor="black", linewidth=0.7, zorder=6,
                     ))
                     ax.add_patch(patches.Wedge(
                         obj["position"], cup_radius, 180.0, 360.0,
-                        facecolor=lower_color, edgecolor="black", linewidth=0.7,
+                        facecolor=lower_color, edgecolor="black", linewidth=0.7, zorder=6,
                     ))
                     ax.add_patch(patches.Circle(
                         obj["position"], cup_radius, fill=False,
-                        edgecolor="black", linewidth=0.8,
+                        edgecolor="black", linewidth=0.8, zorder=7,
                     ))
                 else:
+                    pin_front = obj.get("front_color") or (obj["team"] or "yellow")
+                    pin_back = obj.get("back_color") or pin_front
+                    upper_color = pin_front if obj.get("face_up", True) else pin_back
+                    lower_color = pin_back if obj.get("face_up", True) else pin_front
+                    ax.add_patch(patches.Wedge(
+                        obj["position"], 2.4, 0.0, 180.0,
+                        facecolor=upper_color, edgecolor="black", linewidth=0.7, zorder=6,
+                    ))
+                    ax.add_patch(patches.Wedge(
+                        obj["position"], 2.4, 180.0, 360.0,
+                        facecolor=lower_color, edgecolor="black", linewidth=0.7, zorder=6,
+                    ))
                     ax.add_patch(patches.Circle(
-                        obj["position"], 2.4, color=obj["team"] or "gold"
+                        obj["position"], 2.4, fill=False,
+                        edgecolor="black", linewidth=0.8, zorder=7,
                     ))
 
     def render_info_panel(self, ax_info: Any, agents: List[str] = None, actions: Optional[Dict] = None,
@@ -593,14 +909,74 @@ class OverrideGame(VexGame):
                           agent_times: Optional[Dict[str, float]] = None,
                           action_time_remaining: Optional[Dict[str, float]] = None) -> None:
         # Draw agent holdings and current alliance scores in the info panel.
+        import matplotlib.patches as patches
+
         ax_info.axis("off")
+        ax_info.set_frame_on(False)
+        ax_info.patch.set_visible(False)
+        ax_info.set_xlim(0.0, 1.2)
+        ax_info.set_ylim(0.0, 1.0)
         ax_info.text(0.05, 0.95, "Override", fontweight="bold", va="top")
-        y = 0.85
+
+        goal_colors = {
+            GoalType.RED_1: "red", GoalType.RED_2: "red",
+            GoalType.BLUE_1: "blue", GoalType.BLUE_2: "blue",
+        }
+
+        y = 0.72
         for agent in agents or self.state["agents"]:
             state = self.state["agents"][agent]
             ax_info.text(0.05, y, f"{agent}: {state['team']} P{state['held_pins']} C{state['held_cups']}", va="top")
             y -= 0.06
         ax_info.text(0.05, y, str(self.compute_score()), va="top")
+
+        ax_info.text(0.45, 0.16, "Goals", fontsize=10, fontweight="bold", va="bottom")
+        goal_order = [
+            GoalType.SHORT_1, GoalType.SHORT_2, GoalType.SHORT_3, GoalType.SHORT_4,
+            GoalType.TALL,
+            GoalType.RED_1, GoalType.RED_2,
+            GoalType.BLUE_1, GoalType.BLUE_2,
+        ]
+        goal_counts = {goal.value: 0 for goal in goal_order}
+        goal_colors_by_goal = {goal.value: [] for goal in goal_order}
+        for obj in self.state["objects"]:
+            if obj["status"] == ObjectStatus.SCORED and obj.get("goal"):
+                goal_value = obj["goal"]
+                if obj["kind"] == "pin":
+                    goal_counts[goal_value] = goal_counts.get(goal_value, 0) + 1
+                    goal_colors_by_goal.setdefault(goal_value, []).append((obj.get("front_color") or obj.get("back_color") or "yellow"))
+
+        goal_base_x = 0.08
+        goal_y = 0.02
+        goal_spacing = 0.09
+        for index, goal_type in enumerate(goal_order, start=1):
+            goal_value = goal_type.value
+            count = goal_counts.get(goal_value, 0)
+            x = goal_base_x + index * goal_spacing
+            ax_info.add_patch(patches.RegularPolygon(
+                (x, goal_y), numVertices=8, radius=0.025,
+                orientation=np.pi / 8,
+                fill=False, edgecolor=goal_colors.get(goal_type, "black"),
+                linewidth=1.5, zorder=3,
+            ))
+            ax_info.text(x, goal_y + 0.035, str(index), fontsize=7,
+                         ha="center", va="center", color="black", fontweight="bold")
+            for offset_index in range(count):
+                pin_x = x + (offset_index % 3 - 1) * 0.022
+                pin_y = goal_y + 0.028 + (offset_index // 3) * 0.018
+                pin_color = goal_colors_by_goal.get(goal_value, ["yellow"])[offset_index % len(goal_colors_by_goal.get(goal_value, ["yellow"]))]
+                upper_color = pin_color
+                lower_color = "#666666" if pin_color == "yellow" else pin_color
+                ax_info.add_patch(patches.Wedge(
+                    (pin_x, pin_y), 0.013, 0.0, 180.0,
+                    facecolor=upper_color, edgecolor="black", linewidth=0.5,
+                ))
+                ax_info.add_patch(patches.Wedge(
+                    (pin_x, pin_y), 0.013, 180.0, 360.0,
+                    facecolor=lower_color, edgecolor="black", linewidth=0.5,
+                ))
+            ax_info.text(x + 0.03, goal_y, f"{count}", fontsize=7, va="center", ha="left")
+
 
 
 class VexUOverrideGame(OverrideGame):
