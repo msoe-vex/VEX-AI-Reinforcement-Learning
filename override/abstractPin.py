@@ -1,11 +1,7 @@
 from abc import ABC, abstractmethod
 
 class abstractPin(ABC):
-    def __init__(self, pin):
-        self.pin = pin
+    @abstractmethod
+    def __init__(self, cup1 = None, cup2 = None, top = True):
+        pass
 
-    def set(self, value):
-        raise NotImplementedError("Subclasses should implement this!")
-
-    def get(self):
-        raise NotImplementedError("Subclasses should implement this!")
