@@ -82,15 +82,15 @@ class GoalType(Enum):
 
 
 GOAL_POSITIONS = {
-    GoalType.SHORT_1: np.array([48.0, 24.0], dtype=np.float32),
-    GoalType.SHORT_2: np.array([24.0, 48.0], dtype=np.float32),
-    GoalType.SHORT_3: np.array([-48.0, -24.0], dtype=np.float32),
-    GoalType.SHORT_4: np.array([-24.0, -48.0], dtype=np.float32),
+    GoalType.SHORT_1: np.array([-24.0, 48.0], dtype=np.float32),
+    GoalType.SHORT_2: np.array([-48.0, 24.0], dtype=np.float32),
+    GoalType.SHORT_3: np.array([24.0, -48.0], dtype=np.float32),
+    GoalType.SHORT_4: np.array([48.0, -24.0], dtype=np.float32),
     GoalType.TALL: np.array([0.0, 0.0], dtype=np.float32),
-    GoalType.RED_1: np.array([-48.0, 24.0], dtype=np.float32),
-    GoalType.RED_2: np.array([-24.0, 48.0], dtype=np.float32),
-    GoalType.BLUE_1: np.array([48.0, -24.0], dtype=np.float32),
-    GoalType.BLUE_2: np.array([24.0, -48.0], dtype=np.float32),
+    GoalType.RED_1: np.array([-24.0, -48.0], dtype=np.float32),
+    GoalType.RED_2: np.array([-48.0, -24.0], dtype=np.float32),
+    GoalType.BLUE_1: np.array([24.0, 48.0], dtype=np.float32),
+    GoalType.BLUE_2: np.array([48.0, 24.0], dtype=np.float32),
 }
 TOGGLE_POSITIONS = [
     np.array([0.0, FIELD_HALF], dtype=np.float32),
