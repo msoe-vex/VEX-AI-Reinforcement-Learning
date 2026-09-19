@@ -321,7 +321,7 @@ class OverrideGame(VexGame):
         # Create a field object record for a Pin or Cup.
         return {"kind": kind, "position": np.asarray(position, dtype=np.float32),
                 "team": team, "face_up": face_up, "status": ObjectStatus.ON_FIELD,
-                "held_by": None, "goal": None}
+            "held_by": None, "goal": None, "goal_stack_index": None}
 
     def get_initial_state(self, randomize: bool = False, seed: Optional[int] = None) -> Dict:
         # Create robots, field objects, Toggles, and available Loaders.
@@ -404,6 +404,7 @@ class OverrideGame(VexGame):
             objects[obj_index]["status"] = ObjectStatus.SCORED
             objects[obj_index]["goal"] = goal_type.value
             objects[obj_index]["held_by"] = None
+            objects[obj_index]["goal_stack_index"] = 0
 
         protected_yellow_positions = {
             tuple(float(value) for value in position)
@@ -709,10 +710,21 @@ class OverrideGame(VexGame):
                 scored_kinds = {kind}
                 if event.data.get("paired") and state["held_pins"] > 0 and state["held_cups"] > 0:
                     scored_kinds = {"pin", "cup"}
+                next_stack_index = sum(
+                    1 for obj in self.state["objects"]
+                    if obj["status"] == ObjectStatus.SCORED
+                    and obj.get("goal") == goal_value
+                )
                 for obj in self.state["objects"]:
                     if (obj["status"] == ObjectStatus.HELD and obj["held_by"] == agent
                             and obj["kind"] in scored_kinds):
-                        obj.update(status=ObjectStatus.SCORED, held_by=None, goal=goal_value)
+                        obj.update(
+                            status=ObjectStatus.SCORED,
+                            held_by=None,
+                            goal=goal_value,
+                            goal_stack_index=next_stack_index,
+                        )
+                        next_stack_index += 1
                 for scored_kind in scored_kinds:
                     state[f"held_{scored_kind}s"] = 0
                 state["held_stack"] = [
@@ -746,12 +758,59 @@ class OverrideGame(VexGame):
             elif event.type == "turn":
                 state["orientation"] = np.array([event.data["angle"]], dtype=np.float32)
 
-    def compute_score(self) -> Dict[str, int]:
-        # Calculate alliance scores from scored Pins, parking, and bonuses.
+    def _score_pin_color(self, pin: Dict, goal_value: str) -> Optional[Tuple[str, int]]:
+        """Return the alliance and value of the pin half facing away from its goal."""
+        if not pin.get("face_up", True):
+            return None
+        color = pin.get("front_color")
+        if color not in {"red", "blue", "yellow"}:
+            return None
+        if color == "yellow":
+            goal_color = goal_value.split("_", 1)[0]
+            if goal_color not in {"red", "blue"}:
+                return None
+            return goal_color, 10
+        return color, 5
+
+    def _score_goal_pins(self) -> Dict[str, int]:
+        """Score exposed pin halves, walking each stack outward from its goal."""
         scores = {"red": 0, "blue": 0}
-        for obj in self.state["objects"]:
-            if obj["status"] == ObjectStatus.SCORED and obj["kind"] == "pin" and obj["team"] in scores:
-                scores[obj["team"]] += 5
+        goal_values = {goal.value for goal in GoalType}
+        for goal_value in goal_values:
+            stack = sorted(
+                (
+                    obj for obj in self.state["objects"]
+                    if obj["status"] == ObjectStatus.SCORED
+                    and obj.get("goal") == goal_value
+                ),
+                key=lambda obj: (
+                    obj.get("goal_stack_index") is None,
+                    obj.get("goal_stack_index") or 0,
+                ),
+            )
+            for index, obj in enumerate(stack):
+                if obj["kind"] != "pin":
+                    continue
+                # The goal hides the lower half of the first pin. A black cup
+                # underside hides the upper half of the pin immediately below it.
+                if index == 0 and not obj.get("face_up", True):
+                    continue
+                if index + 1 < len(stack):
+                    cover = stack[index + 1]
+                    if cover["kind"] == "cup" and cover.get("face_up", True):
+                        continue
+                scored = self._score_pin_color(obj, goal_value)
+                if scored is not None:
+                    alliance, value = scored
+                    scores[alliance] += value
+        return scores
+
+    def compute_score(self) -> Dict[str, int]:
+        # Calculate alliance scores from exposed scored pin halves, parking, and bonuses.
+        scores = {"red": 0, "blue": 0}
+        pin_scores = self._score_goal_pins()
+        for alliance, value in pin_scores.items():
+            scores[alliance] += value
         for agent in self.state["agents"].values():
             if agent.get("parked_zone") == "midfield":
                 scores[agent["team"]] += 8
