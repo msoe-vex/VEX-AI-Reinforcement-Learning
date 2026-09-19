@@ -33,6 +33,11 @@ class Actions(Enum):
     PICKUP_CUP = 1
     SCORE_PIN = 2
     SCORE_CUP = 3
+    #Score held item(s) on goal in front of robot, if allowed by goal rules.
+    #Drive to goal 1
+    #Drive to goal 2
+    #Drive to goal 3
+    #ect.
     TOGGLE_QUADRANT = 4
     PARK_MIDFIELD = 5
     TURN_TOWARD_CENTER = 6
