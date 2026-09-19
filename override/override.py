@@ -31,23 +31,25 @@ MAX_HELD_CUPS = 1
 class Actions(Enum):
     PICKUP_PIN = 0
     PICKUP_CUP = 1
-    SCORE_PIN = 2
-    SCORE_CUP = 3
-    #Score held item(s) on goal in front of robot, if allowed by goal rules.
-    #Drive to goal 1
-    #Drive to goal 2
-    #Drive to goal 3
-    #ect.
-    TOGGLE_QUADRANT = 4
-    PARK_MIDFIELD = 5
-    TURN_TOWARD_CENTER = 6
-    TAKE_FROM_LOADER_TL = 7
-    TAKE_FROM_LOADER_TR = 8
-    TAKE_FROM_LOADER_BL = 9
-    TAKE_FROM_LOADER_BR = 10
-    IDLE = 11
-    ORIENT_NEXT_PIN = 12
-    ORIENT_NEXT_CUP = 13
+    SCORE_GOAL_1 = 2
+    SCORE_GOAL_2 = 3
+    SCORE_GOAL_3 = 4
+    SCORE_GOAL_4 = 5
+    SCORE_GOAL_5 = 6
+    SCORE_GOAL_6 = 7
+    SCORE_GOAL_7 = 8
+    SCORE_GOAL_8 = 9
+    SCORE_GOAL_9 = 10
+    TOGGLE_QUADRANT = 11
+    PARK_MIDFIELD = 12
+    TURN_TOWARD_CENTER = 13
+    TAKE_FROM_LOADER_TL = 14
+    TAKE_FROM_LOADER_TR = 15
+    TAKE_FROM_LOADER_BL = 16
+    TAKE_FROM_LOADER_BR = 17
+    IDLE = 18
+    ORIENT_NEXT_PIN = 19
+    ORIENT_NEXT_CUP = 20
 
 
 class ObjectStatus:
@@ -571,14 +573,21 @@ class OverrideGame(VexGame):
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
             index = visible[0][1]
             return self._move(agent, self.state["objects"][index]["position"], ActionEvent("pickup", {"index": index})), 0.0
-        if selected in (Actions.SCORE_PIN, Actions.SCORE_CUP):
-            kind = "pin" if selected == Actions.SCORE_PIN else "cup"
-            if state[f"held_{kind}s"] <= 0:
+        if Actions.SCORE_GOAL_1.value <= selected.value <= Actions.SCORE_GOAL_9.value:
+            has_pin = state["held_pins"] > 0
+            has_cup = state["held_cups"] > 0
+            if not has_pin and not has_cup:
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
-            goal = GoalType.RED_1 if state["team"] == "red" else GoalType.BLUE_1
-            paired = state["held_pins"] > 0 and state["held_cups"] > 0
-            scoring_kind = "pin" if paired else kind
-            if not self._goal_allows_scoring(goal.value, scoring_kind):
+            goal = list(GoalType)[selected.value - Actions.SCORE_GOAL_1.value]
+            paired = has_pin and has_cup
+            kind = "pin" if has_pin else "cup"
+            scoring_kind = kind
+            if not self._goal_allows_scoring(
+                    goal.value,
+                    scoring_kind,
+                    pin_count=int(has_pin),
+                    cup_count=int(has_cup),
+            ):
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
             return self._move(
                 agent, GOAL_POSITIONS[goal],
@@ -611,9 +620,8 @@ class OverrideGame(VexGame):
             state["held_pins"] += 1
         elif selected == Actions.PICKUP_CUP and state["held_cups"] < MAX_HELD_CUPS:
             state["held_cups"] += 1
-        elif selected == Actions.SCORE_PIN:
+        elif Actions.SCORE_GOAL_1.value <= selected.value <= Actions.SCORE_GOAL_9.value:
             state["held_pins"] = 0
-        elif selected == Actions.SCORE_CUP:
             state["held_cups"] = 0
         elif selected == Actions.PARK_MIDFIELD:
             state["parked"] = True
@@ -638,12 +646,19 @@ class OverrideGame(VexGame):
                 observation[ObsIndex.TOGGLES + index] = float(color == state["team"])
         return observation
 
-    def _goal_allows_scoring(self, goal_value: str, kind: str) -> bool:
-        # Goals must begin with a pin and then alternate cup/pin for each additional score.
+    def _goal_allows_scoring(self, goal_value: str, kind: str,
+                             pin_count: int = 1, cup_count: int = 0) -> bool:
+        # Goals alternate cup/pin and have separate pin/cup capacities.
         scored_objects = [
             obj for obj in self.state["objects"]
             if obj.get("goal") == goal_value and obj["status"] == ObjectStatus.SCORED
         ]
+        max_pins = 6 if goal_value == GoalType.TALL.value else 7
+        max_cups = 5 if goal_value == GoalType.TALL.value else 6
+        scored_pins = sum(obj["kind"] == "pin" for obj in scored_objects)
+        scored_cups = sum(obj["kind"] == "cup" for obj in scored_objects)
+        if scored_pins + pin_count > max_pins or scored_cups + cup_count > max_cups:
+            return False
         if not scored_objects:
             return kind == "pin"
         last_kind = scored_objects[-1]["kind"]
@@ -709,12 +724,17 @@ class OverrideGame(VexGame):
             elif event.type == "score":
                 kind = event.data["kind"]
                 goal_value = event.data["goal"]
-                if not self._goal_allows_scoring(goal_value, kind):
-                    state[f"held_{kind}s"] = max(0, state[f"held_{kind}s"])
-                    continue
                 scored_kinds = {kind}
                 if event.data.get("paired") and state["held_pins"] > 0 and state["held_cups"] > 0:
                     scored_kinds = {"pin", "cup"}
+                if not self._goal_allows_scoring(
+                        goal_value,
+                        kind,
+                        pin_count=int("pin" in scored_kinds),
+                        cup_count=int("cup" in scored_kinds),
+                ):
+                    state[f"held_{kind}s"] = max(0, state[f"held_{kind}s"])
+                    continue
                 next_stack_index = sum(
                     1 for obj in self.state["objects"]
                     if obj["status"] == ObjectStatus.SCORED
@@ -841,9 +861,9 @@ class OverrideGame(VexGame):
             return False
         if selected == Actions.PICKUP_CUP and observation[ObsIndex.HELD_CUPS] >= MAX_HELD_CUPS:
             return False
-        if selected == Actions.SCORE_PIN and observation[ObsIndex.HELD_PINS] <= 0:
-            return False
-        if selected == Actions.SCORE_CUP and observation[ObsIndex.HELD_CUPS] <= 0:
+        if Actions.SCORE_GOAL_1.value <= selected.value <= Actions.SCORE_GOAL_9.value and (
+                observation[ObsIndex.HELD_PINS] <= 0
+                and observation[ObsIndex.HELD_CUPS] <= 0):
             return False
         if selected == Actions.IDLE and observation[ObsIndex.PARKED] < 1:
             return False
