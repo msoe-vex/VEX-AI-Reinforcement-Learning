@@ -133,6 +133,16 @@ All commands use SLURM to run on the MSOE computing cluster (ROSIE).
    # Training with experiment resumption (auto-loads metadata + latest checkpoint)
    sbatch scripts/submitTrainingJob.sh --experiment-path job_results/job_220065/PPO_2026-01-29_00-36-09
    ```
+
+   The submission script uses `venv/bin/python` automatically. Create the
+   environment and install the dependencies before submitting a job:
+
+   ```bash
+   python -m venv venv
+   source venv/bin/activate
+   python -m pip install -r requirements.txt
+   ```
+
    - Check job status: `squeue -u $USER`
    - View output: `cat job_results/job_#####/output.txt`
    - View errors: `cat job_results/job_#####/error.txt`

@@ -84,6 +84,7 @@ def run_simulation(
     config: VexEnvConfig,
     iterations=1,
     test_communication_mode=None,
+    output_dir=None,
 ):
     """
     Loads trained models and runs one or more simulations in the VEX environment.
@@ -92,9 +93,11 @@ def run_simulation(
         config (VexEnvConfig): Configuration object containing parameters.
         iterations (int): Number of episodes to run.
         test_communication_mode (CommunicationOption): Whether to test communication. Only used if config.communication_mode is not NONE.
+        output_dir (str | None): Directory where GIFs and CSV output should be written.
     """
     model_dir = config.experiment_path
-    output_dir = config.experiment_path if config.experiment_path else os.path.join(os.getcwd(), "vex_model_test")
+    if output_dir is None:
+        output_dir = config.experiment_path if config.experiment_path else os.path.join(os.getcwd(), "vex_model_test")
     render_mode = config.render_mode
 
     if test_communication_mode is None:
@@ -121,6 +124,7 @@ def run_simulation(
         game=game,
         config=config,
     )
+    env.output_directory = output_dir
     
     runners = {}
     if use_random_actions:
@@ -392,6 +396,12 @@ if __name__ == "__main__":
         help="Number of simulation iterations to run"
     )
     parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="vex_model_test",
+        help="Directory for rendered GIFs, tick frames, and per-iteration CSV output",
+    )
+    parser.add_argument(
         "--test-communication-mode",
         type=str,
         choices=[opt.value for opt in CommunicationOption],
@@ -410,4 +420,5 @@ if __name__ == "__main__":
         config=config,
         iterations=args.iterations,
         test_communication_mode=test_communication_mode_val,
+        output_dir=args.output_dir,
     )
