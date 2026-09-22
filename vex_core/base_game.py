@@ -466,61 +466,180 @@ class VexGame(ABC):
         """
         pass
     
+    @staticmethod
+    def _get_robot_edges(center: np.ndarray, length: float, width: float, orientation_deg: float) -> List[np.ndarray]:
+        """Return the four rectangle corners for a robot at the given pose."""
+        half_l = length / 2.0
+        half_w = width / 2.0
+        theta = np.deg2rad(90.0 - float(orientation_deg))
+        c, s = np.cos(theta), np.sin(theta)
+        rot = np.array([[c, -s], [s, c]], dtype=float)
+        corners = np.array([
+            [-half_l, -half_w],
+            [ half_l, -half_w],
+            [ half_l,  half_w],
+            [-half_l,  half_w],
+        ], dtype=float)
+        return (rot @ corners.T).T + center
+
+    @staticmethod
+    def _project_onto_axis(points: np.ndarray, axis: np.ndarray) -> Tuple[float, float]:
+        projections = points @ axis
+        return float(np.min(projections)), float(np.max(projections))
+
+    @classmethod
+    def _oriented_rectangles_overlap(
+        cls,
+        center_a: np.ndarray,
+        length_a: float,
+        width_a: float,
+        orient_a_deg: float,
+        center_b: np.ndarray,
+        length_b: float,
+        width_b: float,
+        orient_b_deg: float,
+    ) -> bool:
+        """Check whether two rectangular robots overlap using their edges."""
+        corners_a = cls._get_robot_edges(center_a, length_a, width_a, orient_a_deg)
+        corners_b = cls._get_robot_edges(center_b, length_b, width_b, orient_b_deg)
+
+        axes = []
+        for corners in (corners_a, corners_b):
+            edge_vectors = np.diff(np.vstack([corners, corners[0]]), axis=0)
+            for edge in edge_vectors:
+                axis = np.array([edge[1], -edge[0]], dtype=float)
+                norm = np.linalg.norm(axis)
+                if norm > 0:
+                    axes.append(axis / norm)
+
+        for axis in axes:
+            min_a, max_a = cls._project_onto_axis(corners_a, axis)
+            min_b, max_b = cls._project_onto_axis(corners_b, axis)
+            if max_a < min_b or max_b < min_a:
+                return False
+
+        return True
+
+    @staticmethod
+    def _rectangle_circle_collision(
+        center: np.ndarray,
+        length: float,
+        width: float,
+        orientation_deg: float,
+        obstacle_center: np.ndarray,
+        obstacle_radius: float,
+    ) -> bool:
+        """Check whether a robot rectangle intersects a circular obstacle boundary."""
+        half_l = length / 2.0
+        half_w = width / 2.0
+        theta = np.deg2rad(90.0 - float(orientation_deg))
+        c, s = np.cos(theta), np.sin(theta)
+        rot = np.array([[c, -s], [s, c]], dtype=float)
+        rel = obstacle_center - center
+        rel_local = rot.T @ rel
+        nearest_x = np.clip(rel_local[0], -half_l, half_l)
+        nearest_y = np.clip(rel_local[1], -half_w, half_w)
+        dx = rel_local[0] - nearest_x
+        dy = rel_local[1] - nearest_y
+        return (dx * dx + dy * dy) <= (obstacle_radius ** 2)
+
+    @classmethod
+    def _rectangle_hits_field_bounds(
+        cls,
+        center: np.ndarray,
+        length: float,
+        width: float,
+        orientation_deg: float,
+        field_half: float,
+    ) -> bool:
+        """Check whether any edge of the robot rectangle crosses the field wall."""
+        corners = cls._get_robot_edges(center, length, width, orientation_deg)
+        return (
+            np.any(corners[:, 0] > field_half)
+            or np.any(corners[:, 0] < -field_half)
+            or np.any(corners[:, 1] > field_half)
+            or np.any(corners[:, 1] < -field_half)
+        )
+
     def check_robot_collision(self, agent: str) -> bool:
         """
-        Check if an agent has collided with another robot.
-        
-        Override this to implement custom collision detection logic.
-        
-        Args:
-            agent: Agent name to check for collisions
-            
-        Returns:
-            True if agent is colliding with another robot, False otherwise
+        Check if an agent has collided with another robot or obstacle boundary.
+
+        Uses the robot's actual rectangle edges instead of a center-radius approximation.
         """
         if not self.state or "agents" not in self.state:
             return False
-        
+
         agent_state = self.state["agents"].get(agent)
         if not agent_state:
             return False
-        
-        # Prefer a projection (when present) — fall back to actual `position`.
+
         agent_pos = agent_state.get("projected_position", agent_state.get("position"))
         if agent_pos is None:
             return False
-        
+
         agent_robot = self.get_robot_for_agent(agent)
         if not agent_robot:
             return False
-        
-        # Use robot size as collision radius
-        agent_size = agent_robot.size.value / 2.0  # Convert to radius
-        
-        # Check against all other agents (use their projected_position when available)
+
+        agent_length = float(agent_robot.length or agent_robot.size.value)
+        agent_width = float(agent_robot.width or agent_robot.size.value)
+        agent_orientation = float(agent_state.get("orientation", [0.0])[0])
+
         for other_agent, other_state in self.state["agents"].items():
             if other_agent == agent:
                 continue
-            
+
             other_pos = other_state.get("projected_position", other_state.get("position"))
             if other_pos is None:
                 continue
-            
+
             other_robot = self.get_robot_for_agent(other_agent)
             if not other_robot:
                 continue
-            
-            other_size = other_robot.size.value / 2.0  # Convert to radius
-            
-            # Calculate distance between robot projections (or positions)
-            distance = np.linalg.norm(agent_pos - other_pos)
-            
-            # Collision if distance is less than sum of radii
-            min_distance = agent_size + other_size
-            
-            if distance < min_distance:
+
+            other_length = float(other_robot.length or other_robot.size.value)
+            other_width = float(other_robot.width or other_robot.size.value)
+            other_orientation = float(other_state.get("orientation", [0.0])[0])
+
+            if self._oriented_rectangles_overlap(
+                np.asarray(agent_pos, dtype=float),
+                agent_length,
+                agent_width,
+                agent_orientation,
+                np.asarray(other_pos, dtype=float),
+                other_length,
+                other_width,
+                other_orientation,
+            ):
                 return True
-        
+
+        field_half = float(self.field_size_inches) / 2.0
+        if self._rectangle_hits_field_bounds(
+            np.asarray(agent_pos, dtype=float),
+            agent_length,
+            agent_width,
+            agent_orientation,
+            field_half,
+        ):
+            return True
+
+        obstacles = self.get_permanent_obstacles() if hasattr(self, "get_permanent_obstacles") else []
+        for obstacle in obstacles:
+            if getattr(obstacle, "ignore_collision", False):
+                continue
+            obstacle_radius = float(getattr(obstacle, "radius", 0.0))
+            obstacle_center = np.array([float(obstacle.x), float(obstacle.y)], dtype=float)
+            if self._rectangle_circle_collision(
+                np.asarray(agent_pos, dtype=float),
+                agent_length,
+                agent_width,
+                agent_orientation,
+                obstacle_center,
+                obstacle_radius,
+            ):
+                return True
+
         return False
     
     def get_collision_penalty(self) -> float:
