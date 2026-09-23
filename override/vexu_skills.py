@@ -34,10 +34,7 @@ class VexUSkillsGame(OverrideGame):
 		return "red"
 
 	def compute_score(self) -> Dict[str, int]:
-		score = 0
-		for obj in self.state["objects"]:
-			if obj["status"] == 2 and obj["kind"] == "pin":
-				score += 5
+		score = self._score_goal_pins().get("red", 0)
 		score += sum(8 for agent in self.state["agents"].values()
 					 if agent.get("parked_zone") == "midfield")
 		if self.state.get("autonomous_winner") == "red":
