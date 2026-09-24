@@ -64,24 +64,44 @@ class VexModelRunner:
             except Exception as e:
                 print(f"Error loading model: {e}")
                 return
-                
+
         if self.model is not None:
             try:
                 obs_shape = (self._expected_obs_dim,)
                 print(f"Warmup observation shape: {obs_shape}, communication_mode: {self._comm_mode_name}")
                 dummy_input = torch.randn(1, *obs_shape, device=self.device)
                 # Determine action mask dim
-                action_space = game.get_game_action_space(self.agent_name)
+                action_space = self.game.get_game_action_space(self.agent_name)
                 if hasattr(action_space, 'spaces') and len(action_space.spaces) > 0 and hasattr(action_space.spaces[0], 'n'):
-                    mask_dim = action_space.spaces[0].n
+                    mask_dims = [action_space.spaces[0].n]
                 elif hasattr(action_space, 'n'):
-                    mask_dim = action_space.n
+                    mask_dims = [action_space.n]
                 else:
-                    mask_dim = obs_shape[0]
-                dummy_mask = torch.ones(1, mask_dim, device=self.device)
-                with torch.no_grad():
-                    _ = self.model(dummy_input, dummy_mask)
-                print(f"Model warmed up and ready for inference for {self.agent_name}")
+                    mask_dims = [obs_shape[0]]
+
+                # Older exported checkpoints can have a mismatched action-mask width.
+                # Try the current env size first, then smaller legacy sizes until one works.
+                if self.game.num_actions > 0:
+                    mask_dims.append(int(self.game.num_actions))
+                for dim in range(1, max(mask_dims) + 1):
+                    if dim not in mask_dims:
+                        mask_dims.append(dim)
+
+                warmup_ok = False
+                for mask_dim in mask_dims:
+                    dummy_mask = torch.ones(1, mask_dim, device=self.device)
+                    try:
+                        with torch.no_grad():
+                            _ = self.model(dummy_input, dummy_mask)
+                        warmup_ok = True
+                        break
+                    except RuntimeError as exc:
+                        if "size of tensor a" not in str(exc) or "non-singleton dimension 1" not in str(exc):
+                            raise
+                if warmup_ok:
+                    print(f"Model warmed up and ready for inference for {self.agent_name}")
+                else:
+                    raise RuntimeError(f"Unable to warm up model for {self.agent_name} with any compatible action-mask width")
             except Exception as e:
                 print(f"Error warming up model: {e}")
 
@@ -137,32 +157,70 @@ class VexModelRunner:
                 [1.0 if self.game.is_valid_action(self.agent_name, i, observation) else 0.0 for i in range(num_actions)],
                 dtype=np.float32
             )
-            
-        mask_tensor = torch.from_numpy(action_mask.astype(np.float32)).unsqueeze(0).to(self.device)
 
-        with torch.no_grad():
-            model_output = self.model(obs_tensor, mask_tensor)
-        
+        action_mask_np = np.asarray(action_mask, dtype=np.float32).reshape(-1)
+        mask_candidates = []
+        env_action_dim = int(getattr(self.game, "num_actions", action_mask_np.size))
+        for dim in [action_mask_np.size, env_action_dim]:
+            if dim is not None and dim > 0:
+                mask_candidates.append(int(dim))
+        max_dim = max([action_mask_np.size, env_action_dim, 1])
+        for dim in range(1, max_dim + 1):
+            if dim not in mask_candidates:
+                mask_candidates.append(dim)
+
+        resolved_mask = None
+        resolved_model_output = None
+        for candidate_dim in mask_candidates:
+            if candidate_dim <= 0:
+                continue
+            candidate_mask = action_mask_np[:candidate_dim]
+            if candidate_dim > action_mask_np.size:
+                candidate_mask = np.pad(candidate_mask, (0, candidate_dim - action_mask_np.size), mode='constant', constant_values=0.0)
+            mask_tensor = torch.from_numpy(candidate_mask.astype(np.float32)).unsqueeze(0).to(self.device)
+            try:
+                with torch.no_grad():
+                    resolved_model_output = self.model(obs_tensor, mask_tensor)
+                resolved_mask = candidate_mask
+                break
+            except RuntimeError as exc:
+                msg = str(exc)
+                if "size of tensor a" not in msg or "non-singleton dimension 1" not in msg:
+                    raise
+                continue
+
+        if resolved_model_output is None:
+            raise RuntimeError(f"Unable to find an action-mask width compatible with model for agent {self.agent_name}")
+
+        model_output = resolved_model_output
+        action_mask_np = resolved_mask
+
         # Handle both Discrete and Tuple action spaces.
         # Tuple structure is (Discrete(action), Box(message)).
         action_space = self.game.get_game_action_space(self.agent_name)
+        output_dim = int(model_output.shape[1])
         if hasattr(action_space, 'n'):
             action_dim = action_space.n
         elif hasattr(action_space, 'spaces') and len(action_space.spaces) > 0 and hasattr(action_space.spaces[0], 'n'):
             action_dim = action_space.spaces[0].n
         else:
-            action_dim = model_output.shape[1]
+            action_dim = output_dim
+
+        # Some legacy checkpoints export the action logits without the full
+        # mask width or with the message tail concatenated, so prefer the model's
+        # actual output width when it is smaller than the env's nominal action count.
+        if output_dim >= 2 * MESSAGE_SIZE and self._comm_mode_name == "attention":
+            action_dim = max(1, output_dim - 2 * MESSAGE_SIZE)
+        elif output_dim > 0 and output_dim <= max(1, action_dim):
+            action_dim = output_dim
+
         action_logits = model_output[:, :action_dim]
-        
+
         # Extract message vector (MESSAGE_SIZE dims) if present after action logits
         message_vector = None
         remaining = model_output.shape[1] - action_dim
         if remaining >= MESSAGE_SIZE:
-            # Message mean is the first MESSAGE_SIZE values after action logits
             message_mean = model_output[:, action_dim:action_dim + MESSAGE_SIZE]
-            
-            # If log_std is available, sample from Normal distribution using temperature.
-            # Otherwise use mean.
             if remaining >= 2 * MESSAGE_SIZE:
                 msg_log_std = model_output[:, action_dim + MESSAGE_SIZE:action_dim + 2 * MESSAGE_SIZE]
                 msg_std = torch.exp(msg_log_std) * getattr(self, "temperature", 1.0)
@@ -170,11 +228,10 @@ class VexModelRunner:
                 message_vector = msg_dist.sample().cpu().numpy()[0]
             else:
                 message_vector = message_mean.cpu().numpy()[0]
-        
+
         # Use temperature-scaled sampling like RLlib does during training
         scaled_logits = action_logits / max(1e-6, getattr(self, "temperature", 1.0))
         probs = torch.softmax(scaled_logits, dim=-1)
-        
         action_probs = probs.squeeze(0).cpu().numpy().copy()
 
         prob_sum = action_probs.sum()
@@ -182,13 +239,12 @@ class VexModelRunner:
             action_probs = action_probs / prob_sum
             action = np.random.choice(action_dim, p=action_probs)
         else:
-            action = self.game.fallback_action()
+            action = self.game.fallback_action
 
-        # If the model still somehow chooses an invalid action, fallback gracefully
         if not self.game.is_valid_action(self.agent_name, action, observation):
-            action = self.game.fallback_action()
-        
-        return action, message_vector
+            action = self.game.fallback_action
+
+        return int(action), message_vector
 
     def get_inference(self, observation: np.ndarray):
         """Get action for the robot based on current observation.

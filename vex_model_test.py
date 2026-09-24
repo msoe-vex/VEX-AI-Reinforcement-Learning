@@ -227,7 +227,7 @@ def run_simulation(
                             valid_actions = np.arange(action_space.n)
 
                     if valid_actions.size == 0:
-                        action = env.game.fallback_action
+                        action = int(env.game.fallback_action)
                     else:
                         action = int(np.random.choice(valid_actions))
 

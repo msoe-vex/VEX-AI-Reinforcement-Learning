@@ -627,9 +627,9 @@ class OverrideGame(VexGame):
             if holder is not None and holder != agent:
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
             return self._move(agent, TOGGLE_POSITIONS[index], ActionEvent("toggle", {"index": index})), 0.0
-        if selected == Actions.HOLD_TOGGLE_QUADRANT:
+        if selected == Actions.TOGGLE_QUADRANT:
             index = int(np.argmin([np.linalg.norm(state["position"] - p) for p in TOGGLE_POSITIONS]))
-            return self._move(agent, TOGGLE_POSITIONS[index], ActionEvent("hold_toggle", {"index": index})), 0.0
+            return self._move(agent, TOGGLE_POSITIONS[index], ActionEvent("toggle", {"index": index})), 0.0
         if selected == Actions.PARK_MIDFIELD:
             return self._move(agent, np.zeros(2, dtype=np.float32), ActionEvent("park")), 0.0
         return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
@@ -660,7 +660,7 @@ class OverrideGame(VexGame):
             toggle_colors = list(state.get("inferred_toggle_colors", [None] * NUM_TOGGLES))
             toggle_colors[toggle_index] = state["team"]
             state["inferred_toggle_colors"] = toggle_colors
-        elif selected == Actions.HOLD_TOGGLE_QUADRANT:
+        elif selected == Actions.TOGGLE_QUADRANT:
             toggle_index = int(np.argmin([
                 np.linalg.norm(state["position"] - position)
                 for position in TOGGLE_POSITIONS
