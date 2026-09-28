@@ -394,14 +394,17 @@ def env_creator(config=None):
         communication_mode=communication_mode,
         deterministic=deterministic,
         copy_message_dropout_prob=float(config.get("copy_message_dropout_prob", 0.0)),
+        use_24_inch_robots=bool(config.get("use_24_inch_robots", True)),
     )
     
     game_class = get_game_class(game_name)
-    game = game_class.get_game(
-        game_name,
-        communication_mode=communication_mode,
-        deterministic=deterministic,
-    )
+    game_kwargs = {
+        "communication_mode": communication_mode,
+        "deterministic": deterministic,
+    }
+    if game_class is not PushBackGame:
+        game_kwargs["use_24_inch_robots"] = env_config.use_24_inch_robots
+    game = game_class.get_game(game_name, **game_kwargs)
     return VexMultiAgentEnv(
         game=game,
         config=env_config,
@@ -452,6 +455,7 @@ def apply_training_metadata_overrides(args, metadata, explicit_cli_flags):
         "communication_mode": ("communication_mode", ["--communication-mode"]),
         "randomize": ("randomize", ["--randomize", "--no-randomize"]),
         "deterministic": ("deterministic", ["--deterministic", "--no-deterministic"]),
+        "use_24_inch_robots": ("use_24_inch_robots", ["--use-24-inch-robots", "--no-use-24-inch-robots"]),
         "num_iters": ("num_iters", ["--num-iters"]),
         "copy_message_dropout_prob": ("copy_message_dropout_prob", ["--copy-message-dropout-prob"]),
     }
@@ -550,6 +554,7 @@ if __name__ == "__main__":
         "communication_mode": env_config_obj.communication_mode.value,
         "deterministic": env_config_obj.deterministic,
         "copy_message_dropout_prob": env_config_obj.copy_message_dropout_prob,
+        "use_24_inch_robots": env_config_obj.use_24_inch_robots,
     })
 
     # Get observation and action spaces for module spec
@@ -611,6 +616,7 @@ if __name__ == "__main__":
                 "communication_mode": env_config_obj.communication_mode.value,
                 "deterministic": env_config_obj.deterministic,
                 "copy_message_dropout_prob": env_config_obj.copy_message_dropout_prob,
+                "use_24_inch_robots": env_config_obj.use_24_inch_robots,
                 "warm_start": args.warm_start,
                 "restore_path": restore_path,
             }
@@ -683,6 +689,7 @@ if __name__ == "__main__":
         "communication_mode": env_config_obj.communication_mode.value,
         "deterministic": env_config_obj.deterministic,
         "copy_message_dropout_prob": env_config_obj.copy_message_dropout_prob,
+        "use_24_inch_robots": env_config_obj.use_24_inch_robots,
         "start_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()),
     }
     metadata_path = os.path.join(experiment_dir, "training_metadata.json")
@@ -758,6 +765,7 @@ if __name__ == "__main__":
             communication_mode=env_config_obj.communication_mode,
             deterministic=env_config_obj.deterministic,
             copy_message_dropout_prob=env_config_obj.copy_message_dropout_prob,
+            use_24_inch_robots=env_config_obj.use_24_inch_robots,
         )
         run_simulation(
             config=test_config,

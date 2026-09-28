@@ -260,6 +260,9 @@ if __name__ == "__main__":
 
     print(f"Using checkpoint: {checkpoint_path}")
     game_class = get_game_class(env_config.game_name)
-    game = game_class.get_game(env_config.game_name, communication_mode=env_config.communication_mode)
+    game_kwargs = {"communication_mode": env_config.communication_mode}
+    if game_class is not PushBackGame:
+        game_kwargs["use_24_inch_robots"] = env_config.use_24_inch_robots
+    game = game_class.get_game(env_config.game_name, **game_kwargs)
     
     compile_checkpoint_to_torchscript(game, checkpoint_path, experiment_path, env_config)

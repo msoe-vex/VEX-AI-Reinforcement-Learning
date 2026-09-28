@@ -15,16 +15,19 @@ class VexUSkillsGame(OverrideGame):
 
 	def __init__(self, robots: Optional[list] = None,
 				 communication_mode: CommunicationOption = CommunicationOption.NONE,
-				 deterministic: bool = True):
+				 deterministic: bool = True,
+				 use_24_inch_robots: bool = True):
 		if robots is None:
+			primary_size = RobotSize.INCH_24 if use_24_inch_robots else RobotSize.INCH_18
 			robots = [
-				Robot("red_robot_0", Team.RED, RobotSize.INCH_24,
+				Robot("red_robot_0", Team.RED, primary_size,
 					  np.array([-48.0, 24.0], dtype=np.float32)),
-				Robot("red_robot_1", Team.RED, RobotSize.INCH_15,
+				Robot("red_robot_1", Team.RED, RobotSize.INCH_18,
 					  np.array([-48.0, -24.0], dtype=np.float32)),
 			]
 		super().__init__(robots, communication_mode=communication_mode,
-						 deterministic=deterministic)
+						 deterministic=deterministic,
+						 use_24_inch_robots=use_24_inch_robots)
 
 	@property
 	def total_time(self) -> float:

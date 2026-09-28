@@ -241,16 +241,146 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             elapsed = total - rem
             plan = busy_info.get("plan", [])
 
-            # Apply events for any segments that just completed this tick
+            proposed_pos = busy_info["target_pos"].copy()
+            proposed_orient = busy_info["target_orient"].copy()
+            if busy_info["remaining_ticks"] > 0:
+                if "tick_positions" in busy_info:
+                    tick_positions = busy_info["tick_positions"]
+                    tick_orients = busy_info["tick_orients"]
+                    idx = min(elapsed, len(tick_positions) - 1)
+                    proposed_pos = tick_positions[idx].copy()
+                    proposed_orient = tick_orients[idx].copy()
+                else:
+                    for seg in plan:
+                        if elapsed <= seg["tick_end"]:
+                            seg_ticks = max(1, seg["tick_end"] - seg["tick_start"])
+                            seg_alpha = float(np.clip((elapsed - seg["tick_start"]) / seg_ticks, 0.0, 1.0))
+                            start_pos = seg["start_pos"]
+                            end_pos = seg["end_pos"]
+                            proposed_pos = start_pos + (end_pos - start_pos) * seg_alpha
+                            start_orient = float(seg["start_orient"][0])
+                            end_orient = float(seg["end_orient"][0])
+                            angle_delta = vex_shortest_angular_distance(start_orient, end_orient)
+                            proposed_angle = vex_normalize_angle(start_orient + angle_delta * seg_alpha)
+                            if np.linalg.norm(end_pos - start_pos) > 0.1:
+                                proposed_angle = vex_atan2(
+                                    float(end_pos[0] - start_pos[0]),
+                                    float(end_pos[1] - start_pos[1]),
+                                )
+                            proposed_orient = np.array([proposed_angle], dtype=np.float32)
+                            break
+                        proposed_pos = seg["end_pos"].copy()
+                        proposed_orient = seg["end_orient"].copy()
+
+            current_position = agent_state["position"].copy()
+            current_orientation = float(agent_state["orientation"][0])
+            safe_pos, safe_orientation, collision_blocked = self._clip_pose_before_collision(
+                agent,
+                current_position,
+                current_orientation,
+                proposed_pos,
+                float(proposed_orient[0]),
+            )
+
+            agent_state["position"] = np.asarray(safe_pos, dtype=np.float32)
+            agent_state["orientation"] = np.array([safe_orientation], dtype=np.float32)
+            self.game.update_robot_position(agent, agent_state["position"])
+
+            if collision_blocked:
+                if not busy_info.get("collision_penalty_applied", False):
+                    penalty = float(self.game.get_collision_penalty())
+                    self._add_agent_penalty(agent, penalty)
+                    stored = self._deferred_rewards.get(agent)
+                    if stored is not None:
+                        stored["penalty"] = float(stored.get("penalty", 0.0)) + penalty
+
+                if busy_info.get("recovery_move"):
+                    recovery_target = busy_info["target_pos"].copy()
+                else:
+                    recovery_target = self._find_nearest_clear_pose(
+                        agent,
+                        np.asarray(safe_pos, dtype=np.float32),
+                        float(safe_orientation),
+                    )
+                recovery_distance = (
+                    float(np.linalg.norm(recovery_target - safe_pos))
+                    if recovery_target is not None
+                    else 0.0
+                )
+                if recovery_target is not None and recovery_distance > 0.1:
+                    if busy_info.get("recovery_move"):
+                        recovery_start = np.asarray(safe_pos, dtype=np.float32).copy()
+                        recovery_orient = np.array([safe_orientation], dtype=np.float32)
+                        recovery_speed = max(1.0, float(self.game.get_robot_speed(agent)))
+                        recovery_ticks = max(1, int(np.ceil((recovery_distance / recovery_speed) / DELTA_T)))
+                        busy_info.update(
+                            start_pos=recovery_start,
+                            start_orient=recovery_orient,
+                            target_pos=recovery_target.copy(),
+                            target_orient=recovery_orient.copy(),
+                            plan=[{
+                                "start_pos": recovery_start.copy(),
+                                "end_pos": recovery_target.copy(),
+                                "start_orient": recovery_orient.copy(),
+                                "end_orient": recovery_orient.copy(),
+                                "tick_start": 0,
+                                "tick_end": recovery_ticks,
+                                "events": [],
+                            }],
+                            total_ticks=recovery_ticks,
+                            remaining_ticks=recovery_ticks,
+                            completed_segments=set(),
+                        )
+                        self.agent_movements[agent] = (recovery_start, recovery_target.copy())
+                        completed[agent] = False
+                        continue
+
+                    recovery_speed = max(1.0, float(self.game.get_robot_speed(agent)))
+                    recovery_ticks = max(1, int(np.ceil((recovery_distance / recovery_speed) / DELTA_T)))
+                    recovery_orient = np.array([safe_orientation], dtype=np.float32)
+                    recovery_plan = [{
+                        "start_pos": np.asarray(safe_pos, dtype=np.float32).copy(),
+                        "end_pos": recovery_target.copy(),
+                        "start_orient": recovery_orient.copy(),
+                        "end_orient": recovery_orient.copy(),
+                        "tick_start": 0,
+                        "tick_end": recovery_ticks,
+                        "events": [],
+                    }]
+                    self.busy_state[agent] = {
+                        "start_pos": np.asarray(safe_pos, dtype=np.float32).copy(),
+                        "start_orient": recovery_orient.copy(),
+                        "target_pos": recovery_target.copy(),
+                        "target_orient": recovery_orient.copy(),
+                        "plan": recovery_plan,
+                        "total_ticks": recovery_ticks,
+                        "remaining_ticks": recovery_ticks,
+                        "completed_segments": set(),
+                        "collision_penalty_applied": True,
+                        "recovery_move": True,
+                    }
+                    self.agent_movements[agent] = (
+                        np.asarray(safe_pos, dtype=np.float32).copy(),
+                        recovery_target.copy(),
+                    )
+                    completed[agent] = False
+                else:
+                    del self.busy_state[agent]
+                    self.agent_movements[agent] = (
+                        busy_info["start_pos"].copy(),
+                        np.asarray(safe_pos, dtype=np.float32).copy(),
+                    )
+                    completed[agent] = True
+                continue
+
             completed_segments = busy_info.get("completed_segments", set())
             for seg_idx, seg in enumerate(plan):
                 if seg_idx not in completed_segments and elapsed >= seg["tick_end"]:
                     completed_segments.add(seg_idx)
-                    seg_events = seg.get("events", [])
-                    if seg_events:
+                    if seg.get("events"):
                         score_before = self.game.compute_score()
                         try:
-                            self.game.apply_events(agent, seg_events)
+                            self.game.apply_events(agent, seg["events"])
                         except Exception:
                             pass
                         score_after = self.game.compute_score()
@@ -258,59 +388,10 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             busy_info["completed_segments"] = completed_segments
 
             if busy_info["remaining_ticks"] <= 0:
-                # Action complete - snap to target
-                agent_state["position"] = busy_info["target_pos"].copy()
-                agent_state["orientation"] = busy_info["target_orient"].copy()
-                if hasattr(self.game, "update_robot_position"):
-                    try:
-                        self.game.update_robot_position(agent, agent_state["position"])
-                    except Exception:
-                        pass
                 del self.busy_state[agent]
+                self.agent_movements[agent] = None
                 completed[agent] = True
             else:
-                # Interpolate position
-                current_pos = busy_info["start_pos"].copy()
-                current_orient = busy_info["start_orient"].copy()
-                
-                if "tick_positions" in busy_info:
-                    tick_positions = busy_info["tick_positions"]
-                    tick_orients = busy_info["tick_orients"]
-                    idx = min(elapsed, len(tick_positions) - 1)
-                    current_pos = tick_positions[idx].copy()
-                    current_orient = tick_orients[idx].copy()
-                else:
-                    for seg in plan:
-                        seg_start = seg["tick_start"]
-                        seg_end = seg["tick_end"]
-                        if elapsed <= seg_end:
-                            seg_ticks = max(1, seg_end - seg_start)
-                            seg_alpha = (elapsed - seg_start) / seg_ticks
-                            seg_alpha = float(np.clip(seg_alpha, 0.0, 1.0))
-                            s_pos = seg["start_pos"]
-                            e_pos = seg["end_pos"]
-                            current_pos = s_pos + (e_pos - s_pos) * seg_alpha
-                            s_or = float(seg["start_orient"][0])
-                            e_or = float(seg["end_orient"][0])
-                            
-                            try:
-                                from pushback.pushback import vex_shortest_angular_distance, vex_normalize_angle, vex_atan2
-                                d_or = vex_shortest_angular_distance(s_or, e_or)
-                                interp_or = vex_normalize_angle(s_or + d_or * seg_alpha)
-                                diff = e_pos - s_pos
-                                if np.linalg.norm(diff) > 0.1:
-                                    interp_or = vex_atan2(diff[0], diff[1])
-                            except Exception:
-                                interp_or = s_or
-                                
-                            current_orient = np.array([interp_or], dtype=np.float32)
-                            break
-                        else:
-                            current_pos = seg["end_pos"].copy()
-                            current_orient = seg["end_orient"].copy()
-                self.game.update_robot_position(agent, current_pos)
-                agent_state["position"] = current_pos
-                agent_state["orientation"] = current_orient
                 completed[agent] = False
         return completed
 
@@ -447,6 +528,197 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         )
         return reward, str(stored.get("action_name", "--"))
 
+    def _robot_pose_collisions(
+        self,
+        agent: str,
+        position: np.ndarray,
+        orientation: float,
+    ) -> set:
+        collisions = set()
+        robot = self.game.get_robot_for_agent(agent)
+        if robot is None:
+            return collisions
+        length, width = self.game.get_robot_dimensions(agent)
+        center = np.asarray(position, dtype=float)
+        corners = self.game._get_robot_edges(center, length, width, orientation)
+        field_half = float(self.game.field_size_inches) / 2.0
+        if np.any(corners[:, 0] < -field_half):
+            collisions.add("wall:left")
+        if np.any(corners[:, 0] > field_half):
+            collisions.add("wall:right")
+        if np.any(corners[:, 1] < -field_half):
+            collisions.add("wall:bottom")
+        if np.any(corners[:, 1] > field_half):
+            collisions.add("wall:top")
+
+        for obstacle_index, obstacle in enumerate(self.game.get_permanent_obstacles()):
+            if getattr(obstacle, "ignore_collision", False):
+                continue
+            obstacle_center = np.array([obstacle.x, obstacle.y], dtype=float)
+            if self.game._rectangle_circle_collision(
+                center,
+                length,
+                width,
+                orientation,
+                obstacle_center,
+                float(obstacle.radius),
+            ):
+                collisions.add(f"obstacle:{obstacle_index}")
+
+        for other_agent, other_state in self.environment_state["agents"].items():
+            if other_agent == agent:
+                continue
+            other_robot = self.game.get_robot_for_agent(other_agent)
+            if other_robot is None:
+                continue
+            other_position = np.asarray(other_state["position"], dtype=float)
+            other_orientation = float(other_state["orientation"][0])
+            if self.game._oriented_rectangles_overlap(
+                center,
+                length,
+                width,
+                orientation,
+                other_position,
+                *self.game.get_robot_dimensions(other_agent),
+                other_orientation,
+            ):
+                collisions.add(f"robot:{other_agent}")
+        return collisions
+
+    def _robot_pose_is_clear(
+        self,
+        agent: str,
+        position: np.ndarray,
+        orientation: float,
+    ) -> bool:
+        return not self._robot_pose_collisions(agent, position, orientation)
+
+    def _clip_pose_before_collision(
+        self,
+        agent: str,
+        start_position: np.ndarray,
+        start_orientation: float,
+        end_position: np.ndarray,
+        end_orientation: float,
+    ) -> Tuple[np.ndarray, float, bool]:
+        start = np.asarray(start_position, dtype=float)
+        end = np.asarray(end_position, dtype=float)
+        translation = end - start
+        angle_delta = vex_shortest_angular_distance(start_orientation, end_orientation)
+        robot_length, robot_width = self.game.get_robot_dimensions(agent)
+        max_step = max(0.25, min(robot_length, robot_width) / 4.0)
+        sample_count = max(1, int(np.ceil(np.linalg.norm(translation) / max_step)))
+        sample_count = max(sample_count, int(np.ceil(abs(angle_delta) / 5.0)))
+        last_safe_fraction = 0.0
+        initial_collisions = self._robot_pose_collisions(agent, start, start_orientation)
+        escaped_initial_overlap = not initial_collisions
+        field_half = float(self.game.field_size_inches) / 2.0
+
+        def wall_penetrations(position: np.ndarray, orientation: float) -> Dict[str, float]:
+            corners = self.game._get_robot_edges(position, robot_length, robot_width, orientation)
+            return {
+                "wall:left": max(0.0, float(-field_half - np.min(corners[:, 0]))),
+                "wall:right": max(0.0, float(np.max(corners[:, 0]) - field_half)),
+                "wall:bottom": max(0.0, float(-field_half - np.min(corners[:, 1]))),
+                "wall:top": max(0.0, float(np.max(corners[:, 1]) - field_half)),
+            }
+
+        initial_wall_penetrations = wall_penetrations(start, start_orientation)
+
+        def pose_is_allowed(candidate_position: np.ndarray, candidate_orientation: float) -> bool:
+            collisions = self._robot_pose_collisions(agent, candidate_position, candidate_orientation)
+            if escaped_initial_overlap:
+                return not collisions
+            if not collisions:
+                return True
+            if not collisions.issubset(initial_collisions):
+                return False
+            candidate_wall_penetrations = wall_penetrations(candidate_position, candidate_orientation)
+            return all(
+                candidate_wall_penetrations[wall] <= initial_wall_penetrations[wall] + 1e-6
+                for wall in initial_wall_penetrations
+            )
+
+        for sample_index in range(1, sample_count + 1):
+            fraction = sample_index / sample_count
+            candidate_position = start + translation * fraction
+            candidate_orientation = vex_normalize_angle(start_orientation + angle_delta * fraction)
+            if pose_is_allowed(candidate_position, candidate_orientation):
+                last_safe_fraction = fraction
+                if not self._robot_pose_collisions(agent, candidate_position, candidate_orientation):
+                    escaped_initial_overlap = True
+                continue
+
+            if not escaped_initial_overlap:
+                continue
+
+            unsafe_fraction = fraction
+            safe_fraction = last_safe_fraction
+            for _ in range(20):
+                middle_fraction = (safe_fraction + unsafe_fraction) / 2.0
+                middle_position = start + translation * middle_fraction
+                middle_orientation = vex_normalize_angle(start_orientation + angle_delta * middle_fraction)
+                if pose_is_allowed(middle_position, middle_orientation):
+                    safe_fraction = middle_fraction
+                else:
+                    unsafe_fraction = middle_fraction
+
+            safe_fraction = max(0.0, safe_fraction - 1e-4)
+            safe_position = (start + translation * safe_fraction).astype(np.float32)
+            safe_orientation = vex_normalize_angle(start_orientation + angle_delta * safe_fraction)
+            return safe_position, safe_orientation, True
+
+        if not escaped_initial_overlap:
+            safe_position = (start + translation * last_safe_fraction).astype(np.float32)
+            safe_orientation = vex_normalize_angle(start_orientation + angle_delta * last_safe_fraction)
+            return safe_position, safe_orientation, True
+
+        return end.astype(np.float32), vex_normalize_angle(end_orientation), False
+
+    def _find_nearest_clear_pose(
+        self,
+        agent: str,
+        start_position: np.ndarray,
+        orientation: float,
+    ) -> Optional[np.ndarray]:
+        start = np.asarray(start_position, dtype=float)
+        if self._robot_pose_is_clear(agent, start, orientation):
+            return start.astype(np.float32)
+
+        directions = [
+            np.array([np.cos(angle), np.sin(angle)], dtype=float)
+            for angle in np.linspace(0.0, 2.0 * np.pi, 48, endpoint=False)
+        ]
+        candidate_results = []
+        for direction in directions:
+            upper = None
+            for radius in np.arange(0.5, float(self.game.field_size_inches), 0.5):
+                candidate = start + radius * direction
+                if self._robot_pose_is_clear(agent, candidate, orientation):
+                    upper = float(radius)
+                    break
+            if upper is None:
+                continue
+
+            low = max(0.0, upper - 0.5)
+            high = upper
+            for _ in range(12):
+                middle = (low + high) / 2.0
+                candidate = start + middle * direction
+                if self._robot_pose_is_clear(agent, candidate, orientation):
+                    high = middle
+                else:
+                    low = middle
+
+            candidate = np.asarray(start + (high + 0.03) * direction, dtype=np.float32)
+            if self._robot_pose_is_clear(agent, candidate, orientation):
+                candidate_results.append((float(np.linalg.norm(candidate - start)), candidate))
+
+        if not candidate_results:
+            return None
+        candidate_results.sort(key=lambda result: result[0])
+        return candidate_results[0][1]
+
     def _mark_action_completed(self, agent: str, rewards: Dict[str, float], infos: Dict[str, Dict]) -> None:
         """Apply shared completion updates for an agent finishing an action."""
         finalized = self._complete_deferred_reward(agent)
@@ -529,16 +801,6 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         Rewards are computed AFTER the busy state completes (events have been
         applied and scores have changed), giving correct score-based rewards.
         """
-        # Remove any previously terminated agents so we don't expect actions from them
-        for agent in self._terminated_agents:
-            if agent in self.agents:
-                self.agents.remove(agent)
-                
-        if not actions and not self.agents:
-            self.agents = []
-            return {}, {}, {"__all__": True}, {"__all__": True}, {}
-        
-        self.num_ticks += 1
         
         if self.environment_state is None:
             print("CRITICAL: self.environment_state is None in step()!")
@@ -735,6 +997,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         # ──────────────────────────────────────────────────────────────
         # 3. Advance time + messages for this tick
         # ──────────────────────────────────────────────────────────────
+        self.num_ticks += 1
         tick_results = self._tick_busy_agents()
         for agent, did_complete in tick_results.items():
             if did_complete:
@@ -1135,13 +1398,13 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 max_ticks = max(max_ticks, b["total_ticks"])
                 
         for t in range(max_ticks):
-            # Get positions for all agents at tick t
+            # Get poses for all agents at tick t
             pos_at_t = {}
-            radii = {}
+            orient_at_t = {}
+            dimensions = {}
             
             for agent in active_agents:
-                robot = self.game.get_robot_for_agent(agent)
-                radii[agent] = robot.radius if robot else 9.0
+                dimensions[agent] = self.game.get_robot_dimensions(agent)
                 
                 busy = self.busy_state.get(agent)
                 if busy:
@@ -1150,10 +1413,19 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                         elapsed = busy["total_ticks"] - busy["remaining_ticks"]
                         idx = min(elapsed + t, len(path_positions) - 1)
                         pos_at_t[agent] = path_positions[idx]
+                        path_orientations = busy.get("tick_orients")
+                        if path_orientations is not None and len(path_orientations) > 0:
+                            orient_idx = min(elapsed + t, len(path_orientations) - 1)
+                            orient_at_t[agent] = float(path_orientations[orient_idx][0])
+                        else:
+                            orient_at_t[agent] = float(busy["target_orient"][0])
                     else:
                         pos_at_t[agent] = busy["target_pos"]
+                        orient_at_t[agent] = float(busy["target_orient"][0])
                 else:
-                    pos_at_t[agent] = self.environment_state["agents"][agent]["position"].copy()
+                    agent_state = self.environment_state["agents"][agent]
+                    pos_at_t[agent] = agent_state["position"].copy()
+                    orient_at_t[agent] = float(agent_state["orientation"][0])
                     
             # Check pairwise collisions at tick t
             agents_list = list(active_agents)
@@ -1168,7 +1440,13 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                         continue
                     
                     dist = float(np.linalg.norm(pos_at_t[a] - pos_at_t[b]))
-                    if dist < (radii[a] + radii[b]):
+                    length_a, width_a = dimensions[a]
+                    length_b, width_b = dimensions[b]
+                    overlap = self.game._oriented_rectangles_overlap(
+                        pos_at_t[a], length_a, width_a, orient_at_t[a],
+                        pos_at_t[b], length_b, width_b, orient_at_t[b],
+                    )
+                    if overlap:
                         # Escaping deadlock exception
                         if t == 0:
                             if "initial_dist" not in self.busy_state.get(a, {}):
@@ -1306,44 +1584,33 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             plt.close()
     
     def _render_paths(self, ax) -> None:
-        """Render robot paths."""
-        if self.path_planner is None:
-            return
-        
+        """Render the movement plans that the environment actually executes."""
         for agent in self.possible_agents:
-            movement = self.agent_movements.get(agent)
-            if movement is None:
-                continue
-            
-            start_pos, end_pos = movement
             agent_state = self.environment_state["agents"][agent]
             robot_color_team = str(agent_state.get("team", "red"))
             color = 'red' if robot_color_team == 'red' else 'blue'
-            
-            try:
-                # Get robot for this agent via direct lookup
-                robot_config = self.game.get_robot_for_agent(agent)
-                
-                # Fallback if no specific robot found
-                if robot_config is None:
-                    robot_config = Robot(
-                        name=agent, team=Team.RED, size=RobotSize.INCH_24,
-                        start_position=np.array([0.0, 0.0])
+            busy = self.busy_state.get(agent)
+            if busy is not None:
+                plan = busy.get("plan", [])
+                path_points = []
+                for segment in plan:
+                    start = np.asarray(segment["start_pos"], dtype=np.float32)
+                    end = np.asarray(segment["end_pos"], dtype=np.float32)
+                    if not path_points or not np.allclose(path_points[-1], start):
+                        path_points.append(start)
+                    if not np.allclose(path_points[-1], end):
+                        path_points.append(end)
+                if len(path_points) >= 2:
+                    path = np.asarray(path_points)
+                    ax.plot(
+                        path[:, 0], path[:, 1],
+                        linestyle=':', linewidth=1.5, color=color, alpha=0.4
                     )
+                continue
 
-                obstacles = self.game.get_permanent_obstacles()
-                positions, _, _, _ = self.path_planner.Solve(
-                    start_point=start_pos,
-                    end_point=end_pos,
-                    obstacles=obstacles,
-                    robot=robot_config,
-                    optimize=False
-                )
-                ax.plot(
-                    positions[:, 0], positions[:, 1],
-                    linestyle=':', linewidth=1.5, color=color, alpha=0.4
-                )
-            except Exception as e:
+            movement = self.agent_movements.get(agent)
+            if movement is not None:
+                start_pos, end_pos = movement
                 ax.plot(
                     [start_pos[0], end_pos[0]], [start_pos[1], end_pos[1]],
                     linestyle=':', linewidth=1.5, color=color, alpha=0.4

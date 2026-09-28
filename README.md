@@ -126,6 +126,9 @@ All commands use SLURM to run on the MSOE computing cluster (ROSIE).
    ```bash
    # Basic training with default parameters
    sbatch scripts/submitTrainingJob.sh --num-iters 100 --learning-rate 0.0003
+
+   # Use all 18-inch robots instead of one 24-inch and one 18-inch per team
+   sbatch scripts/submitTrainingJob.sh --no-use-24-inch-robots --num-iters 100
    
    # Custom game variant and settings
    sbatch scripts/submitTrainingJob.sh --game vexu_skills --num-iters 50 --entropy 0.02
@@ -161,6 +164,9 @@ All commands use SLURM to run on the MSOE computing cluster (ROSIE).
 
    ```bash
    srun python vex_model_test.py --experiment-path job_results/job_220065/PPO_2026-01-29_00-36-09/ --output-dir vex_model_test
+
+   # Override the experiment setting and test with all 18-inch robots
+   srun python vex_model_test.py --experiment-path job_results/job_220065/PPO_2026-01-29_00-36-09/ --no-use-24-inch-robots
    
    # Specify game variant if metadata not found
    srun python vex_model_test.py --experiment-path /path/to/experiment --game vexai_skills
@@ -195,6 +201,7 @@ RLlib training script (submit via SLURM using `sbatch scripts/submitTrainingJob.
 | `--cpus-per-task`   | int     | 1            | Number of CPU cores to use per task                                         |
 | `--game`            | str     | `vexai_skills` | Game variant to train (vexai_skills, vexu_skills, vexai_comp, vexu_comp)   |
 | `--randomize`       | bool    | True         | Enable full-field block randomization                                       |
+| `--use-24-inch-robots` / `--no-use-24-inch-robots` | bool | True | Use one 24-inch and one 18-inch Override robot per team; disable for all 18-inch robots. |
 | `--num-gpus`        | int     | 0            | Number of GPUs to use (auto-set by SLURM script)                            |
 | `--experiment-path` | str     | ""           | Path to experiment directory for resuming (loads metadata + latest checkpoint) |
 | `--verbose`         | int     | 1            | Verbosity level (0=silent, 1=default, 2=verbose)                            |
@@ -209,6 +216,7 @@ Compile RLlib checkpoint to TorchScript (run via `srun`).
 | Argument           | Type    | Default         | Description                                                                 |
 |---------------------|---------|-----------------|-----------------------------------------------------------------------------|
 | `--experiment-path` | str     | Required        | Path to experiment directory (loads metadata + latest checkpoint)            |
+| `--use-24-inch-robots` / `--no-use-24-inch-robots` | bool | experiment setting (default True) | Override robot sizes when compiling Override games. |
 
 ### vex_model_test.py
 
@@ -219,6 +227,9 @@ Run simulation using trained TorchScript models (run via `srun`).
 | `--experiment-path` | str | Required      | Path to experiment directory containing `.pt` model files |
 | `--game`         | str     | auto-detect     | Game variant (auto-detected from training_metadata.json if available) |
 | `--output-dir`   | str     | `vex_model_test` | Output directory for rendered GIFs                        |
+| `--use-24-inch-robots` / `--no-use-24-inch-robots` | bool | experiment setting (default True) | Override robot sizes for Override games. |
+
+The robot-size option is available when training (`vex_model_training.py`), compiling (`vex_model_compile.py`), and testing (`vex_model_test.py`). It defaults to one 24-inch and one 18-inch robot per Override team. Pass `--no-use-24-inch-robots` to use 18-inch robots for every robot. Training stores the setting in `training_metadata.json`; compile and test commands use that value unless you override it explicitly.
 
 ---
 

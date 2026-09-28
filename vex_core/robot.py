@@ -6,6 +6,7 @@ import numpy as np
 class RobotSize(Enum):
     """Robot size categories."""
     INCH_15 = 15
+    INCH_18 = 18
     INCH_24 = 24
 
 class Team(Enum):
@@ -45,5 +46,6 @@ class Robot:
         except Exception:
             self.camera_rotation_offset = 0.0
         
-        self.radius = np.sqrt((self.length/2)**2 + (self.width/2)**2)
-        self.total_radius = self.radius + self.buffer
+        self.radius = min(self.length, self.width) / 2.0
+        self.planning_radius = np.sqrt((self.length/2)**2 + (self.width/2)**2)
+        self.total_radius = self.planning_radius + self.buffer

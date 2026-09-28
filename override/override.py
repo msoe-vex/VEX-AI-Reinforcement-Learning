@@ -272,18 +272,23 @@ class OverrideGame(VexGame):
 
     def __init__(self, robots: Optional[list] = None,
                  communication_mode: CommunicationOption = CommunicationOption.NONE,
-                 deterministic: bool = True):
+                 deterministic: bool = True,
+                 use_24_inch_robots: bool = False):
         # Create an Override game with the supplied or default robot roster.
-        robots = robots or [
-            Robot("red_robot_0", Team.RED, RobotSize.INCH_24,
-                np.array([0.0, -FIELD_HALF + 12.0], dtype=np.float32), start_orientation=0.0),
-            Robot("red_robot_1", Team.RED, RobotSize.INCH_15,
-                np.array([-FIELD_HALF + 7.5, 0.0], dtype=np.float32), start_orientation=90.0),
-            Robot("blue_robot_0", Team.BLUE, RobotSize.INCH_24,
-                np.array([0.0, FIELD_HALF - 12.0], dtype=np.float32), start_orientation=180.0),
-            Robot("blue_robot_1", Team.BLUE, RobotSize.INCH_15,
-                np.array([FIELD_HALF - 7.5, 0.0], dtype=np.float32), start_orientation=270.0),
-        ]
+        if robots is None:
+            primary_size = RobotSize.INCH_24 if use_24_inch_robots else RobotSize.INCH_18
+            primary_offset = primary_size.value / 2.0
+            secondary_offset = RobotSize.INCH_18.value / 2.0
+            robots = [
+                Robot("red_robot_0", Team.RED, primary_size,
+                    np.array([0.0, -FIELD_HALF + primary_offset], dtype=np.float32), start_orientation=0.0),
+                Robot("red_robot_1", Team.RED, RobotSize.INCH_18,
+                    np.array([-FIELD_HALF + secondary_offset, 0.0], dtype=np.float32), start_orientation=90.0),
+                Robot("blue_robot_0", Team.BLUE, primary_size,
+                    np.array([0.0, FIELD_HALF - primary_offset], dtype=np.float32), start_orientation=180.0),
+                Robot("blue_robot_1", Team.BLUE, RobotSize.INCH_18,
+                    np.array([FIELD_HALF - secondary_offset, 0.0], dtype=np.float32), start_orientation=270.0),
+            ]
         super().__init__(robots, communication_mode=communication_mode)
         self.deterministic = bool(deterministic)
         self.path_planner = PathPlanner()
@@ -291,9 +296,13 @@ class OverrideGame(VexGame):
 
     @staticmethod
     def get_game(game_name: str, communication_mode: CommunicationOption = CommunicationOption.NONE,
-                 deterministic: bool = True) -> VexGame:
+                 deterministic: bool = True, use_24_inch_robots: bool = True) -> VexGame:
         # Construct a registered Override variant by name.
-        return _get_game_class(game_name)(communication_mode=communication_mode, deterministic=deterministic)
+        return _get_game_class(game_name)(
+            communication_mode=communication_mode,
+            deterministic=deterministic,
+            use_24_inch_robots=use_24_inch_robots,
+        )
 
     @property
     def field_size_inches(self) -> float:
@@ -549,17 +558,142 @@ class OverrideGame(VexGame):
         # Return the discrete Override action space.
         return spaces.Discrete(self.num_actions)
 
-    def _move(self, agent: str, target: np.ndarray, event: ActionEvent) -> List[ActionStep]:
+    def _move(
+        self,
+        agent: str,
+        target: np.ndarray,
+        event: ActionEvent,
+        final_orientation: Optional[float] = None,
+        start_delay: float = DEFAULT_DURATION,
+    ) -> List[ActionStep]:
         # Create a turn, movement, and event-completion action plan.
         state = self.state["agents"][agent]
         start = state["position"].copy()
         movement = np.asarray(target, dtype=np.float32) - start
         distance = float(np.linalg.norm(movement))
         orientation = np.array([vex_atan2(movement[0], movement[1])], dtype=np.float32) if distance else state["orientation"].copy()
+        end_orientation = np.array([final_orientation], dtype=np.float32) if final_orientation is not None else orientation
         duration = distance / max(1.0, float(self.get_robot_speed(agent)))
         target = np.asarray(target, dtype=np.float32)
-        return [ActionStep(DEFAULT_DURATION, start, orientation), ActionStep(duration, target, orientation),
-                ActionStep(DEFAULT_DURATION, target, orientation), ActionStep(DEFAULT_DURATION, target, orientation, [event])]
+        return [ActionStep(start_delay, start, orientation), ActionStep(duration, target, orientation),
+            ActionStep(DEFAULT_DURATION, target, orientation), ActionStep(DEFAULT_DURATION, target, end_orientation, [event])]
+
+    @staticmethod
+    def _polygons_overlap(first: np.ndarray, second: np.ndarray) -> bool:
+        for polygon in (first, second):
+            edges = np.roll(polygon, -1, axis=0) - polygon
+            for edge in edges:
+                axis = np.array([-edge[1], edge[0]], dtype=float)
+                axis_length = float(np.linalg.norm(axis))
+                if axis_length <= 1e-10:
+                    continue
+                axis /= axis_length
+                first_projection = first @ axis
+                second_projection = second @ axis
+                if (
+                    float(np.max(first_projection)) < float(np.min(second_projection))
+                    or float(np.max(second_projection)) < float(np.min(first_projection))
+                ):
+                    return False
+        return True
+
+    def _obstacle_approach_pose(
+        self,
+        agent: str,
+        obstacle_center: np.ndarray,
+        obstacle_polygon: np.ndarray,
+    ) -> Tuple[np.ndarray, float]:
+        robot_length, robot_width = self.get_robot_dimensions(agent)
+        approach = self.state["agents"][agent]["position"] - obstacle_center
+        approach_length = float(np.linalg.norm(approach))
+        if approach_length <= 1e-6:
+            approach = -obstacle_center
+            approach_length = float(np.linalg.norm(approach))
+        if approach_length <= 1e-6:
+            approach = np.array([1.0, 0.0], dtype=np.float32)
+            approach_length = 1.0
+
+        for direction in (approach / approach_length, -approach / approach_length):
+            orientation = vex_atan2(float(-direction[0]), float(-direction[1]))
+            lower_distance = 0.0
+            upper_distance = FIELD_HALF * 2.0
+            for _ in range(48):
+                distance = (lower_distance + upper_distance) / 2.0
+                candidate = obstacle_center + direction * distance
+                corners = self._get_robot_edges(candidate, robot_length, robot_width, orientation)
+                if self._polygons_overlap(corners, obstacle_polygon):
+                    lower_distance = distance
+                else:
+                    upper_distance = distance
+
+            target = obstacle_center + direction * (upper_distance + 0.05)
+            corners = self._get_robot_edges(target, robot_length, robot_width, orientation)
+            if np.all(np.abs(corners) <= FIELD_HALF):
+                return target.astype(np.float32), orientation
+        return target.astype(np.float32), orientation
+
+    def _boundary_obstacle_approach_pose(
+        self,
+        agent: str,
+        obstacle_center: np.ndarray,
+        obstacle_polygon: np.ndarray,
+        inward_direction: np.ndarray,
+    ) -> Tuple[np.ndarray, float]:
+        robot_length, robot_width = self.get_robot_dimensions(agent)
+        inward = np.asarray(inward_direction, dtype=float)
+        inward /= np.linalg.norm(inward)
+        orientation = vex_atan2(float(-inward[0]), float(-inward[1]))
+        robot_at_origin = self._get_robot_edges(np.zeros(2), robot_length, robot_width, orientation)
+        object_extent = float(np.max((obstacle_polygon - obstacle_center) @ inward))
+        robot_extent = float(np.max(robot_at_origin @ inward))
+        target = obstacle_center + inward * (object_extent + robot_extent + 0.05)
+        corners = self._get_robot_edges(target, robot_length, robot_width, orientation)
+        if not np.all(np.abs(corners) <= FIELD_HALF):
+            raise ValueError(f"No field-valid approach pose for boundary obstacle at {obstacle_center.tolist()}")
+        if self._polygons_overlap(corners, obstacle_polygon):
+            raise ValueError(f"Approach pose overlaps boundary obstacle at {obstacle_center.tolist()}")
+        return target.astype(np.float32), orientation
+
+    def _goal_approach_pose(self, agent: str, goal: GoalType) -> Tuple[np.ndarray, float]:
+        goal_position = GOAL_POSITIONS[goal]
+        vertex_angles = np.arange(8, dtype=float) * (2.0 * np.pi / 8.0) + np.pi / 8.0
+        goal_vertices = goal_position + 5.0 * np.column_stack((np.cos(vertex_angles), np.sin(vertex_angles)))
+        return self._obstacle_approach_pose(agent, goal_position, goal_vertices)
+
+    def _toggle_approach_pose(self, agent: str, index: int) -> Tuple[np.ndarray, float]:
+        center = TOGGLE_POSITIONS[index]
+        if center[0] == 0.0:
+            lower = np.array([center[0] - 12.0, center[1] - 2.0])
+            width, height = 24.0, 4.0
+        else:
+            lower = np.array([center[0] - 2.0, center[1] - 12.0])
+            width, height = 4.0, 24.0
+        polygon = lower + np.array([
+            [0.0, 0.0],
+            [width, 0.0],
+            [width, height],
+            [0.0, height],
+        ])
+        if center[0] == 0.0:
+            inward = np.array([0.0, -np.sign(center[1])])
+        else:
+            inward = np.array([-np.sign(center[0]), 0.0])
+        return self._boundary_obstacle_approach_pose(agent, center, polygon, inward)
+
+    def _loader_approach_pose(self, agent: str, index: int) -> Tuple[np.ndarray, float]:
+        center = LOADER_POSITIONS[index]
+        if center[0] < 0.0:
+            lower = np.array([center[0], center[1] - 3.0])
+        else:
+            lower = np.array([center[0] - 4.0, center[1] - 3.0])
+        polygon = lower + np.array([
+            [0.0, 0.0],
+            [4.0, 0.0],
+            [4.0, 6.0],
+            [0.0, 6.0],
+        ])
+        inward = np.array([-np.sign(center[0]), 0.0])
+        return self._boundary_obstacle_approach_pose(agent, center, polygon, inward)
 
     def execute_action(self, agent: str, action: int) -> Tuple[List[ActionStep], float]:
         # Translate a high-level action into timed steps and a penalty.
@@ -608,9 +742,11 @@ class OverrideGame(VexGame):
                     cup_count=int(has_cup),
             ):
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
+            target, final_orientation = self._goal_approach_pose(agent, goal)
             return self._move(
-                agent, GOAL_POSITIONS[goal],
+                agent, target,
                 ActionEvent("score", {"kind": kind, "goal": goal.value, "paired": paired}),
+                final_orientation=final_orientation,
             ), 0.0
         if selected in (Actions.TAKE_FROM_LOADER_TL, Actions.TAKE_FROM_LOADER_TR,
                         Actions.TAKE_FROM_LOADER_BL, Actions.TAKE_FROM_LOADER_BR):
@@ -618,20 +754,29 @@ class OverrideGame(VexGame):
             loader_count = self.state["loaders"][loader_index]
             if loader_count <= 0 or state["held_cups"] >= MAX_HELD_CUPS:
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
-            loader_position = LOADER_POSITIONS[loader_index]
+            loader_position, loader_orientation = self._loader_approach_pose(agent, loader_index)
             event = ActionEvent("clear_loader", {"loader_index": loader_index})
-            return self._move(agent, loader_position, event), 0.0
+            return self._move(agent, loader_position, event, final_orientation=loader_orientation), 0.0
         if selected == Actions.TOGGLE_QUADRANT:
             index = int(np.argmin([np.linalg.norm(state["position"] - p) for p in TOGGLE_POSITIONS]))
             holder = self.state["toggle_holders"][index]
             if holder is not None and holder != agent:
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
-            return self._move(agent, TOGGLE_POSITIONS[index], ActionEvent("toggle", {"index": index})), 0.0
+            target, orientation = self._toggle_approach_pose(agent, index)
+            return self._move(agent, target, ActionEvent("toggle", {"index": index}), final_orientation=orientation), 0.0
         if selected == Actions.TOGGLE_QUADRANT:
             index = int(np.argmin([np.linalg.norm(state["position"] - p) for p in TOGGLE_POSITIONS]))
-            return self._move(agent, TOGGLE_POSITIONS[index], ActionEvent("toggle", {"index": index})), 0.0
+            target, orientation = self._toggle_approach_pose(agent, index)
+            return self._move(agent, target, ActionEvent("toggle", {"index": index}), final_orientation=orientation), 0.0
         if selected == Actions.PARK_MIDFIELD:
-            return self._move(agent, np.zeros(2, dtype=np.float32), ActionEvent("park")), 0.0
+            target, final_orientation = self._goal_approach_pose(agent, GoalType.TALL)
+            return self._move(
+                agent,
+                target,
+                ActionEvent("park"),
+                final_orientation=final_orientation,
+                start_delay=0.0,
+            ), 0.0
         return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
 
     def update_tracker(self, agent: str, action: int) -> None:

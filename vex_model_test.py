@@ -114,11 +114,13 @@ def run_simulation(
 
     # Initialize the game/environment with matching communication configuration
     game_class = get_game_class(config.game_name)
-    game = game_class.get_game(
-        config.game_name,
-        communication_mode=config.communication_mode,
-        deterministic=config.deterministic,
-    )
+    game_kwargs = {
+        "communication_mode": config.communication_mode,
+        "deterministic": config.deterministic,
+    }
+    if game_class is not PushBackGame:
+        game_kwargs["use_24_inch_robots"] = config.use_24_inch_robots
+    game = game_class.get_game(config.game_name, **game_kwargs)
     
     env = VexMultiAgentEnv(
         game=game,

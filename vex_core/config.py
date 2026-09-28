@@ -25,6 +25,7 @@ class VexEnvConfig:
     deterministic: bool
     temperature: float = 1.0
     copy_message_dropout_prob: float = 0.0
+    use_24_inch_robots: bool = True
 
     @classmethod
     def add_cli_args(
@@ -38,6 +39,7 @@ class VexEnvConfig:
         deterministic: Optional[bool] = False,
         temperature: Optional[float] = 1.0,
         copy_message_dropout_prob: Optional[float] = 0.0,
+        use_24_inch_robots: Optional[bool] = None,
     ) -> None:
         """
         Adds configuration arguments to an argparse.ArgumentParser.
@@ -93,6 +95,12 @@ class VexEnvConfig:
             type=float,
             default=copy_message_dropout_prob,
             help="In COPY communication mode, probability [0,1] of zeroing each teammate message per tick.",
+        )
+        parser.add_argument(
+            "--use-24-inch-robots",
+            action=argparse.BooleanOptionalAction,
+            default=use_24_inch_robots,
+            help="Use one 24-inch and one 18-inch robot per Override team (default); disable for all 18-inch robots.",
         )
 
     @classmethod
@@ -156,6 +164,7 @@ class VexEnvConfig:
         deterministic = args.deterministic if (hasattr(args, "deterministic") and args.deterministic is not None) else metadata_overrides.get("deterministic", False)
         temperature = args.temperature if (hasattr(args, "temperature") and args.temperature is not None) else metadata_overrides.get("temperature", 1.0)
         copy_message_dropout_prob = args.copy_message_dropout_prob if (hasattr(args, "copy_message_dropout_prob") and args.copy_message_dropout_prob is not None) else metadata_overrides.get("copy_message_dropout_prob", 0.0)
+        use_24_inch_robots = args.use_24_inch_robots if (hasattr(args, "use_24_inch_robots") and args.use_24_inch_robots is not None) else metadata_overrides.get("use_24_inch_robots", True)
 
         try:
             communication_mode = CommunicationOption(communication_mode_str)
@@ -171,4 +180,5 @@ class VexEnvConfig:
             deterministic=deterministic,
             temperature=float(temperature),
             copy_message_dropout_prob=float(np.clip(copy_message_dropout_prob, 0.0, 1.0)),
+            use_24_inch_robots=bool(use_24_inch_robots),
         )
