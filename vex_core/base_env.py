@@ -270,6 +270,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 completed[agent] = True
             else:
                 # Interpolate position
+                previous_pos = agent_state["position"].copy()
                 current_pos = busy_info["start_pos"].copy()
                 current_orient = busy_info["start_orient"].copy()
                 
@@ -308,6 +309,13 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                         else:
                             current_pos = seg["end_pos"].copy()
                             current_orient = seg["end_orient"].copy()
+                if hasattr(self.game, "get_opponent_memory_penalty"):
+                    penalty = float(self.game.get_opponent_memory_penalty(agent, previous_pos, current_pos))
+                    if penalty > 0.0:
+                        self._add_agent_penalty(agent, penalty)
+                        stored = self._deferred_rewards.get(agent)
+                        if stored is not None:
+                            stored["penalty"] = float(stored.get("penalty", 0.0)) + penalty
                 self.game.update_robot_position(agent, current_pos)
                 agent_state["position"] = current_pos
                 agent_state["orientation"] = current_orient
@@ -455,6 +463,12 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             rewards[agent] = reward
             self.environment_state["agents"][agent]["last_action_name"] = action_name
             self.environment_state["agents"][agent]["last_action_reward"] = reward
+
+        if hasattr(self.game, "clear_opponent_memory"):
+            try:
+                self.game.clear_opponent_memory(agent)
+            except Exception:
+                pass
 
         self.environment_state["agents"][agent]["current_action"] = None
         infos[agent]["action_completed"] = True
