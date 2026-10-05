@@ -102,6 +102,10 @@ GOAL_POSITIONS = {
     GoalType.BLUE_1: np.array([24.0, 48.0], dtype=np.float32),
     GoalType.BLUE_2: np.array([48.0, 24.0], dtype=np.float32),
 }
+GOAL_RADII = {
+    goal: 12.0 if goal in {GoalType.RED_1, GoalType.RED_2, GoalType.BLUE_1, GoalType.BLUE_2} else 6.0
+    for goal in GoalType
+}
 TOGGLE_POSITIONS = [
     np.array([0.0, FIELD_HALF], dtype=np.float32),
     np.array([FIELD_HALF, 0.0], dtype=np.float32),
@@ -242,13 +246,8 @@ PIN_COLOR_PAIRS = (
     *[("yellow", "yellow")] * 19,
 )
 PERMANENT_OBSTACLES = [
-    Obstacle(float(position[0]), float(position[1]), 6.0, False)
+    Obstacle(float(position[0]), float(position[1]), GOAL_RADII[goal_type], False)
     for goal_type, position in GOAL_POSITIONS.items()
-    if goal_type not in {GoalType.RED_1, GoalType.RED_2, GoalType.BLUE_1, GoalType.BLUE_2}
-] + [
-    Obstacle(float(position[0]), float(position[1]), 12.0, False)
-    for goal_type, position in GOAL_POSITIONS.items()
-    if goal_type in {GoalType.RED_1, GoalType.RED_2, GoalType.BLUE_1, GoalType.BLUE_2}
 ] + [
     Obstacle(float(p[0]), float(p[1]), 4.0, False) for p in TOGGLE_POSITIONS
 ]
@@ -275,17 +274,18 @@ class OverrideGame(VexGame):
                  deterministic: bool = True):
         # Create an Override game with the supplied or default robot roster.
         robots = robots or [
-            Robot("red_robot_0", Team.RED, RobotSize.INCH_24,
+            Robot("red_robot_0", Team.RED, RobotSize.INCH_15,
                 np.array([0.0, -FIELD_HALF + 12.0], dtype=np.float32), start_orientation=0.0),
             Robot("red_robot_1", Team.RED, RobotSize.INCH_15,
                 np.array([-FIELD_HALF + 7.5, 0.0], dtype=np.float32), start_orientation=90.0),
-            Robot("blue_robot_0", Team.BLUE, RobotSize.INCH_24,
+            Robot("blue_robot_0", Team.BLUE, RobotSize.INCH_15,
                 np.array([0.0, FIELD_HALF - 12.0], dtype=np.float32), start_orientation=180.0),
             Robot("blue_robot_1", Team.BLUE, RobotSize.INCH_15,
                 np.array([FIELD_HALF - 7.5, 0.0], dtype=np.float32), start_orientation=270.0),
         ]
         super().__init__(robots, communication_mode=communication_mode)
         self.deterministic = bool(deterministic)
+        self.use_path_planner_for_simulation = True
         self.path_planner = PathPlanner()
         self.get_initial_state()
 
@@ -549,7 +549,58 @@ class OverrideGame(VexGame):
         # Return the discrete Override action space.
         return spaces.Discrete(self.num_actions)
 
-    def _move(self, agent: str, target: np.ndarray, event: ActionEvent) -> List[ActionStep]:
+    @staticmethod
+    def _target_next_to_rectangle(
+        robot_position: np.ndarray,
+        robot_length: float,
+        lower: np.ndarray,
+        upper: np.ndarray,
+    ) -> np.ndarray:
+        position = np.asarray(robot_position, dtype=np.float32)
+        edge = np.clip(position, lower, upper)
+        approach = position - edge
+        approach_distance = float(np.linalg.norm(approach))
+        if approach_distance == 0.0:
+            distances = np.array([
+                position[0] - lower[0], upper[0] - position[0],
+                position[1] - lower[1], upper[1] - position[1],
+            ])
+            side = int(np.argmin(distances))
+            directions = (
+                np.array([-1.0, 0.0]), np.array([1.0, 0.0]),
+                np.array([0.0, -1.0]), np.array([0.0, 1.0]),
+            )
+            approach = directions[side]
+            edge = position.copy()
+            if side < 2:
+                edge[0] = lower[0] if side == 0 else upper[0]
+            else:
+                edge[1] = lower[1] if side == 2 else upper[1]
+        else:
+            approach /= approach_distance
+        return edge + approach * (robot_length / 2.0)
+
+    def _loader_wall_pose(self, agent: str, loader_index: int) -> Tuple[np.ndarray, float]:
+        position = LOADER_POSITIONS[loader_index]
+        robot_length, _ = self.get_robot_dimensions(agent)
+        if position[0] < 0.0:
+            return np.array([-FIELD_HALF + robot_length / 2.0, position[1]], dtype=np.float32), 270.0
+        return np.array([FIELD_HALF - robot_length / 2.0, position[1]], dtype=np.float32), 90.0
+
+    def _target_next_to_goal(self, agent: str, goal: GoalType) -> np.ndarray:
+        state = self.state["agents"][agent]
+        goal_position = GOAL_POSITIONS[goal]
+        approach = state["position"] - goal_position
+        approach_distance = float(np.linalg.norm(approach))
+        if approach_distance == 0.0:
+            approach = np.array([0.0, 1.0], dtype=np.float32)
+        else:
+            approach /= approach_distance
+        robot_length, _ = self.get_robot_dimensions(agent)
+        return goal_position + approach * (GOAL_RADII[goal] + robot_length / 2.0)
+
+    def _move(self, agent: str, target: np.ndarray, event: ActionEvent,
+              final_orientation: Optional[float] = None) -> List[ActionStep]:
         # Create a turn, movement, and event-completion action plan.
         state = self.state["agents"][agent]
         start = state["position"].copy()
@@ -558,6 +609,14 @@ class OverrideGame(VexGame):
         orientation = np.array([vex_atan2(movement[0], movement[1])], dtype=np.float32) if distance else state["orientation"].copy()
         duration = distance / max(1.0, float(self.get_robot_speed(agent)))
         target = np.asarray(target, dtype=np.float32)
+        if final_orientation is not None:
+            final_orient = np.array([final_orientation], dtype=np.float32)
+            return [
+                ActionStep(DEFAULT_DURATION, start, orientation),
+                ActionStep(duration, target, orientation),
+                ActionStep(DEFAULT_DURATION, target, final_orient),
+                ActionStep(DEFAULT_DURATION, target, final_orient, [event]),
+            ]
         return [ActionStep(DEFAULT_DURATION, start, orientation), ActionStep(duration, target, orientation),
                 ActionStep(DEFAULT_DURATION, target, orientation), ActionStep(DEFAULT_DURATION, target, orientation, [event])]
 
@@ -609,7 +668,7 @@ class OverrideGame(VexGame):
             ):
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
             return self._move(
-                agent, GOAL_POSITIONS[goal],
+                agent, self._target_next_to_goal(agent, goal),
                 ActionEvent("score", {"kind": kind, "goal": goal.value, "paired": paired}),
             ), 0.0
         if selected in (Actions.TAKE_FROM_LOADER_TL, Actions.TAKE_FROM_LOADER_TR,
@@ -618,20 +677,29 @@ class OverrideGame(VexGame):
             loader_count = self.state["loaders"][loader_index]
             if loader_count <= 0 or state["held_cups"] >= MAX_HELD_CUPS:
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
-            loader_position = LOADER_POSITIONS[loader_index]
+            loader_target, loader_orientation = self._loader_wall_pose(agent, loader_index)
             event = ActionEvent("clear_loader", {"loader_index": loader_index})
-            return self._move(agent, loader_position, event), 0.0
+            return self._move(agent, loader_target, event, loader_orientation), 0.0
         if selected == Actions.TOGGLE_QUADRANT:
             index = int(np.argmin([np.linalg.norm(state["position"] - p) for p in TOGGLE_POSITIONS]))
             holder = self.state["toggle_holders"][index]
             if holder is not None and holder != agent:
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
-            return self._move(agent, TOGGLE_POSITIONS[index], ActionEvent("toggle", {"index": index})), 0.0
+            toggle_position = TOGGLE_POSITIONS[index]
+            toggle_half_size = np.array([12.0, 2.0] if toggle_position[0] == 0.0 else [2.0, 12.0])
+            robot_length, _ = self.get_robot_dimensions(agent)
+            toggle_target = self._target_next_to_rectangle(
+                state["position"], robot_length,
+                toggle_position - toggle_half_size, toggle_position + toggle_half_size,
+            )
+            return self._move(agent, toggle_target, ActionEvent("toggle", {"index": index})), 0.0
         if selected == Actions.TOGGLE_QUADRANT:
             index = int(np.argmin([np.linalg.norm(state["position"] - p) for p in TOGGLE_POSITIONS]))
             return self._move(agent, TOGGLE_POSITIONS[index], ActionEvent("toggle", {"index": index})), 0.0
         if selected == Actions.PARK_MIDFIELD:
-            return self._move(agent, np.zeros(2, dtype=np.float32), ActionEvent("park")), 0.0
+            return self._move(
+                agent, self._target_next_to_goal(agent, GoalType.TALL), ActionEvent("park")
+            ), 0.0
         return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
 
     def update_tracker(self, agent: str, action: int) -> None:
@@ -1000,9 +1068,11 @@ class OverrideGame(VexGame):
             return ["TURN_TO_POINT;(0.0,0.0);40"]
         if Actions.TAKE_FROM_LOADER_TL.value <= action <= Actions.TAKE_FROM_LOADER_BR.value:
             loader_index = action - Actions.TAKE_FROM_LOADER_TL.value
-            loader_position = LOADER_POSITIONS[loader_index]
+            loader_target, _ = self._loader_wall_pose(robot.name, loader_index)
+            wall_x = -FIELD_HALF if LOADER_POSITIONS[loader_index][0] < 0.0 else FIELD_HALF
             return [
-                f"FOLLOW;({loader_position[0]:.1f}, {loader_position[1]:.1f});50",
+                f"FOLLOW;({loader_target[0]:.1f}, {loader_target[1]:.1f});50",
+                f"TURN_TO_POINT;({wall_x:.1f}, {loader_target[1]:.1f});30",
                 "CLEAR_LOADER",
             ]
         return ["WAIT;0.5"]

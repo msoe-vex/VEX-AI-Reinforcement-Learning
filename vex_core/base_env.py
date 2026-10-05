@@ -692,18 +692,15 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         # ──────────────────────────────────────────────────────────────
         # 2. Projected collision check (only newly started actions)
         # ──────────────────────────────────────────────────────────────
-        failed_agents: set[str] = set()
-        # try:
-        #     failed_agents = self._resolve_projected_collisions(all_agents, newly_actioned)
-        # except Exception:
-        #     failed_agents = set()
+        failed_agents = self._resolve_final_position_collisions(all_agents, newly_actioned)
 
         for agent in failed_agents:
             busy = self.busy_state.get(agent)
             if busy is None:
                 continue
-            start_pos = busy["start_pos"].copy()
-            start_orient = busy["start_orient"].copy()
+            agent_state = self.environment_state["agents"][agent]
+            start_pos = agent_state["position"].copy()
+            start_orient = agent_state["orientation"].copy()
             self.busy_state[agent] = {
                 "start_pos": start_pos,
                 "start_orient": start_orient,
@@ -731,6 +728,14 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             if stored is not None:
                 stored["penalty"] = float(stored.get("penalty", 0.0)) + penalty_value
                 self._add_agent_penalty(agent, penalty_value)
+
+        if (
+            self.path_planner is not None
+            and getattr(self.game, "use_path_planner_for_simulation", False)
+        ):
+            self._resolve_projected_collisions(
+                all_agents, newly_actioned - failed_agents
+            )
 
         # ──────────────────────────────────────────────────────────────
         # 3. Advance time + messages for this tick
@@ -985,6 +990,29 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
 
         return proj
 
+    def _resolve_final_position_collisions(
+        self, active_agents: List[str], newly_actioned: Optional[set] = None
+    ) -> set:
+        """Cancel actions whose final robot footprints overlap."""
+        newly_actioned = newly_actioned or set()
+        moving_agents = [agent for agent in active_agents if agent in self.busy_state]
+        collided: set[str] = set()
+
+        for index, first in enumerate(moving_agents):
+            for second in moving_agents[index + 1:]:
+                if first not in newly_actioned and second not in newly_actioned:
+                    continue
+                first_robot = self.game.get_robot_for_agent(first)
+                second_robot = self.game.get_robot_for_agent(second)
+                first_radius = first_robot.radius if first_robot else 9.0
+                second_radius = second_robot.radius if second_robot else 9.0
+                first_target = self.busy_state[first]["target_pos"]
+                second_target = self.busy_state[second]["target_pos"]
+                if np.linalg.norm(first_target - second_target) < first_radius + second_radius:
+                    collided.update((first, second))
+
+        return collided
+
     def _resolve_projected_collisions(self, active_agents: List[str], newly_actioned: Optional[set] = None) -> set:
         """
         Project all agents' intended paths and find collisions tick-by-tick.
@@ -1121,8 +1149,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 busy["tick_orients"] = tick_orients
                 
             except Exception:
-                busy["tick_positions"] = np.array([start_pos] * (total_ticks + 1))
-                busy["tick_orients"] = np.array([busy["start_orient"]] * (total_ticks + 1))
+                busy.pop("tick_positions", None)
+                busy.pop("tick_orients", None)
 
         # 2. Check collisions over time
         impacted: set[str] = set()

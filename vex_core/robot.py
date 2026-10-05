@@ -6,6 +6,7 @@ import numpy as np
 class RobotSize(Enum):
     """Robot size categories."""
     INCH_15 = 15
+    INCH_18 = 18
     INCH_24 = 24
 
 class Team(Enum):

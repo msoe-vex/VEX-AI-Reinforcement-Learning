@@ -62,15 +62,14 @@ class VexGame(ABC):
         """Initialize with robot configurations."""
         self.robots = robots or []
         
-        # Validate robot size uniqueness per team
+        # A team may use multiple 15-inch robots, but only one 24-inch robot.
         from vex_core.robot import RobotSize
         team_sizes = {}
         for r in self.robots:
             if r.team not in team_sizes:
                 team_sizes[r.team] = set()
-            if r.size in team_sizes[r.team]:
-                if r.size in (RobotSize.INCH_15, RobotSize.INCH_24):
-                    raise ValueError(f"Duplicate RobotSize {r.size} for team {r.team}. Only one 15 or 24 size allowed per team.")
+            if r.size == RobotSize.INCH_24 and r.size in team_sizes[r.team]:
+                raise ValueError(f"Team {r.team} may have only one 24-inch robot.")
             team_sizes[r.team].add(r.size)
             
         self._robot_map = {r.name: r for r in self.robots}
