@@ -531,6 +531,10 @@ class OverrideGame(VexGame):
                 visible.append((distance, other_agent, other_state["position"].copy()))
         return sorted(visible, key=lambda item: item[0])
 
+    @staticmethod
+    def _is_empty_opponent_memory(memory: List[Optional[np.ndarray]]) -> bool:
+        return all(value is None for value in memory)
+
     def _update_opponent_memory(self, agent: str) -> None:
         # Store the last up to two enemy robot positions that were seen this action.
         state = self.state["agents"][agent]
@@ -541,7 +545,7 @@ class OverrideGame(VexGame):
             for index, (_, _, position) in enumerate(visible[:2]):
                 current_memory[index] = np.asarray(position, dtype=np.float32).copy()
             state["opponent_seen_positions"] = current_memory
-        elif current_memory == [None, None]:
+        elif self._is_empty_opponent_memory(current_memory):
             state["opponent_seen_positions"] = [None, None]
 
     def clear_opponent_memory(self, agent: str) -> None:
