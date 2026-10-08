@@ -581,10 +581,7 @@ if __name__ == "__main__":
         raise ValueError("No policies were produced by policy_mapping_fn.")
     print(f"Configured policy IDs: {configured_policy_ids}")
     train_batch_size_per_learner = 4096
-    num_env_runners = (
-        6 if get_game_class(env_config_obj.game_name) is OverrideGame
-        else args.cpus_per_task - 1
-    )
+    num_env_runners = args.cpus_per_task - 1
 
     if args.num_iters is not None:
         num_iters = args.num_iters
