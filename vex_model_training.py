@@ -581,6 +581,10 @@ if __name__ == "__main__":
         raise ValueError("No policies were produced by policy_mapping_fn.")
     print(f"Configured policy IDs: {configured_policy_ids}")
     train_batch_size_per_learner = 4096
+    num_env_runners = (
+        6 if get_game_class(env_config_obj.game_name) is OverrideGame
+        else args.cpus_per_task - 1
+    )
 
     if args.num_iters is not None:
         num_iters = args.num_iters
@@ -624,7 +628,7 @@ if __name__ == "__main__":
             num_gpus_per_learner=1 if num_gpus_available > 0 else 0,  # Assign GPU to learner
         )
         .env_runners(
-            num_env_runners=args.cpus_per_task-1,  # Use 1 runner for each CPU core plus 1 for the main process
+            num_env_runners=num_env_runners,
             batch_mode="complete_episodes",  # Collect complete episodes, not fragments
             rollout_fragment_length="auto",  # Let RLlib calculate the optimal fragment length
         )

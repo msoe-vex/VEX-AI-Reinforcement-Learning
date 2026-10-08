@@ -529,7 +529,7 @@ class OverrideGame(VexGame):
             distance = float(np.linalg.norm(direction))
             if distance <= 72 and abs(vex_shortest_angular_distance(camera, vex_atan2(direction[0], direction[1]))) <= FOV / 2:
                 visible.append((distance, other_agent, other_state["position"].copy()))
-        return sorted(visible, key=lambda item: item[0])
+        return sorted(visible, key=lambda item: (item[0], float(item[2][0]), float(item[2][1])))
 
     @staticmethod
     def _is_empty_opponent_memory(memory: List[Optional[np.ndarray]]) -> bool:
