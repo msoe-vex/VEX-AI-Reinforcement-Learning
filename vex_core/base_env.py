@@ -461,6 +461,20 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         if agent not in self.agents:
             self.agents.append(agent)
 
+    def _mark_action_cancelled(self, agent: str, rewards: Dict[str, float], infos: Dict[str, Dict]) -> None:
+        """Return an agent whose action was stopped by a robot collision."""
+        finalized = self._complete_deferred_reward(agent)
+        if finalized is not None:
+            reward, action_name = finalized
+            rewards[agent] = reward
+            self.environment_state["agents"][agent]["last_action_name"] = action_name
+            self.environment_state["agents"][agent]["last_action_reward"] = reward
+
+        self.environment_state["agents"][agent]["current_action"] = None
+        infos[agent]["action_cancelled"] = True
+        if agent not in self.agents:
+            self.agents.append(agent)
+
     def _check_terminations(self) -> Tuple[Dict[str, bool], set]:
         """Check if any agents should be terminated."""
         terminations = {}
@@ -740,6 +754,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         # ──────────────────────────────────────────────────────────────
         # 3. Advance time + messages for this tick
         # ──────────────────────────────────────────────────────────────
+        self._cancel_colliding_actions(all_agents, rewards, infos)
         tick_results = self._tick_busy_agents()
         for agent, did_complete in tick_results.items():
             if did_complete:
@@ -756,6 +771,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         while (not self.agents) and any(a in self.busy_state for a in all_agents):
             self.num_ticks += 1
 
+            self._cancel_colliding_actions(all_agents, rewards, infos)
             tick_results = self._tick_busy_agents()
             for agent, did_complete in tick_results.items():
                 if did_complete:
@@ -1012,6 +1028,112 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                     collided.update((first, second))
 
         return collided
+
+    def _next_busy_position(self, busy_info: Dict) -> np.ndarray:
+        """Return a busy robot's position after the next simulation tick."""
+        if busy_info["remaining_ticks"] <= 1:
+            return busy_info["target_pos"].copy()
+
+        elapsed = busy_info["total_ticks"] - busy_info["remaining_ticks"] + 1
+        if "tick_positions" in busy_info:
+            positions = busy_info["tick_positions"]
+            return positions[min(elapsed, len(positions) - 1)].copy()
+
+        current_pos = busy_info["start_pos"].copy()
+        for segment in busy_info.get("plan", []):
+            if elapsed <= segment["tick_end"]:
+                segment_ticks = max(1, segment["tick_end"] - segment["tick_start"])
+                alpha = float(np.clip((elapsed - segment["tick_start"]) / segment_ticks, 0.0, 1.0))
+                return segment["start_pos"] + (segment["end_pos"] - segment["start_pos"]) * alpha
+            current_pos = segment["end_pos"].copy()
+        return current_pos
+
+    def _find_active_collision_cancellations(self, active_agents: List[str]) -> set:
+        """Find busy robots whose next movement tick would collide with another robot."""
+        start_positions = {
+            agent: self.environment_state["agents"][agent]["position"].copy()
+            for agent in active_agents
+        }
+        next_positions = {}
+        at_final_positions = {}
+        for agent in active_agents:
+            busy = self.busy_state.get(agent)
+            if busy is None:
+                next_positions[agent] = start_positions[agent]
+                at_final_positions[agent] = False
+                continue
+
+            next_positions[agent] = self._next_busy_position(busy)
+            at_final_positions[agent] = (
+                np.linalg.norm(next_positions[agent] - busy["target_pos"]) <= 1e-4
+            )
+
+        cancellations = set()
+        for index, first in enumerate(active_agents):
+            for second in active_agents[index + 1:]:
+                first_busy = self.busy_state.get(first)
+                second_busy = self.busy_state.get(second)
+                if first_busy is None and second_busy is None:
+                    continue
+
+                first_robot = self.game.get_robot_for_agent(first)
+                second_robot = self.game.get_robot_for_agent(second)
+                first_radius = first_robot.radius if first_robot else 9.0
+                second_radius = second_robot.radius if second_robot else 9.0
+                collision_distance = first_radius + second_radius
+
+                relative_start = start_positions[first] - start_positions[second]
+                relative_motion = (
+                    next_positions[first] - start_positions[first]
+                    - next_positions[second] + start_positions[second]
+                )
+                motion_squared = float(np.dot(relative_motion, relative_motion))
+                if motion_squared > 1e-12:
+                    closest_t = float(np.clip(
+                        -np.dot(relative_start, relative_motion) / motion_squared,
+                        0.0,
+                        1.0,
+                    ))
+                else:
+                    closest_t = 0.0
+                closest_distance = float(np.linalg.norm(relative_start + closest_t * relative_motion))
+                start_distance = float(np.linalg.norm(relative_start))
+
+                if closest_distance >= collision_distance:
+                    continue
+                if start_distance < collision_distance and closest_distance >= start_distance - 1e-4:
+                    continue
+
+                if first_busy is not None and not at_final_positions[first]:
+                    cancellations.add(first)
+                if second_busy is not None and not at_final_positions[second]:
+                    cancellations.add(second)
+
+        return cancellations
+
+    def _cancel_colliding_actions(
+        self, active_agents: List[str], rewards: Dict[str, float], infos: Dict[str, Dict]
+    ) -> None:
+        """Cancel colliding actions before advancing robots into each other."""
+        while True:
+            cancellations = self._find_active_collision_cancellations(active_agents)
+            if not cancellations:
+                return
+
+            for agent in cancellations:
+                if self.busy_state.pop(agent, None) is None:
+                    continue
+                self.agent_movements[agent] = None
+                try:
+                    penalty = float(self.game.get_collision_penalty())
+                except Exception:
+                    penalty = 0.0
+                stored = self._deferred_rewards.get(agent)
+                if stored is not None:
+                    stored["penalty"] = float(stored.get("penalty", 0.0)) + penalty
+                self._add_agent_penalty(agent, penalty)
+                infos[agent]["collision_penalty"] = penalty
+                self._mark_action_cancelled(agent, rewards, infos)
 
     def _resolve_projected_collisions(self, active_agents: List[str], newly_actioned: Optional[set] = None) -> set:
         """
