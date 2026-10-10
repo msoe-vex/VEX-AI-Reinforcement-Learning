@@ -7,8 +7,16 @@ import numpy as np
 from vex_core.config import CommunicationOption
 from vex_core.robot import Robot, RobotSize, Team
 
-from .override import OverrideGame, VEXAI_GOAL_TYPES
-from .vexai_comp import limit_field_objects
+from .override import (
+    OverrideGame,
+    VEXAI_GOAL_POSITIONS,
+    VEXAI_GOAL_TYPES,
+    UPPER_RIGHT_CUP_POSITION,
+    UPPER_RIGHT_PIN_POSITIONS,
+    LOWER_LEFT_CUP_POSITION,
+    LOWER_LEFT_PIN_POSITIONS,
+)
+from .vexai_comp import configure_vexai_objects, remove_field_clusters
 
 
 class VexAISkillsGame(OverrideGame):
@@ -39,8 +47,21 @@ class VexAISkillsGame(OverrideGame):
     def goal_types(self) -> tuple:
         return VEXAI_GOAL_TYPES
 
+    @property
+    def goal_positions(self) -> Dict:
+        return VEXAI_GOAL_POSITIONS
+
+    @property
+    def excluded_pin_positions(self) -> tuple:
+        return tuple(UPPER_RIGHT_PIN_POSITIONS + LOWER_LEFT_PIN_POSITIONS)
+
+    @property
+    def excluded_cup_positions(self) -> tuple:
+        return (UPPER_RIGHT_CUP_POSITION, LOWER_LEFT_CUP_POSITION)
+
     def get_initial_state(self, randomize: bool = False, seed: Optional[int] = None) -> Dict:
-        return limit_field_objects(super().get_initial_state(randomize, seed), 24, 24)
+        state = super().get_initial_state(randomize, seed)
+        return configure_vexai_objects(state, include_blue_preloads=False)
 
     def get_team_for_agent(self, _agent: str) -> str:
         return "red"

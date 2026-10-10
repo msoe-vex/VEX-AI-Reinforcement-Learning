@@ -120,6 +120,15 @@ GOAL_POSITIONS = {
     GoalType.BLUE_1: np.array([24.0, 48.0], dtype=np.float32),
     GoalType.BLUE_2: np.array([48.0, 24.0], dtype=np.float32),
 }
+VEXAI_GOAL_POSITIONS = {
+    GoalType.SHORT_1: np.array([-24.0, 48.0], dtype=np.float32),
+    GoalType.SHORT_4: np.array([24.0, -48.0], dtype=np.float32),
+    GoalType.TALL: np.array([0.0, 0.0], dtype=np.float32),
+    GoalType.RED_1: np.array([-48.0, -24.0], dtype=np.float32),
+    GoalType.BLUE_2: np.array([48.0, 24.0], dtype=np.float32),
+}
+# VEX AI omits the second short Goal but retains its field location for the Pin stack.
+VEXAI_SECOND_GOAL_POSITION = np.array([-48.0, 24.0], dtype=np.float32)
 GOAL_RADII = {
     goal: 12.0 if goal in {GoalType.RED_1, GoalType.RED_2, GoalType.BLUE_1, GoalType.BLUE_2} else 6.0
     for goal in GoalType
@@ -343,6 +352,21 @@ class OverrideGame(VexGame):
         return tuple(GoalType)
 
     @property
+    def goal_positions(self) -> Dict[GoalType, np.ndarray]:
+        # Return the goal coordinates used by this game variant.
+        return GOAL_POSITIONS
+
+    @property
+    def excluded_pin_positions(self) -> Tuple[Tuple[float, float], ...]:
+        # Return field Pin positions omitted from this game's initial layout.
+        return ()
+
+    @property
+    def excluded_cup_positions(self) -> Tuple[Tuple[float, float], ...]:
+        # Return field Cup positions omitted from this game's initial layout.
+        return ()
+
+    @property
     def action_values(self) -> Tuple[int, ...]:
         # Expose score actions only for Goals present in this game's field.
         return (
@@ -421,6 +445,7 @@ class OverrideGame(VexGame):
         for index in range(NUM_PINS):
             # Build each Pin with its position, front/back colors, and orientation.
             position = PIN_START_POSITIONS[index].copy()
+            source_position = tuple(float(value) for value in position)
             if randomize:
                 position = np.random.uniform(-66, 66, 2).astype(np.float32)
             primary_color, secondary_color = PIN_COLOR_PAIRS[index]
@@ -441,14 +466,18 @@ class OverrideGame(VexGame):
                                else (True if stack_pin else (index % 2 == 0)))
             pin["front_color"] = primary_color
             pin["back_color"] = secondary_color
+            pin["source_position"] = source_position
             objects.append(pin)
         for index in range(NUM_CUPS):
             # Build Cups and mark the predefined stacks as face-up.
             position = CUP_START_POSITIONS[index].copy()
+            source_position = tuple(float(value) for value in position)
             if randomize:
                 position = np.random.uniform(-66, 66, 2).astype(np.float32)
             stack_cup = 4 <= index < 36
-            objects.append(self._object("cup", position, face_up=True if stack_cup else (index % 2 == 0)))
+            cup = self._object("cup", position, face_up=True if stack_cup else (index % 2 == 0))
+            cup["source_position"] = source_position
+            objects.append(cup)
 
         preload_candidates = {
             # Select team-colored Pins that can be preloaded onto each robot.
@@ -804,7 +833,7 @@ class OverrideGame(VexGame):
     def _target_next_to_goal(self, agent: str, goal: GoalType) -> np.ndarray:
         # Return a point outside the selected Goal along the robot's approach vector.
         state = self.state["agents"][agent]
-        goal_position = GOAL_POSITIONS[goal]
+        goal_position = self.goal_positions[goal]
         approach = state["position"] - goal_position
         approach_distance = float(np.linalg.norm(approach))
         if approach_distance == 0.0:
@@ -1280,9 +1309,9 @@ class OverrideGame(VexGame):
         # Return field structures used by the path planner.
         return [
             Obstacle(
-                float(GOAL_POSITIONS[goal_type][0]),
-                float(GOAL_POSITIONS[goal_type][1]),
-                GOAL_STRUCTURE_RADIUS,
+                float(self.goal_positions[goal_type][0]),
+                float(self.goal_positions[goal_type][1]),
+                GOAL_RADII[goal_type],
                 False,
             )
             for goal_type in self.goal_types
@@ -1385,7 +1414,7 @@ class OverrideGame(VexGame):
         }
         for goal_index, goal_type in enumerate(self.goal_types, start=1):
             # Draw each Goal and its numbered display label.
-            position = GOAL_POSITIONS[goal_type]
+            position = self.goal_positions[goal_type]
             ax.add_patch(patches.RegularPolygon(
                 position, numVertices=8, radius=GOAL_STRUCTURE_RADIUS,
                 orientation=np.pi / 8,
@@ -1403,7 +1432,7 @@ class OverrideGame(VexGame):
                 scored_pins_by_goal.setdefault(obj["goal"], []).append(obj)
 
         for goal_type in self.goal_types:
-            position = GOAL_POSITIONS[goal_type]
+            position = self.goal_positions[goal_type]
             # Draw each scored Pin as two colored halves.
             pins = scored_pins_by_goal.get(goal_type.value, [])
             for offset_index, obj in enumerate(pins):
@@ -1459,8 +1488,19 @@ class OverrideGame(VexGame):
                 position[0], position[1], str(loader_count),
                 ha="center", va="center", fontsize=7, color=loader_color, zorder=4,
             )
+        field_pin_offsets: Dict[Tuple[float, float], int] = {}
         for obj in self.state["objects"]:
             if obj["status"] == ObjectStatus.ON_FIELD:
+                draw_position = obj["position"]
+                if obj["kind"] == "pin":
+                    position_key = tuple(
+                        round(float(value), 3) for value in obj["position"]
+                    )
+                    pin_offset = field_pin_offsets.get(position_key, 0)
+                    field_pin_offsets[position_key] = pin_offset + 1
+                    if pin_offset:
+                        draw_position = obj["position"].copy()
+                        draw_position[1] += pin_offset * 2.2
                 if obj["kind"] == "cup":
                     # Draw Cups as two-sided circles and outline a stacked Pin.
                     cup_radius = 2.4
@@ -1473,20 +1513,20 @@ class OverrideGame(VexGame):
                         for other in self.state["objects"]
                     )
                     ax.add_patch(patches.Wedge(
-                        obj["position"], cup_radius, 0.0, 180.0,
+                        draw_position, cup_radius, 0.0, 180.0,
                         facecolor=upper_color, edgecolor="black", linewidth=0.7, zorder=6,
                     ))
                     ax.add_patch(patches.Wedge(
-                        obj["position"], cup_radius, 180.0, 360.0,
+                        draw_position, cup_radius, 180.0, 360.0,
                         facecolor=lower_color, edgecolor="black", linewidth=0.7, zorder=6,
                     ))
                     ax.add_patch(patches.Circle(
-                        obj["position"], cup_radius, fill=False,
+                        draw_position, cup_radius, fill=False,
                         edgecolor="black", linewidth=0.8, zorder=7,
                     ))
                     if has_stacked_pin:
                         ax.add_patch(patches.Circle(
-                            obj["position"], cup_radius + 0.6, fill=False,
+                            draw_position, cup_radius + 0.6, fill=False,
                             edgecolor="#f4df00", linewidth=1.0, zorder=5,
                         ))
                 else:
@@ -1503,15 +1543,15 @@ class OverrideGame(VexGame):
                     )
                     pin_radius = 1.7 if has_stacked_cup else 2.4
                     ax.add_patch(patches.Wedge(
-                        obj["position"], pin_radius, 0.0, 180.0,
+                        draw_position, pin_radius, 0.0, 180.0,
                         facecolor=upper_color, edgecolor="black", linewidth=0.7, zorder=6,
                     ))
                     ax.add_patch(patches.Wedge(
-                        obj["position"], pin_radius, 180.0, 360.0,
+                        draw_position, pin_radius, 180.0, 360.0,
                         facecolor=lower_color, edgecolor="black", linewidth=0.7, zorder=6,
                     ))
                     ax.add_patch(patches.Circle(
-                        obj["position"], pin_radius, fill=False,
+                        draw_position, pin_radius, fill=False,
                         edgecolor="black", linewidth=0.8, zorder=7,
                     ))
 
