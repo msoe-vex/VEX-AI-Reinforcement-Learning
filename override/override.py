@@ -91,6 +91,15 @@ class GoalType(Enum):
     BLUE_2 = "blue_2"
 
 
+VEXAI_GOAL_TYPES = (
+    GoalType.SHORT_1,
+    GoalType.SHORT_4,
+    GoalType.TALL,
+    GoalType.RED_1,
+    GoalType.BLUE_2,
+)
+
+
 GOAL_POSITIONS = {
     GoalType.SHORT_1: np.array([-24.0, 48.0], dtype=np.float32),
     GoalType.SHORT_2: np.array([-48.0, 24.0], dtype=np.float32),
@@ -256,6 +265,12 @@ PERMANENT_OBSTACLES = [
 def _get_game_class(game_name: str):
     # Resolve a registered Override game variant by its normalized name.
     normalized_name = game_name.lower()
+    if normalized_name in {"vexai_comp", "override_vexai_comp", "vexai_override_comp"}:
+        from .vexai_comp import VexAICompGame
+        return VexAICompGame
+    if normalized_name in {"vexai_skills", "override_vexai_skills", "vexai_override_skills"}:
+        from .vexai_skills import VexAISkillsGame
+        return VexAISkillsGame
     if normalized_name in {"vexu_comp", "override_comp"}:
         from .vexu_comp import VexUCompGame
         return VexUCompGame
@@ -309,19 +324,50 @@ class OverrideGame(VexGame):
     @property
     def num_actions(self) -> int:
         # Return the number of high-level robot actions.
-        return len(Actions)
+        return len(self.action_values)
+
+    @property
+    def goal_types(self) -> Tuple[GoalType, ...]:
+        # Return the Goals present in this game's field.
+        return tuple(GoalType)
+
+    @property
+    def action_values(self) -> Tuple[int, ...]:
+        # Expose score actions only for Goals present in this game's field.
+        return (
+            Actions.PICKUP_PIN.value,
+            Actions.PICKUP_CUP.value,
+            *(Actions.SCORE_GOAL_1.value + index for index, _ in enumerate(self.goal_types)),
+            *(action.value for action in (
+                Actions.TOGGLE_QUADRANT,
+                Actions.PARK_MIDFIELD,
+                Actions.TURN_TOWARD_CENTER,
+                Actions.TAKE_FROM_LOADER_TL,
+                Actions.TAKE_FROM_LOADER_TR,
+                Actions.TAKE_FROM_LOADER_BL,
+                Actions.TAKE_FROM_LOADER_BR,
+                Actions.IDLE,
+                Actions.ORIENT_NEXT_PIN,
+                Actions.ORIENT_NEXT_CUP,
+            )),
+        )
+
+    def _decode_action(self, action: int) -> Optional[Actions]:
+        # Translate the public compact action index to the legacy action enum.
+        try:
+            return Actions(self.action_values[int(action)])
+        except (IndexError, TypeError, ValueError):
+            return None
 
     @property
     def fallback_action(self) -> int:
         # Return the safe action used when no action is available.
-        return Actions.TURN_TOWARD_CENTER.value
+        return self.action_values.index(Actions.TURN_TOWARD_CENTER.value)
 
     def get_action_name(self, action: int) -> str:
         # Convert an action value into its enum name.
-        try:
-            return Actions(int(action)).name
-        except (TypeError, ValueError):
-            return str(action)
+        selected = self._decode_action(action)
+        return selected.name if selected is not None else str(action)
 
     def reset(self) -> None:
         # Clear the current game state before the environment reinitializes it.
@@ -660,9 +706,8 @@ class OverrideGame(VexGame):
     def execute_action(self, agent: str, action: int) -> Tuple[List[ActionStep], float]:
         # Translate a high-level action into timed steps and a penalty.
         state = self.state["agents"][agent]
-        try:
-            selected = Actions(int(action))
-        except (TypeError, ValueError):
+        selected = self._decode_action(action)
+        if selected is None:
             # Invalid actions become a short no-op and receive the default penalty.
             return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
         if selected == Actions.IDLE:
@@ -701,7 +746,7 @@ class OverrideGame(VexGame):
             has_cup = state["held_cups"] > 0
             if not has_pin and not has_cup:
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
-            goal = list(GoalType)[selected.value - Actions.SCORE_GOAL_1.value]
+            goal = self.goal_types[selected.value - Actions.SCORE_GOAL_1.value]
             paired = has_pin and has_cup
             kind = "pin" if has_pin else "cup"
             scoring_kind = kind
@@ -755,9 +800,8 @@ class OverrideGame(VexGame):
     def update_tracker(self, agent: str, action: int) -> None:
         # Update inferred held-object, parking, and Toggle state after an action.
         state = self.state["agents"][agent]
-        try:
-            selected = Actions(int(action))
-        except (TypeError, ValueError):
+        selected = self._decode_action(action)
+        if selected is None:
             # Do not update tracker state for an undecodable action.
             return
         if selected == Actions.PICKUP_PIN and state["held_pins"] < MAX_HELD_PINS:
@@ -1068,9 +1112,8 @@ class OverrideGame(VexGame):
 
     def is_valid_action(self, agent: str, action: int, observation: np.ndarray) -> bool:
         # Check whether an action is currently compatible with the observation.
-        try:
-            selected = Actions(int(action))
-        except (TypeError, ValueError):
+        selected = self._decode_action(action)
+        if selected is None:
             return False
         if selected == Actions.PICKUP_PIN and observation[ObsIndex.HELD_PINS] >= MAX_HELD_PINS:
             # Do not pick up another Pin when the Pin capacity is full.
@@ -1094,7 +1137,17 @@ class OverrideGame(VexGame):
 
     def get_permanent_obstacles(self) -> List[Obstacle]:
         # Return field structures used by the path planner.
-        return PERMANENT_OBSTACLES
+        return [
+            Obstacle(
+                float(GOAL_POSITIONS[goal_type][0]),
+                float(GOAL_POSITIONS[goal_type][1]),
+                GOAL_RADII[goal_type],
+                False,
+            )
+            for goal_type in self.goal_types
+        ] + [
+            Obstacle(float(p[0]), float(p[1]), 4.0, False) for p in TOGGLE_POSITIONS
+        ]
 
     def render_field_markings(self, ax: Any) -> None:
         # Render the square Midfield, diagonal Autonomous Lines, and Load Zones.
@@ -1155,15 +1208,18 @@ class OverrideGame(VexGame):
 
     def split_action(self, action: int, observation: np.ndarray, robot: Robot) -> List[str]:
         # Convert a high-level action into controller command strings.
-        if action == Actions.IDLE.value:
+        selected = self._decode_action(action)
+        if selected is None:
+            return ["WAIT;0.5"]
+        if selected == Actions.IDLE:
             # Keep the physical robot still while it idles.
             return ["WAIT;0.5"]
-        if action == Actions.TURN_TOWARD_CENTER.value:
+        if selected == Actions.TURN_TOWARD_CENTER:
             # Use the shared controller command to face the field center.
             return ["TURN_TO_POINT;(0.0,0.0);40"]
-        if Actions.TAKE_FROM_LOADER_TL.value <= action <= Actions.TAKE_FROM_LOADER_BR.value:
+        if Actions.TAKE_FROM_LOADER_TL.value <= selected.value <= Actions.TAKE_FROM_LOADER_BR.value:
             # Convert a Loader action into approach, turn, and clear commands.
-            loader_index = action - Actions.TAKE_FROM_LOADER_TL.value
+            loader_index = selected.value - Actions.TAKE_FROM_LOADER_TL.value
             loader_target, _ = self._loader_wall_pose(robot.name, loader_index)
             wall_x = -FIELD_HALF if LOADER_POSITIONS[loader_index][0] < 0.0 else FIELD_HALF
             return [
@@ -1186,13 +1242,7 @@ class OverrideGame(VexGame):
             GoalType.RED_1: "red", GoalType.RED_2: "red",
             GoalType.BLUE_1: "blue", GoalType.BLUE_2: "blue",
         }
-        goal_label_order = [
-            GoalType.SHORT_1, GoalType.SHORT_2, GoalType.SHORT_3, GoalType.SHORT_4,
-            GoalType.TALL,
-            GoalType.RED_1, GoalType.RED_2,
-            GoalType.BLUE_1, GoalType.BLUE_2,
-        ]
-        for goal_index, goal_type in enumerate(goal_label_order, start=1):
+        for goal_index, goal_type in enumerate(self.goal_types, start=1):
             # Draw each Goal and its numbered display label.
             position = GOAL_POSITIONS[goal_type]
             ax.add_patch(patches.RegularPolygon(
@@ -1211,7 +1261,8 @@ class OverrideGame(VexGame):
             if obj["status"] == ObjectStatus.SCORED and obj["kind"] == "pin" and obj.get("goal"):
                 scored_pins_by_goal.setdefault(obj["goal"], []).append(obj)
 
-        for goal_type, position in GOAL_POSITIONS.items():
+        for goal_type in self.goal_types:
+            position = GOAL_POSITIONS[goal_type]
             # Draw each scored Pin as two colored halves.
             pins = scored_pins_by_goal.get(goal_type.value, [])
             for offset_index, obj in enumerate(pins):
@@ -1369,12 +1420,7 @@ class OverrideGame(VexGame):
         ax_info.text(0.05, y - 0.03, str(self.compute_score()), va="top")
 
         ax_info.text(0.45, 0.16, "Goals", fontsize=10, fontweight="bold", va="bottom")
-        goal_order = [
-            GoalType.SHORT_1, GoalType.SHORT_2, GoalType.SHORT_3, GoalType.SHORT_4,
-            GoalType.TALL,
-            GoalType.RED_1, GoalType.RED_2,
-            GoalType.BLUE_1, GoalType.BLUE_2,
-        ]
+        goal_order = self.goal_types
         goal_counts = {goal.value: 0 for goal in goal_order}
         goal_colors_by_goal = {goal.value: [] for goal in goal_order}
         for obj in self.state["objects"]:

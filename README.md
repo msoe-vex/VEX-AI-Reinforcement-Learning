@@ -97,6 +97,9 @@ If you are using a local Windows shell instead of WSL or ROSIE, use the activati
   - `vexu_skills`: VEX U Skills (Cooperative, 2 Red robots)
   - `vexai_comp`: VEX AI Competition (Fully autonomous, special scoring rules)
   - `vexai_skills`: VEX AI Skills (Cooperative, Red & Blue robots working for Red score)
+- **Override VEX AI variants**: Use `override_vexai_comp` or `override_vexai_skills`
+  for the VEX AI versions of Override. These variants use Override's field markings
+  and element positions, with a reduced set of active field objects.
 - **Explicit Field Setup**: Accurate block coordinates, loader sequences, and robot starting positions derived from official setup notes.
 - **Advanced Randomization**: Full-field block scatter (-70" to +70") for robust training.
 - **Standardized Scoring**: Unified `Dict[str, int]` scoring interface for all modes.
@@ -177,7 +180,7 @@ Environment definition and random simulation runner.
 
 | Argument         | Type    | Default         | Description                                      |
 |-------------------|---------|-----------------|--------------------------------------------------|
-| `--game`         | str     | `vexai_skills`  | Game variant to test (vexai_skills, vexu_skills, vexai_comp, vexu_comp) |
+| `--game`         | str     | `vexai_skills`  | Game variant to test (including `override_vexai_comp` and `override_vexai_skills`) |
 | `--steps`        | int     | 100             | Number of simulation steps.                      |
 | `--no-render`    | flag    | False           | Disable rendering and GIF creation.              |
 | `--output-dir`   | str     | `vex_env_test`  | Output directory for renders and GIFs.           |
@@ -193,7 +196,7 @@ RLlib training script (submit via SLURM using `sbatch scripts/submitTrainingJob.
 | `--discount-factor` | float   | 0.99         | Discount factor (gamma)                                                     |
 | `--entropy`         | float   | 0.05         | Entropy coefficient for exploration                                         |
 | `--cpus-per-task`   | int     | 1            | Number of CPU cores to use per task                                         |
-| `--game`            | str     | `vexai_skills` | Game variant to train (vexai_skills, vexu_skills, vexai_comp, vexu_comp)   |
+| `--game`            | str     | `vexai_skills` | Game variant to train (including override_vexai_comp and override_vexai_skills) |
 | `--randomize`       | bool    | True         | Enable full-field block randomization                                       |
 | `--num-gpus`        | int     | 0            | Number of GPUs to use (auto-set by SLURM script)                            |
 | `--experiment-path` | str     | ""           | Path to experiment directory for resuming (loads metadata + latest checkpoint) |
@@ -282,3 +285,5 @@ All scripts support the following game modes via the `--game` argument:
 - `vexu_skills`: VEX U Skills - Two cooperative red robots
 - `vexai_comp`: VEX AI Competition - Fully autonomous with special scoring rules
 - `vexu_comp`: VEX U Competition - Team-based with 24" and 15" robots
+- `override_vexai_comp`: VEX AI Competition using the Override field and elements
+- `override_vexai_skills`: VEX AI Skills using the Override field and elements

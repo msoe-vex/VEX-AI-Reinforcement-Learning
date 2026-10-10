@@ -47,7 +47,7 @@ class VexEnvConfig:
             "--game", 
             type=str, 
             default=game,
-            help="Game variant to use (e.g. 'vexai_skills', 'pushback')"
+            help="Game variant to use (e.g. 'vexai_skills', 'override_vexai_skills', 'pushback')"
         )
         parser.add_argument(
             "--render-mode",
