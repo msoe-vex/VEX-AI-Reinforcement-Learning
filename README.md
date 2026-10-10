@@ -99,7 +99,9 @@ If you are using a local Windows shell instead of WSL or ROSIE, use the activati
   - `vexai_skills`: VEX AI Skills (Cooperative, Red & Blue robots working for Red score)
 - **Override VEX AI variants**: Use `override_vexai_comp` or `override_vexai_skills`
   for the VEX AI versions of Override. These variants use Override's field markings
-  and element positions, with a reduced set of active field objects.
+  with the upper-left black and upper-right blue goals shifted into separate
+  quadrants, the two outer pin/cup clusters removed, and a reduced set of active
+  field objects.
 - **Explicit Field Setup**: Accurate block coordinates, loader sequences, and robot starting positions derived from official setup notes.
 - **Advanced Randomization**: Full-field block scatter (-70" to +70") for robust training.
 - **Standardized Scoring**: Unified `Dict[str, int]` scoring interface for all modes.

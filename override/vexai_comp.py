@@ -11,7 +11,17 @@ import numpy as np
 from vex_core.config import CommunicationOption
 from vex_core.robot import Robot, RobotSize, Team
 
-from .override import Actions, ObjectStatus, OverrideGame, VEXAI_GOAL_TYPES
+from .override import (
+    Actions,
+    ObjectStatus,
+    OverrideGame,
+    VEXAI_GOAL_POSITIONS,
+    VEXAI_GOAL_TYPES,
+    UPPER_RIGHT_CUP_POSITION,
+    UPPER_RIGHT_PIN_POSITIONS,
+    LOWER_LEFT_CUP_POSITION,
+    LOWER_LEFT_PIN_POSITIONS,
+)
 
 
 def limit_field_objects(state: Dict, max_pins: int, max_cups: int) -> Dict:
@@ -26,6 +36,24 @@ def limit_field_objects(state: Dict, max_pins: int, max_cups: int) -> Dict:
             field_counts[kind] += 1
         kept.append(obj)
     state["objects"] = kept
+    return state
+
+
+def remove_field_clusters(
+    state: Dict,
+    pin_positions: tuple,
+    cup_positions: tuple,
+) -> Dict:
+    """Remove designated source clusters after shared setup is complete."""
+    pin_positions = set(pin_positions)
+    cup_positions = set(cup_positions)
+    state["objects"] = [
+        obj for obj in state["objects"]
+        if not (
+            (obj["kind"] == "pin" and obj.get("source_position") in pin_positions)
+            or (obj["kind"] == "cup" and obj.get("source_position") in cup_positions)
+        )
+    ]
     return state
 
 
@@ -61,14 +89,32 @@ class VexAICompGame(OverrideGame):
     def goal_types(self) -> tuple:
         return VEXAI_GOAL_TYPES
 
+    @property
+    def goal_positions(self) -> Dict:
+        return VEXAI_GOAL_POSITIONS
+
+    @property
+    def excluded_pin_positions(self) -> tuple:
+        return tuple(UPPER_RIGHT_PIN_POSITIONS + LOWER_LEFT_PIN_POSITIONS)
+
+    @property
+    def excluded_cup_positions(self) -> tuple:
+        return (UPPER_RIGHT_CUP_POSITION, LOWER_LEFT_CUP_POSITION)
+
     def get_initial_state(self, randomize: bool = False, seed: Optional[int] = None) -> Dict:
-        return limit_field_objects(super().get_initial_state(randomize, seed), 32, 32)
+        state = super().get_initial_state(randomize, seed)
+        state = remove_field_clusters(
+            state,
+            self.excluded_pin_positions,
+            self.excluded_cup_positions,
+        )
+        return limit_field_objects(state, 32, 32)
 
     def is_valid_action(self, agent: str, action: int, observation: np.ndarray) -> bool:
         """Only 24-inch robots may park in their alliance load zone."""
         if not super().is_valid_action(agent, action, observation):
             return False
-        if action != Actions.PARK_MIDFIELD.value:
+        if self._decode_action(action) != Actions.PARK_MIDFIELD:
             return True
         return self.state["agents"][agent].get("robot_size") == RobotSize.INCH_24.value
 
