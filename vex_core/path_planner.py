@@ -18,6 +18,11 @@ class Obstacle:
         self.radius = r
         self.ignore_collision = i
 
+
+class PathPlanningError(RuntimeError):
+    """Raised when the planner cannot produce a collision-aware route."""
+
+
 class FirstStateIndex:
     def __init__(self, n):
         self.px = 0
@@ -27,7 +32,7 @@ class FirstStateIndex:
         self.dt = self.vy + n - 1
 
 INCHES_PER_FIELD = 144
-GRID_SIZE = 144
+GRID_SIZE = 288
 CELL_SIZE = INCHES_PER_FIELD / GRID_SIZE
 
 # =============================================================================
@@ -153,10 +158,14 @@ class PathPlanner:
         self.init_y = init_y.copy()
 
         if not optimize:
+            if a_star_path is None or len(a_star_path) < 2:
+                self.status = "AStar_No_Path"
+                raise PathPlanningError(
+                    f"No A* path found from {start_point.tolist()} to {end_point.tolist()}."
+                )
+
             positions = self._build_fallback_positions(
                 a_star_path,
-                planning_start,
-                planning_end,
             )
             dt = self.initial_time_step
             self.optimizer_status = 'NLP_Disabled'
@@ -176,6 +185,7 @@ class PathPlanner:
                 planning_start,
                 planning_end,
                 robot,
+                obstacles,
             )
             self.solve_time = time.time() - start_time
             return positions, velocities, dt, grid
@@ -363,8 +373,6 @@ class PathPlanner:
         else:
             positions = self._build_fallback_positions(
                 a_star_path,
-                planning_start,
-                planning_end,
             )
             dt = self.initial_time_step
             self.status = 'Grid_Fallback_Succeeded'
@@ -382,6 +390,7 @@ class PathPlanner:
             planning_start,
             planning_end,
             robot,
+            obstacles,
         )
 
         self.solve_time = time.time() - start_time
@@ -558,10 +567,12 @@ class PathPlanner:
         total_path_time = dt * len(positions)
         return planned_px, planned_py, total_path_time
 
-    def _generate_obstacle_grid(self, obstacles, start_point, end_point, total_radius, grid_size=GRID_SIZE):
+    def _generate_obstacle_grid(self, obstacles, start_point, end_point, total_radius, grid_size=None):
         """
         Helper method to generate an obstacle grid for A* search and visualization in inches.
         """
+        if grid_size is None:
+            grid_size = GRID_SIZE
         grid = np.zeros((grid_size, grid_size), dtype=int)
         
         # Helper to convert physical inch to grid index
@@ -569,40 +580,42 @@ class PathPlanner:
             norm_val = (inch_val - (-self.field_size / 2)) / self.field_size
             return int(np.clip(norm_val * grid_size, 0, grid_size - 1))
             
-        def in_to_grid_radius(inch_radius):
-            return int((inch_radius / self.field_size) * grid_size)
+        cell_centers = (
+            np.arange(grid_size, dtype=np.float64) + 0.5
+        ) * (self.field_size / grid_size) - self.field_size / 2
+        grid_x, grid_y = np.meshgrid(cell_centers, cell_centers)
+        half_field = self.field_size / 2
+        grid[
+            (np.abs(grid_x) > half_field - total_radius)
+            | (np.abs(grid_y) > half_field - total_radius)
+        ] = 1
 
-        # Block grid cells based on obstacles
         for obstacle in obstacles:
             if obstacle.ignore_collision:
                 continue
-            cx, cy = in_to_grid(obstacle.x), in_to_grid(obstacle.y)
-            radius = in_to_grid_radius(obstacle.radius + total_radius)
-            for x in range(max(0, cx - radius), min(grid_size, cx + radius + 1)):
-                for y in range(max(0, cy - radius), min(grid_size, cy + radius + 1)):
-                    if (x - cx)**2 + (y - cy)**2 <= radius**2:
-                        grid[y, x] = 1  # Mark as blocked (grid is [row=y, col=x])
-        
-        # Block any cell within robot radius of the field boundary
-        robot_radius_cells = in_to_grid_radius(total_radius)
-        for i in range(grid_size):
-            for j in range(grid_size):
-                if i < robot_radius_cells or i >= grid_size - robot_radius_cells or j < robot_radius_cells or j >= grid_size - robot_radius_cells:
-                    grid[i, j] = 1  # Mark as blocked
+            clearance = obstacle.radius + total_radius
+            grid[
+                (grid_x - obstacle.x) ** 2 + (grid_y - obstacle.y) ** 2
+                < clearance ** 2
+            ] = 1
 
         start = (in_to_grid(start_point[0]), in_to_grid(start_point[1]))
         end = (in_to_grid(end_point[0]), in_to_grid(end_point[1]))
         
         return grid, start, end
 
-    def _to_grid(self, point, grid_size=GRID_SIZE):
+    def _to_grid(self, point, grid_size=None):
+        if grid_size is None:
+            grid_size = GRID_SIZE
         norm_val_x = (point[0] - (-self.field_size / 2)) / self.field_size
         norm_val_y = (point[1] - (-self.field_size / 2)) / self.field_size
         x = int(np.clip(norm_val_x * grid_size, 0, grid_size - 1))
         y = int(np.clip(norm_val_y * grid_size, 0, grid_size - 1))
         return (x, y)
 
-    def _grid_to(self, grid_point, grid_size=GRID_SIZE):
+    def _grid_to(self, grid_point, grid_size=None):
+        if grid_size is None:
+            grid_size = GRID_SIZE
         norm_x = (grid_point[0] + 0.5) / grid_size # Centering it
         norm_y = (grid_point[1] + 0.5) / grid_size
         inch_x = norm_x * self.field_size - (self.field_size / 2)
@@ -651,7 +664,33 @@ class PathPlanner:
 
         return True
 
-    def _snap_endpoints_to_valid_cells(self, grid, start_grid, end_grid, start_raw, end_raw, obstacles, total_radius, grid_size=GRID_SIZE):
+    def _is_segment_valid_for_nlp(self, start, end, obstacles, total_radius):
+        start = np.asarray(start, dtype=np.float64)
+        end = np.asarray(end, dtype=np.float64)
+        if not self._is_point_valid_for_nlp(start, obstacles, total_radius):
+            return False
+        if not self._is_point_valid_for_nlp(end, obstacles, total_radius):
+            return False
+
+        segment = end - start
+        segment_length_squared = float(np.dot(segment, segment))
+        for obstacle in obstacles:
+            if obstacle.ignore_collision:
+                continue
+            obstacle_center = np.array([obstacle.x, obstacle.y], dtype=np.float64)
+            if segment_length_squared == 0.0:
+                closest = start
+            else:
+                projection = float(np.dot(obstacle_center - start, segment)) / segment_length_squared
+                closest = start + np.clip(projection, 0.0, 1.0) * segment
+            clearance = obstacle.radius + total_radius
+            if float(np.dot(closest - obstacle_center, closest - obstacle_center)) < clearance ** 2:
+                return False
+        return True
+
+    def _snap_endpoints_to_valid_cells(self, grid, start_grid, end_grid, start_raw, end_raw, obstacles, total_radius, grid_size=None):
+        if grid_size is None:
+            grid_size = GRID_SIZE
 
         def nlp_validator(grid_point):
             point = self._grid_to(grid_point, grid_size)
@@ -662,8 +701,14 @@ class PathPlanner:
             )
 
         # Check if the exact continuous points are acceptable
-        start_valid = self._is_point_valid_for_nlp(start_raw, obstacles, total_radius)
-        end_valid = self._is_point_valid_for_nlp(end_raw, obstacles, total_radius)
+        start_valid = (
+            self._is_point_valid_for_nlp(start_raw, obstacles, total_radius)
+            and self._is_grid_cell_valid(grid, start_grid)
+        )
+        end_valid = (
+            self._is_point_valid_for_nlp(end_raw, obstacles, total_radius)
+            and self._is_grid_cell_valid(grid, end_grid)
+        )
 
         start_pt = start_raw if start_valid else self._grid_to(start_grid, grid_size)
         end_pt = end_raw if end_valid else self._grid_to(end_grid, grid_size)
@@ -681,10 +726,10 @@ class PathPlanner:
         return start_pt, end_pt
 
     def _build_straight_line_points(self, start, end):
-        step = 6.0
+        step = 1.0
         distance = np.linalg.norm(end - start)
 
-        if distance <= CELL_SIZE: # If the distance is less than a grid cell, just return the start point
+        if distance == 0.0:
             return np.array([start], dtype=np.float64)
 
         num_segments = max(1, int(np.ceil(distance / step)))
@@ -701,6 +746,7 @@ class PathPlanner:
         planning_start,
         planning_end,
         robot,
+        obstacles,
     ):
         connectors_added = False
         self.pseudo_start = planning_start
@@ -709,14 +755,22 @@ class PathPlanner:
         num_start_points = 0
         num_end_points = 0
 
-        if not np.allclose(planning_start, start_point, atol=CELL_SIZE):
-            start_connector = self._build_straight_line_points(start_point, planning_start)
+        if not np.allclose(positions[0], start_point, atol=1e-6):
+            start_connector = self._build_straight_line_points(start_point, positions[0])
+            if not self._is_segment_valid_for_nlp(
+                start_point, positions[0], obstacles, robot.total_radius
+            ):
+                raise PathPlanningError("The connector from the requested start to its safe grid point is blocked.")
             positions = np.vstack((start_connector[:-1], positions))
             connectors_added = True
             num_start_points = len(start_connector) - 1
 
-        if not np.allclose(planning_end, end_point, atol=CELL_SIZE):
-            end_connector = self._build_straight_line_points(planning_end, end_point)
+        if not np.allclose(positions[-1], end_point, atol=1e-6):
+            end_connector = self._build_straight_line_points(positions[-1], end_point)
+            if not self._is_segment_valid_for_nlp(
+                positions[-1], end_point, obstacles, robot.total_radius
+            ):
+                raise PathPlanningError("The connector from the requested end to its safe grid point is blocked.")
             positions = np.vstack((positions, end_connector[1:]))
             connectors_added = True
             num_end_points = len(end_connector) - 1
@@ -733,25 +787,14 @@ class PathPlanner:
 
         return positions, velocities
 
-    def _build_fallback_positions(self, a_star_path, planning_start, planning_end):
+    def _build_fallback_positions(self, a_star_path):
         if a_star_path is not None and len(a_star_path) >= 2:
-            fallback_path = np.array(a_star_path, dtype=np.float64)
-            if len(fallback_path) == self.num_steps:
-                return fallback_path
+            return np.array(a_star_path, dtype=np.float64)
 
-            interp_axis = np.linspace(0, 1, len(fallback_path))
-            sample_axis = np.linspace(0, 1, self.num_steps)
-            fallback_x = np.interp(sample_axis, interp_axis, fallback_path[:, 0])
-            fallback_y = np.interp(sample_axis, interp_axis, fallback_path[:, 1])
-            return np.column_stack((fallback_x, fallback_y))
-
-        fallback_x, fallback_y = self.get_initial_path(
-            planning_start[0],
-            planning_start[1],
-            planning_end[0],
-            planning_end[1],
+        self.status = "AStar_No_Path"
+        raise PathPlanningError(
+            "No A* path is available for the optimizer fallback route."
         )
-        return np.column_stack((fallback_x, fallback_y))
 
     def _get_robot_norms(self, robot: Robot):
         buffer_radius_normalized = robot.buffer / self.field_size
@@ -787,19 +830,37 @@ class PathPlanner:
         came_from = {}
         g_score = {start: 0}
         f_score = {start: self.heuristic(start, end)}
+        closed_set = set()
 
         while open_set:
             _, current = heappop(open_set)
+            if current in closed_set:
+                continue
 
             if current == end:
                 return self.reconstruct_path(came_from, current, grid_size)
 
+            closed_set.add(current)
             for neighbor in self.get_neighbors(current, grid_size):
                 if grid[neighbor[1], neighbor[0]] == 1:  # Skip blocked cells (grid is [row=y, col=x])
+                    continue
+                if neighbor in closed_set:
                     continue
 
                 dx = abs(current[0] - neighbor[0])
                 dy = abs(current[1] - neighbor[1])
+                if dx and dy and (
+                    grid[current[1], neighbor[0]] == 1
+                    or grid[neighbor[1], current[0]] == 1
+                ):
+                    continue
+                if not self._is_segment_valid_for_nlp(
+                    self._grid_to(current, grid_size),
+                    self._grid_to(neighbor, grid_size),
+                    obstacles,
+                    total_radius,
+                ):
+                    continue
                 move_cost = 1.414 if dx + dy == 2 else 1.0
                 tentative_g_score = g_score[current] + move_cost
                 if neighbor not in g_score or tentative_g_score < g_score[neighbor]:

@@ -124,6 +124,7 @@ GOAL_RADII = {
     goal: 12.0 if goal in {GoalType.RED_1, GoalType.RED_2, GoalType.BLUE_1, GoalType.BLUE_2} else 6.0
     for goal in GoalType
 }
+GOAL_STRUCTURE_RADIUS = 5.0
 TOGGLE_POSITIONS = [
     np.array([0.0, FIELD_HALF], dtype=np.float32),
     np.array([FIELD_HALF, 0.0], dtype=np.float32),
@@ -787,11 +788,18 @@ class OverrideGame(VexGame):
     def _loader_wall_pose(self, agent: str, loader_index: int) -> Tuple[np.ndarray, float]:
         # Return the approach pose and wall-facing orientation for a Loader.
         position = LOADER_POSITIONS[loader_index]
-        robot_length, _ = self.get_robot_dimensions(agent)
-        # Stand just inside the wall and face outward toward the Loader.
+        robot = self.get_robot_for_agent(agent)
+        wall_clearance = float(robot.total_radius) + 0.5 if robot else 0.0
+        # Keep the robot's conservative circular footprint inside the field.
         if position[0] < 0.0:
-            return np.array([-FIELD_HALF + robot_length / 2.0, position[1]], dtype=np.float32), 270.0
-        return np.array([FIELD_HALF - robot_length / 2.0, position[1]], dtype=np.float32), 90.0
+            return np.array([
+                -FIELD_HALF + wall_clearance,
+                position[1],
+            ], dtype=np.float32), 270.0
+        return np.array([
+            FIELD_HALF - wall_clearance,
+            position[1],
+        ], dtype=np.float32), 90.0
 
     def _target_next_to_goal(self, agent: str, goal: GoalType) -> np.ndarray:
         # Return a point outside the selected Goal along the robot's approach vector.
@@ -1274,7 +1282,7 @@ class OverrideGame(VexGame):
             Obstacle(
                 float(GOAL_POSITIONS[goal_type][0]),
                 float(GOAL_POSITIONS[goal_type][1]),
-                GOAL_RADII[goal_type],
+                GOAL_STRUCTURE_RADIUS,
                 False,
             )
             for goal_type in self.goal_types
@@ -1379,7 +1387,7 @@ class OverrideGame(VexGame):
             # Draw each Goal and its numbered display label.
             position = GOAL_POSITIONS[goal_type]
             ax.add_patch(patches.RegularPolygon(
-                position, numVertices=8, radius=5.0,
+                position, numVertices=8, radius=GOAL_STRUCTURE_RADIUS,
                 orientation=np.pi / 8,
                 fill=False, edgecolor=goal_colors.get(goal_type, "black"),
                 linewidth=2.0, zorder=3,

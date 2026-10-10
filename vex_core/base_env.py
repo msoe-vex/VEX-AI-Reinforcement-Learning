@@ -6,6 +6,7 @@ Delegates game-specific logic to a VexGame implementation.
 """
 
 import functools
+import logging
 import math
 import os
 import numpy as np
@@ -17,7 +18,10 @@ from typing import Dict, List, Tuple, Optional, Any
 
 from .base_game import VexGame, Robot, RobotSize, Team, ActionEvent, ActionStep
 from .config import VexEnvConfig, CommunicationOption
+from .path_planner import PathPlanningError
 from .utils import vex_atan2, vex_normalize_angle, vex_shortest_angular_distance, vex_to_standard_radians
+
+LOGGER = logging.getLogger(__name__)
 
 DELTA_T = 0.1  # Discrete time step in seconds
 COMM_DELAY_TICKS = 0  # Message delivery delay in ticks (4 ticks = ~0.375s, half of 0.75s RTT)
@@ -235,6 +239,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             busy_info["remaining_ticks"] -= 1
 
             agent_state = self.environment_state["agents"][agent]
+            previous_pos = agent_state["position"].copy()
+            previous_orient = agent_state["orientation"].copy()
 
             total = busy_info["total_ticks"]
             rem = busy_info["remaining_ticks"]
@@ -266,11 +272,21 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                         self.game.update_robot_position(agent, agent_state["position"])
                     except Exception:
                         pass
+                pose_changed = (
+                    not np.array_equal(previous_pos, agent_state["position"])
+                    or not np.array_equal(previous_orient, agent_state["orientation"])
+                )
+                if (
+                    pose_changed
+                    and not busy_info.get("collision_penalty_applied", False)
+                    and self.game.check_robot_collision(agent)
+                ):
+                    self._add_collision_penalty(agent)
+                    busy_info["collision_penalty_applied"] = True
                 del self.busy_state[agent]
                 completed[agent] = True
             else:
                 # Interpolate position
-                previous_pos = agent_state["position"].copy()
                 current_pos = busy_info["start_pos"].copy()
                 current_orient = busy_info["start_orient"].copy()
                 
@@ -319,8 +335,50 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 self.game.update_robot_position(agent, current_pos)
                 agent_state["position"] = current_pos
                 agent_state["orientation"] = current_orient
+                pose_changed = (
+                    not np.array_equal(previous_pos, current_pos)
+                    or not np.array_equal(previous_orient, current_orient)
+                )
+                if (
+                    pose_changed
+                    and not busy_info.get("collision_penalty_applied", False)
+                    and self.game.check_robot_collision(agent)
+                ):
+                    self._add_collision_penalty(agent)
+                    busy_info["collision_penalty_applied"] = True
                 completed[agent] = False
         return completed
+
+    def _cancel_action_for_collision(self, agent: str) -> None:
+        """Stop an action that would move through an obstacle or another robot."""
+        busy = self.busy_state.get(agent)
+        if busy is None:
+            return
+
+        agent_state = self.environment_state["agents"][agent]
+        start_pos = agent_state["position"].copy()
+        start_orient = agent_state["orientation"].copy()
+        self.busy_state[agent] = {
+            "start_pos": start_pos,
+            "start_orient": start_orient,
+            "target_pos": start_pos.copy(),
+            "target_orient": start_orient.copy(),
+            "plan": [{
+                "start_pos": start_pos.copy(),
+                "end_pos": start_pos.copy(),
+                "start_orient": start_orient.copy(),
+                "end_orient": start_orient.copy(),
+                "tick_start": 0,
+                "tick_end": 1,
+                "events": [],
+            }],
+            "total_ticks": 1,
+            "remaining_ticks": 1,
+            "completed_segments": set(),
+            "collision_penalty_applied": True,
+        }
+        self.agent_movements[agent] = None
+        self._add_collision_penalty(agent)
 
     def _advance_time_and_messages(self):
         """Advance game clock by one tick and update inter-agent messages."""
@@ -365,6 +423,15 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self._agent_penalty_totals[agent] = (
             float(self._agent_penalty_totals.get(agent, 0.0)) + float(penalty)
         )
+
+    def _add_collision_penalty(self, agent: str) -> None:
+        """Add a collision penalty to an agent's current action reward."""
+        penalty = float(self.game.get_collision_penalty())
+        stored = self._deferred_rewards.get(agent)
+        if stored is None:
+            return
+        stored["penalty"] = float(stored.get("penalty", 0.0)) + penalty
+        self._add_agent_penalty(agent, penalty)
 
     def _start_deferred_reward(self, agent: str, action_name: str, penalty: float, baseline_contributions: Dict[str, Dict[str, float]]) -> None:
         """Initialize deferred reward tracking for a newly started action."""
@@ -707,49 +774,18 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         # 2. Projected collision check (only newly started actions)
         # ──────────────────────────────────────────────────────────────
         failed_agents = self._resolve_final_position_collisions(all_agents, newly_actioned)
-
         for agent in failed_agents:
-            busy = self.busy_state.get(agent)
-            if busy is None:
-                continue
-            agent_state = self.environment_state["agents"][agent]
-            start_pos = agent_state["position"].copy()
-            start_orient = agent_state["orientation"].copy()
-            self.busy_state[agent] = {
-                "start_pos": start_pos,
-                "start_orient": start_orient,
-                "target_pos": start_pos.copy(),
-                "target_orient": start_orient.copy(),
-                "plan": [{
-                    "start_pos": start_pos.copy(),
-                    "end_pos": start_pos.copy(),
-                    "start_orient": start_orient.copy(),
-                    "end_orient": start_orient.copy(),
-                    "tick_start": 0,
-                    "tick_end": 1,
-                    "events": [],
-                }],
-                "total_ticks": 1,
-                "remaining_ticks": 1,
-                "completed_segments": set(),
-            }
-            self.agent_movements[agent] = None
-            try:
-                penalty_value = float(self.game.get_collision_penalty())
-            except Exception:
-                penalty_value = 0.0
-            stored = self._deferred_rewards.get(agent)
-            if stored is not None:
-                stored["penalty"] = float(stored.get("penalty", 0.0)) + penalty_value
-                self._add_agent_penalty(agent, penalty_value)
+            self._cancel_action_for_collision(agent)
 
         if (
             self.path_planner is not None
             and getattr(self.game, "use_path_planner_for_simulation", False)
         ):
-            self._resolve_projected_collisions(
+            unplannable_agents = self._resolve_projected_collisions(
                 all_agents, newly_actioned - failed_agents
             )
+            for agent in unplannable_agents:
+                self._cancel_action_for_collision(agent)
 
         # ──────────────────────────────────────────────────────────────
         # 3. Advance time + messages for this tick
@@ -1027,6 +1063,67 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
 
         return collided
 
+    def _build_collision_safe_tick_path(
+        self,
+        positions: np.ndarray,
+        robot: Robot,
+        obstacles: List[Any],
+    ) -> np.ndarray:
+        """Resample a route so each simulated tick follows a collision-free chord."""
+        if len(positions) < 2:
+            return np.asarray(positions, dtype=np.float32)
+
+        segment_lengths = np.linalg.norm(np.diff(positions, axis=0), axis=1)
+        keep = np.concatenate(([True], segment_lengths > 1e-9))
+        route = np.asarray(positions[keep], dtype=np.float64)
+        if len(route) < 2:
+            return route.astype(np.float32)
+
+        route_lengths = np.linalg.norm(np.diff(route, axis=0), axis=1)
+        cumulative_lengths = np.concatenate(([0.0], np.cumsum(route_lengths)))
+        total_distance = float(cumulative_lengths[-1])
+        max_tick_distance = max(1e-6, float(robot.max_speed) * DELTA_T)
+        samples = [route[0]]
+        progress = 0.0
+
+        def position_at(distance: float) -> np.ndarray:
+            return np.array([
+                np.interp(distance, cumulative_lengths, route[:, 0]),
+                np.interp(distance, cumulative_lengths, route[:, 1]),
+            ], dtype=np.float64)
+
+        while progress < total_distance:
+            candidate_progress = min(total_distance, progress + max_tick_distance)
+            current = samples[-1]
+            candidate = position_at(candidate_progress)
+            if self.path_planner._is_segment_valid_for_nlp(
+                current, candidate, obstacles, robot.total_radius
+            ):
+                progress = candidate_progress
+                samples.append(candidate)
+                continue
+
+            lower = progress
+            upper = candidate_progress
+            for _ in range(24):
+                midpoint = (lower + upper) / 2.0
+                midpoint_position = position_at(midpoint)
+                if self.path_planner._is_segment_valid_for_nlp(
+                    current, midpoint_position, obstacles, robot.total_radius
+                ):
+                    lower = midpoint
+                else:
+                    upper = midpoint
+
+            if lower - progress < 1e-3:
+                raise PathPlanningError(
+                    "The route cannot advance by a collision-free movement step."
+                )
+            progress = lower
+            samples.append(position_at(progress))
+
+        return np.asarray(samples, dtype=np.float32)
+
     def _resolve_projected_collisions(self, active_agents: List[str], newly_actioned: Optional[set] = None) -> set:
         """
         Project all agents' intended paths and find collisions tick-by-tick.
@@ -1038,6 +1135,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             obstacles = self.game.get_permanent_obstacles()
         except AttributeError:
             obstacles = []
+        unplannable_agents: set[str] = set()
 
         # 1. Generate full paths for all newly_actioned agents
         for agent in newly_actioned:
@@ -1057,21 +1155,22 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             robot = self.game.get_robot_for_agent(agent)
             
             try:
-                positions, velocities, dt, grid = self.path_planner.Solve(
+                positions, _, _, _ = self.path_planner.Solve(
                     start_point=start_pos,
                     end_point=target_pos,
                     obstacles=obstacles,
                     robot=robot,
                     optimize=False
                 )
+                tick_path = self._build_collision_safe_tick_path(
+                    positions, robot, obstacles
+                )
                 
                 # Precompute arrays for all ticks
-                tick_positions = np.zeros((total_ticks + 1, 2), dtype=np.float32)
-                tick_orients = np.zeros((total_ticks + 1, 1), dtype=np.float32)
-                
                 from pushback.pushback import vex_shortest_angular_distance, vex_normalize_angle, vex_atan2
                 
                 plan = busy.get("plan", [])
+                move_idx = -1
                 
                 if positions is not None and len(positions) > 1:
                     first_astar_or = None
@@ -1089,7 +1188,6 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                             break
 
                     if first_astar_or is not None and last_astar_or is not None:
-                        move_idx = -1
                         for idx, seg in enumerate(plan):
                             if np.linalg.norm(seg["end_pos"] - seg["start_pos"]) > 0.1:
                                 move_idx = idx
@@ -1109,7 +1207,26 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                                     plan[idx]["start_orient"] = np.array([last_astar_or], dtype=np.float32)
                                 else:
                                     plan[idx]["start_orient"] = plan[idx-1]["end_orient"].copy()
-                
+
+                if move_idx >= 0:
+                    movement_segment = plan[move_idx]
+                    movement_ticks = max(1, len(tick_path) - 1)
+                    previous_movement_ticks = (
+                        movement_segment["tick_end"] - movement_segment["tick_start"]
+                    )
+                    tick_delta = max(0, movement_ticks - previous_movement_ticks)
+                    if tick_delta:
+                        movement_segment["tick_end"] += tick_delta
+                        for segment in plan[move_idx + 1:]:
+                            segment["tick_start"] += tick_delta
+                            segment["tick_end"] += tick_delta
+                        busy["total_ticks"] += tick_delta
+                        busy["remaining_ticks"] += tick_delta
+                        total_ticks = busy["total_ticks"]
+
+                tick_positions = np.zeros((total_ticks + 1, 2), dtype=np.float32)
+                tick_orients = np.zeros((total_ticks + 1, 1), dtype=np.float32)
+
                 for t in range(total_ticks + 1):
                     current_pos = start_pos.copy()
                     interp_or = float(busy["start_orient"][0])
@@ -1130,18 +1247,17 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                             
                             if np.linalg.norm(diff_seg) > 0.1:
                                 # This is a moving segment
-                                if positions is not None and len(positions) > 1:
-                                    # Interpolate along the A* generated geometric path!
-                                    interp_axis = np.linspace(0, 1, len(positions))
-                                    x_val = np.interp(seg_alpha, interp_axis, positions[:, 0])
-                                    y_val = np.interp(seg_alpha, interp_axis, positions[:, 1])
-                                    current_pos = np.array([x_val, y_val], dtype=np.float32)
-                                    
-                                    # Forward difference for orientation
-                                    alpha_next = min(1.0, seg_alpha + 0.05) if seg_alpha < 0.99 else 1.0
-                                    nx_val = np.interp(alpha_next, interp_axis, positions[:, 0])
-                                    ny_val = np.interp(alpha_next, interp_axis, positions[:, 1])
-                                    diff_path = np.array([nx_val - x_val, ny_val - y_val])
+                                if len(tick_path) > 1:
+                                    path_position = seg_alpha * (len(tick_path) - 1)
+                                    lower_index = min(int(path_position), len(tick_path) - 2)
+                                    path_fraction = path_position - lower_index
+                                    current_pos = (
+                                        tick_path[lower_index]
+                                        + (tick_path[lower_index + 1] - tick_path[lower_index])
+                                        * path_fraction
+                                    )
+                                    next_index = min(lower_index + 1, len(tick_path) - 1)
+                                    diff_path = tick_path[next_index] - current_pos
                                     if np.linalg.norm(diff_path) > 0.001:
                                         interp_or = float(vex_atan2(diff_path[0], diff_path[1]))
                                 else:
@@ -1162,29 +1278,36 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 busy["tick_positions"] = tick_positions
                 busy["tick_orients"] = tick_orients
                 
-            except Exception:
+            except PathPlanningError as exc:
+                LOGGER.warning(
+                    "Cancelling action for %s because no collision-aware route was found: %s",
+                    agent,
+                    exc,
+                )
+                unplannable_agents.add(agent)
                 busy.pop("tick_positions", None)
                 busy.pop("tick_orients", None)
+                continue
 
         # 2. Check collisions over time
         impacted: set[str] = set()
-        
+
         # Max ticks to look forward based on newly_actioned agents
         max_ticks = 0
         for a in newly_actioned:
             b = self.busy_state.get(a)
             if b:
                 max_ticks = max(max_ticks, b["total_ticks"])
-                
+
         for t in range(max_ticks):
             # Get positions for all agents at tick t
             pos_at_t = {}
             radii = {}
-            
+
             for agent in active_agents:
                 robot = self.game.get_robot_for_agent(agent)
                 radii[agent] = robot.radius if robot else 9.0
-                
+
                 busy = self.busy_state.get(agent)
                 if busy:
                     if "tick_positions" in busy:
@@ -1196,7 +1319,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                         pos_at_t[agent] = busy["target_pos"]
                 else:
                     pos_at_t[agent] = self.environment_state["agents"][agent]["position"].copy()
-                    
+
             # Check pairwise collisions at tick t
             agents_list = list(active_agents)
             for i in range(len(agents_list)):
@@ -1204,11 +1327,11 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 team_a = self.game.get_team_for_agent(a)
                 for j in range(i + 1, len(agents_list)):
                     b = agents_list[j]
-                    
+
                     # Only check collisions for teammates
                     if team_a != self.game.get_team_for_agent(b):
                         continue
-                    
+
                     dist = float(np.linalg.norm(pos_at_t[a] - pos_at_t[b]))
                     if dist < (radii[a] + radii[b]):
                         # Escaping deadlock exception
@@ -1217,18 +1340,18 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                                 if a in self.busy_state: self.busy_state[a]["initial_dist"] = {}
                             if "initial_dist" not in self.busy_state.get(b, {}):
                                 if b in self.busy_state: self.busy_state[b]["initial_dist"] = {}
-                                
+
                             if a in self.busy_state: self.busy_state[a]["initial_dist"][b] = dist
                             if b in self.busy_state: self.busy_state[b]["initial_dist"][a] = dist
                         else:
                             dist_0_a = self.busy_state.get(a, {}).get("initial_dist", {}).get(b, None)
                             if dist_0_a is not None and dist > dist_0_a:
                                 continue # Escaping
-                                
+
                             if a in newly_actioned: impacted.add(a)
                             if b in newly_actioned: impacted.add(b)
 
-        return impacted
+        return unplannable_agents | impacted
 
     def is_valid_action(
         self, 
@@ -1385,11 +1508,14 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                     positions[:, 0], positions[:, 1],
                     linestyle=':', linewidth=1.5, color=color, alpha=0.4
                 )
-            except Exception as e:
-                ax.plot(
-                    [start_pos[0], end_pos[0]], [start_pos[1], end_pos[1]],
-                    linestyle=':', linewidth=1.5, color=color, alpha=0.4
+            except PathPlanningError as exc:
+                LOGGER.warning(
+                    "Omitting path display for %s because no collision-aware route was found: %s",
+                    agent,
+                    exc,
                 )
+            except Exception:
+                LOGGER.exception("Failed to render the planned path for %s.", agent)
     
     def _render_robots_and_info(
         self, 
