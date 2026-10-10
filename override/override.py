@@ -26,6 +26,9 @@ DEFAULT_DURATION = 0.5
 DEFAULT_PENALTY = 1.0
 MAX_HELD_PINS = 1
 MAX_HELD_CUPS = 1
+VISIBILITY_POSITION_THRESHOLD = 3.0
+VISIBILITY_ORIENTATION_THRESHOLD = 15.0
+OPPONENT_SCAN_INTERVAL = 0.25
 
 
 class Actions(Enum):
@@ -76,7 +79,13 @@ class ObsIndex:
     HELD_PIN_FRONT_COLOR = 57
     HELD_PIN_BACK_COLOR = 58
     HELD_CUP_FACE_UP = 59
-    TOTAL = 60
+    TEAMMATE_POS_X = 60
+    TEAMMATE_POS_Y = 61
+    OPPOSING_ROBOT_1_POS_X = 62
+    OPPOSING_ROBOT_1_POS_Y = 63
+    OPPOSING_ROBOT_2_POS_X = 64
+    OPPOSING_ROBOT_2_POS_Y = 65
+    TOTAL = 66
 
 
 class GoalType(Enum):
@@ -303,6 +312,7 @@ class OverrideGame(VexGame):
         self.deterministic = bool(deterministic)
         self.use_path_planner_for_simulation = True
         self.path_planner = PathPlanner()
+        self._visibility_revision = 0
         self.get_initial_state()
 
     @staticmethod
@@ -372,6 +382,7 @@ class OverrideGame(VexGame):
     def reset(self) -> None:
         # Clear the current game state before the environment reinitializes it.
         self.state = None
+        self._visibility_revision = 0
 
     def _object(self, kind: str, position: np.ndarray, team: Optional[str] = None,
                 face_up: Optional[bool] = None) -> Dict:
@@ -397,6 +408,9 @@ class OverrideGame(VexGame):
                 "held_stack": [],
                 "held_pin_order": ["yellow", "yellow"],
                 "held_cup_face_up": False,
+                "opponent_seen_positions": [None, None],
+                "visibility_cache": {},
+                "opponent_visibility_cache": None,
                 "parked_zone": None, "toggled": [0] * NUM_TOGGLES,
                 "inferred_toggle_colors": [None] * NUM_TOGGLES,
                 "next_pin_color": None, "next_cup_face_up": None,
@@ -556,6 +570,8 @@ class OverrideGame(VexGame):
         self.state = {"agents": agents, "objects": objects, "toggles": [None] * NUM_TOGGLES,
                   "loaders": [6] * NUM_TOGGLES, "loader_reserves": loader_reserves,
                   "toggle_holders": [None] * NUM_TOGGLES, "autonomous_winner": None}
+        # Force the first observation of this layout to perform a fresh scan.
+        self._visibility_revision += 1
         return self.state
 
     def _visible(self, agent: str, kind: str) -> List[Tuple[float, int]]:
@@ -563,6 +579,12 @@ class OverrideGame(VexGame):
         state = self.state["agents"][agent]
         # Include the robot's camera offset when calculating its viewing direction.
         camera = vex_normalize_angle(float(state["orientation"][0]) + state["camera_rotation_offset"])
+        cache = state.setdefault("visibility_cache", {}).get(kind)
+        if cache is not None:
+            moved = np.linalg.norm(state["position"] - cache["position"]) > VISIBILITY_POSITION_THRESHOLD
+            rotated = abs(vex_shortest_angular_distance(camera, cache["camera"])) > VISIBILITY_ORIENTATION_THRESHOLD
+            if cache["revision"] == self._visibility_revision and not moved and not rotated:
+                return cache["visible"]
         visible = []
         for index, obj in enumerate(self.state["objects"]):
             # Ignore objects that are not the requested type or are no longer on the field.
@@ -573,7 +595,93 @@ class OverrideGame(VexGame):
             # Keep only objects inside both the camera range and field of view.
             if distance <= 72 and abs(vex_shortest_angular_distance(camera, vex_atan2(direction[0], direction[1]))) <= FOV / 2:
                 visible.append((distance, index))
-        return sorted(visible)
+        visible = sorted(visible)
+        state.setdefault("visibility_cache", {})[kind] = {
+            "position": state["position"].copy(),
+            "camera": camera,
+            "revision": self._visibility_revision,
+            "visible": visible,
+        }
+        return visible
+
+    def _visible_opponent_robots(self, agent: str, game_time: float = 0.0) -> List[Tuple[float, str, np.ndarray]]:
+        # Return opposing robots currently visible to this agent, sorted by distance.
+        state = self.state["agents"][agent]
+        camera = vex_normalize_angle(float(state["orientation"][0]) + state["camera_rotation_offset"])
+        cache = state.get("opponent_visibility_cache")
+        if cache is not None:
+            moved = np.linalg.norm(state["position"] - cache["position"]) > VISIBILITY_POSITION_THRESHOLD
+            rotated = abs(vex_shortest_angular_distance(camera, cache["camera"])) > VISIBILITY_ORIENTATION_THRESHOLD
+            elapsed = float(game_time) - cache["game_time"]
+            if elapsed < OPPONENT_SCAN_INTERVAL and not moved and not rotated:
+                return cache["visible"]
+        visible = []
+        for other_agent, other_state in self.state["agents"].items():
+            if other_agent == agent or other_state["team"] == state["team"]:
+                continue
+            direction = other_state["position"] - state["position"]
+            distance = float(np.linalg.norm(direction))
+            if distance <= 72 and abs(vex_shortest_angular_distance(camera, vex_atan2(direction[0], direction[1]))) <= FOV / 2:
+                visible.append((distance, other_agent, other_state["position"].copy()))
+        visible = sorted(visible, key=lambda item: (item[0], float(item[2][0]), float(item[2][1])))
+        state["opponent_visibility_cache"] = {
+            "position": state["position"].copy(),
+            "camera": camera,
+            "game_time": float(game_time),
+            "visible": visible,
+        }
+        return visible
+
+    @staticmethod
+    def _is_empty_opponent_memory(memory: List[Optional[np.ndarray]]) -> bool:
+        return all(value is None for value in memory)
+
+    def _update_opponent_memory(self, agent: str, game_time: float = 0.0) -> None:
+        # Store the last up to two enemy robot positions that were seen this action.
+        state = self.state["agents"][agent]
+        current_memory = list(state.get("opponent_seen_positions", [None, None]))
+        visible = self._visible_opponent_robots(agent, game_time)
+        if visible:
+            current_memory = [None, None]
+            for index, (_, _, position) in enumerate(visible[:2]):
+                current_memory[index] = np.asarray(position, dtype=np.float32).copy()
+            state["opponent_seen_positions"] = current_memory
+        elif self._is_empty_opponent_memory(current_memory):
+            state["opponent_seen_positions"] = [None, None]
+
+    def clear_opponent_memory(self, agent: str) -> None:
+        # Clear the enemy-robot memory when the current action completes.
+        state = self.state["agents"][agent]
+        state["opponent_seen_positions"] = [None, None]
+        state["opponent_visibility_cache"] = None
+
+    def get_opponent_memory_penalty(self, agent: str, previous_pos: np.ndarray, current_pos: np.ndarray) -> float:
+        # If the robot crosses a previously seen opponent location, apply a small penalty.
+        state = self.state["agents"][agent]
+        memory = state.get("opponent_seen_positions", [None, None])
+        previous = np.asarray(previous_pos, dtype=np.float32)
+        current = np.asarray(current_pos, dtype=np.float32)
+        if np.allclose(previous, current):
+            threshold = 12.0
+            for seen in memory:
+                if seen is None:
+                    continue
+                if np.linalg.norm(previous - np.asarray(seen, dtype=np.float32)) <= threshold:
+                    return 1.0
+            return 0.0
+        segment = current - previous
+        if np.allclose(segment, 0.0):
+            return 0.0
+        for seen in memory:
+            if seen is None:
+                continue
+            seen_pos = np.asarray(seen, dtype=np.float32)
+            v = seen_pos - previous
+            t = float(np.clip(np.dot(v, segment) / np.dot(segment, segment), 0.0, 1.0))
+            closest = previous + t * segment
+            if np.linalg.norm(closest - seen_pos) <= 12.0:
+                return 1.0
+        return 0.0
 
     @staticmethod
     def _color_to_index(color: Optional[str]) -> float:
@@ -610,6 +718,27 @@ class OverrideGame(VexGame):
             self._color_to_index(pin_back),
             1.0 if state["held_cups"] > 0 and bool(state.get("held_cup_face_up", False)) else 0.0,
         ])
+
+        teammate = next(
+            (
+                other for name, other in self.state["agents"].items()
+                if name != agent and other["team"] == state["team"]
+            ),
+            None,
+        )
+        if teammate is None:
+            values.extend([0.0, 0.0])
+        else:
+            values.extend([float(teammate["position"][0]), float(teammate["position"][1])])
+
+        self._update_opponent_memory(agent, game_time)
+        seen_positions = state.get("opponent_seen_positions", [None, None])
+        for seen_position in seen_positions[:2]:
+            if seen_position is None:
+                values.extend([0.0, 0.0])
+            else:
+                values.extend([float(seen_position[0]), float(seen_position[1])])
+
         return np.asarray(values, dtype=np.float32)
 
     def get_game_observation_space(self, agent: str) -> spaces.Space:
@@ -881,6 +1010,7 @@ class OverrideGame(VexGame):
     def apply_events(self, agent: str, events: List[ActionEvent]) -> None:
         # Apply completed action events to objects, robots, Toggles, and Loaders.
         state = self.state["agents"][agent]
+        objects_changed = any(event.type in {"pickup", "score"} for event in events)
         for event in events:
             if event.type == "pickup":
                 # Move the selected field object into the robot's inventory.
@@ -1032,6 +1162,9 @@ class OverrideGame(VexGame):
                 state.update(parked=True, parked_zone="midfield")
             elif event.type == "turn":
                 state["orientation"] = np.array([event.data["angle"]], dtype=np.float32)
+        if objects_changed:
+            # Invalidate cached field visibility after object status changes.
+            self._visibility_revision += 1
 
     def _score_pin_color(self, pin: Dict, goal_value: str) -> Optional[Tuple[str, int]]:
         """Return the alliance and value of the pin half facing away from its goal."""
