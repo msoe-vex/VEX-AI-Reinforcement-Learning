@@ -16,7 +16,7 @@ from .override import (
     LOWER_LEFT_CUP_POSITION,
     LOWER_LEFT_PIN_POSITIONS,
 )
-from .vexai_comp import limit_field_objects, remove_field_clusters
+from .vexai_comp import configure_vexai_objects, remove_field_clusters
 
 
 class VexAISkillsGame(OverrideGame):
@@ -61,12 +61,7 @@ class VexAISkillsGame(OverrideGame):
 
     def get_initial_state(self, randomize: bool = False, seed: Optional[int] = None) -> Dict:
         state = super().get_initial_state(randomize, seed)
-        state = remove_field_clusters(
-            state,
-            self.excluded_pin_positions,
-            self.excluded_cup_positions,
-        )
-        return limit_field_objects(state, 24, 24)
+        return configure_vexai_objects(state, include_blue_preloads=False)
 
     def get_team_for_agent(self, _agent: str) -> str:
         return "red"
