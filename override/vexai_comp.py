@@ -27,6 +27,8 @@ from .override import (
     UPPER_RIGHT_PIN_POSITIONS,
     LOWER_LEFT_CUP_POSITION,
     LOWER_LEFT_PIN_POSITIONS,
+    CENTER_STACK_CUP_POSITIONS,
+    CENTER_STACK_PIN_POSITIONS,
 )
 
 
@@ -110,6 +112,25 @@ def configure_vexai_objects(state: Dict, include_blue_preloads: bool) -> Dict:
         del cups[:count]
         return selected
 
+    def take_cups_at(positions: list) -> list:
+        position_keys = {
+            tuple(round(float(value), 3) for value in position)
+            for position in positions
+        }
+        selected = [
+            cup for cup in cups
+            if tuple(round(float(value), 3) for value in cup["source_position"])
+            in position_keys
+        ]
+        if len(selected) != len(positions):
+            raise ValueError(
+                f"VEX AI layout needs cups at {positions}, "
+                f"but only {len(selected)} are available"
+            )
+        selected_ids = {id(cup) for cup in selected}
+        cups[:] = [cup for cup in cups if id(cup) not in selected_ids]
+        return selected
+
     selected = []
 
     goal_pins = take_pin("yellow", "yellow", 3)
@@ -157,10 +178,16 @@ def configure_vexai_objects(state: Dict, include_blue_preloads: bool) -> Dict:
         np.asarray(SPECIAL_CUP_POSITION, dtype=np.float32),
         np.asarray(MIRRORED_CUP_POSITION, dtype=np.float32),
     ]
+    center_cup_positions = [
+        np.asarray(position, dtype=np.float32)
+        for position in CENTER_STACK_CUP_POSITIONS
+    ]
+    center_cups = take_cups_at(center_cup_positions)
     field_cup_positions = cluster_cup_positions + mirrored_goal_positions
     field_cups = take_cups(len(field_cup_positions))
     for cup, position in zip(field_cups, field_cup_positions):
         cup["position"] = position.copy()
+    field_cups.extend(center_cups)
     loader_cups = take_cups(20)
     for loader_index, team in loader_plan:
         for stack_index in range(5):
@@ -176,6 +203,8 @@ def configure_vexai_objects(state: Dict, include_blue_preloads: bool) -> Dict:
                 selected.append(obj)
 
     red_blue_pins = take_pin("red", "blue", 4)
+    for pin, position in zip(red_blue_pins, CENTER_STACK_PIN_POSITIONS):
+        pin["position"] = np.asarray(position, dtype=np.float32)
     cluster_positions = SPECIAL_PIN_POSITIONS + MIRRORED_PIN_POSITIONS
     left_of_downsloping_line = [
         position for position in cluster_positions
@@ -206,7 +235,7 @@ def configure_vexai_objects(state: Dict, include_blue_preloads: bool) -> Dict:
         + mirrored_goal_stack
         + take_pin("yellow", "yellow", 3)
     )
-    field_cups.extend(take_cups(21))
+    field_cups.extend(take_cups(16))
     selected.extend(field_pins)
     selected.extend(field_cups)
 
@@ -231,14 +260,14 @@ class VexAICompGame(OverrideGame):
     ):
         if robots is None:
             robots = [
-                Robot("red_robot_0", Team.RED, RobotSize.INCH_24,
-                      np.array([-48.0, 24.0], dtype=np.float32)),
+                Robot("red_robot_0", Team.RED, RobotSize.INCH_15,
+                      np.array([0.0, -64.5], dtype=np.float32), start_orientation=0.0),
                 Robot("red_robot_1", Team.RED, RobotSize.INCH_15,
-                      np.array([-48.0, -24.0], dtype=np.float32)),
-                Robot("blue_robot_0", Team.BLUE, RobotSize.INCH_24,
-                      np.array([48.0, 24.0], dtype=np.float32)),
+                      np.array([-64.5, 0.0], dtype=np.float32), start_orientation=90.0),
+                Robot("blue_robot_0", Team.BLUE, RobotSize.INCH_15,
+                      np.array([0.0, 64.5], dtype=np.float32), start_orientation=180.0),
                 Robot("blue_robot_1", Team.BLUE, RobotSize.INCH_15,
-                      np.array([48.0, -24.0], dtype=np.float32)),
+                      np.array([64.5, 0.0], dtype=np.float32), start_orientation=270.0),
             ]
         super().__init__(
             robots, communication_mode=communication_mode, deterministic=deterministic
