@@ -15,7 +15,7 @@ from vex_core.utils import vex_atan2, vex_normalize_angle, vex_shortest_angular_
 FIELD_SIZE_INCHES = 144.0
 FIELD_HALF = FIELD_SIZE_INCHES / 2.0
 MIDFIELD_SIZE_INCHES = 24.0
-NUM_CUPS = 56
+NUM_CUPS = 48
 NUM_PINS = 63
 NUM_TOGGLES = 4
 MATCH_TIME = 120.0
@@ -189,20 +189,20 @@ YELLOW_STACK_CUP_POSITIONS = [
 ]
 YELLOW_STACK_PIN_POSITIONS = YELLOW_STACK_CUP_POSITIONS.copy()
 TOGGLE_STACK_CUP_POSITIONS = [
-    (-24.0, FIELD_HALF - 2.4), (-19.2, FIELD_HALF - 2.4), (-14.4, FIELD_HALF - 2.4),
-    (14.4, FIELD_HALF - 2.4), (19.2, FIELD_HALF - 2.4), (24.0, FIELD_HALF - 2.4),
-    (FIELD_HALF - 2.4, -24.0), (FIELD_HALF - 2.4, -19.2), (FIELD_HALF - 2.4, -14.4),
-    (FIELD_HALF - 2.4, 14.4), (FIELD_HALF - 2.4, 19.2), (FIELD_HALF - 2.4, 24.0),
-    (-24.0, -FIELD_HALF + 2.4), (-19.2, -FIELD_HALF + 2.4), (-14.4, -FIELD_HALF + 2.4),
-    (14.4, -FIELD_HALF + 2.4), (19.2, -FIELD_HALF + 2.4), (24.0, -FIELD_HALF + 2.4),
-    (-FIELD_HALF + 2.4, -24.0), (-FIELD_HALF + 2.4, -19.2), (-FIELD_HALF + 2.4, -14.4),
-    (-FIELD_HALF + 2.4, 14.4), (-FIELD_HALF + 2.4, 19.2), (-FIELD_HALF + 2.4, 24.0),
+    (-26.4, FIELD_HALF - 2.4), (-21.6, FIELD_HALF - 2.4),
+    (21.6, FIELD_HALF - 2.4), (26.4, FIELD_HALF - 2.4),
+    (FIELD_HALF - 2.4, -26.4), (FIELD_HALF - 2.4, -21.6),
+    (FIELD_HALF - 2.4, 21.6), (FIELD_HALF - 2.4, 26.4),
+    (-26.4, -FIELD_HALF + 2.4), (-21.6, -FIELD_HALF + 2.4),
+    (21.6, -FIELD_HALF + 2.4), (26.4, -FIELD_HALF + 2.4),
+    (-FIELD_HALF + 2.4, -26.4), (-FIELD_HALF + 2.4, -21.6),
+    (-FIELD_HALF + 2.4, 21.6), (-FIELD_HALF + 2.4, 26.4),
 ]
 TOGGLE_STACK_PIN_POSITIONS = [
-    (-19.2, FIELD_HALF - 2.4), (19.2, FIELD_HALF - 2.4),
-    (FIELD_HALF - 2.4, -19.2), (FIELD_HALF - 2.4, 19.2),
-    (-19.2, -FIELD_HALF + 2.4), (19.2, -FIELD_HALF + 2.4),
-    (-FIELD_HALF + 2.4, -19.2), (-FIELD_HALF + 2.4, 19.2),
+    (-26.4, FIELD_HALF - 2.4), (26.4, FIELD_HALF - 2.4),
+    (FIELD_HALF - 2.4, -26.4), (FIELD_HALF - 2.4, 26.4),
+    (-26.4, -FIELD_HALF + 2.4), (26.4, -FIELD_HALF + 2.4),
+    (-FIELD_HALF + 2.4, -26.4), (-FIELD_HALF + 2.4, 26.4),
 ]
 RED_YELLOW_PIN_POSITIONS = [
        (-48.0, 24.0), (-48.0, 0.0), (-48.0, -24.0), (0.0, -36.0),

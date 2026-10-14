@@ -29,6 +29,9 @@ from .override import (
     LOWER_LEFT_PIN_POSITIONS,
     CENTER_STACK_CUP_POSITIONS,
     CENTER_STACK_PIN_POSITIONS,
+    TOGGLE_STACK_CUP_POSITIONS,
+    TOGGLE_STACK_PIN_POSITIONS,
+    YELLOW_STACK_CUP_POSITIONS,
 )
 
 
@@ -81,6 +84,7 @@ def configure_vexai_objects(state: Dict, include_blue_preloads: bool) -> Dict:
         back: str,
         count: int,
         excluded_positions: set = frozenset(),
+        from_end: bool = False,
     ) -> list:
         candidates = pins_by_color[(front, back)]
         candidates = [
@@ -95,7 +99,7 @@ def configure_vexai_objects(state: Dict, include_blue_preloads: bool) -> Dict:
                 f"VEX AI layout needs {count} ({front}, {back}) pins, "
                 f"but only {len(candidates)} are available"
             )
-        selected = candidates[:count]
+        selected = candidates[-count:] if from_end else candidates[:count]
         selected_ids = {id(obj) for obj in selected}
         pins_by_color[(front, back)] = [
             obj for obj in pins_by_color[(front, back)]
@@ -131,8 +135,33 @@ def configure_vexai_objects(state: Dict, include_blue_preloads: bool) -> Dict:
         cups[:] = [cup for cup in cups if id(cup) not in selected_ids]
         return selected
 
+    def take_pins_at(front: str, back: str, positions: list) -> list:
+        position_keys = {
+            tuple(round(float(value), 3) for value in position)
+            for position in positions
+        }
+        candidates = [
+            pin for pin in pins_by_color[(front, back)]
+            if tuple(round(float(value), 3) for value in pin.get(
+                "source_position", pin["position"]
+            ))
+            in position_keys
+        ]
+        if len(candidates) != len(positions):
+            raise ValueError(
+                f"VEX AI layout needs {front}/{back} pins at {positions}, "
+                f"but only {len(candidates)} are available"
+            )
+        selected_ids = {id(pin) for pin in candidates}
+        pins_by_color[(front, back)] = [
+            pin for pin in pins_by_color[(front, back)]
+            if id(pin) not in selected_ids
+        ]
+        return candidates
+
     selected = []
 
+    toggle_pins = take_pins_at("yellow", "yellow", TOGGLE_STACK_PIN_POSITIONS)
     goal_pins = take_pin("yellow", "yellow", 3)
     for goal, obj in zip(
         (GoalType.SHORT_1, GoalType.SHORT_4, GoalType.TALL),
@@ -147,7 +176,7 @@ def configure_vexai_objects(state: Dict, include_blue_preloads: bool) -> Dict:
 
     preload_by_team = {
         "red": take_pin("red", "yellow", 2, cluster_source_positions),
-        "blue": take_pin("blue", "yellow", 2, cluster_source_positions)
+        "blue": take_pin("blue", "yellow", 2, cluster_source_positions, from_end=True)
         if include_blue_preloads else [],
     }
     preloads_by_agent = {}
@@ -178,16 +207,30 @@ def configure_vexai_objects(state: Dict, include_blue_preloads: bool) -> Dict:
         np.asarray(SPECIAL_CUP_POSITION, dtype=np.float32),
         np.asarray(MIRRORED_CUP_POSITION, dtype=np.float32),
     ]
-    center_cup_positions = [
+    toggle_cups = take_cups_at([
+        np.asarray(position, dtype=np.float32)
+        for position in TOGGLE_STACK_CUP_POSITIONS
+    ])
+    center_cups = take_cups_at([
         np.asarray(position, dtype=np.float32)
         for position in CENTER_STACK_CUP_POSITIONS
-    ]
-    center_cups = take_cups_at(center_cup_positions)
-    field_cup_positions = cluster_cup_positions + mirrored_goal_positions
+    ])
+    diagonal_cups = take_cups_at([
+        np.asarray(position, dtype=np.float32)
+        for position in YELLOW_STACK_CUP_POSITIONS[:2]
+    ])
+    field_cup_positions = (
+        cluster_cup_positions
+        + [
+            position for position in mirrored_goal_positions
+            if not np.allclose(position, np.zeros(2, dtype=np.float32))
+        ]
+    )
     field_cups = take_cups(len(field_cup_positions))
     for cup, position in zip(field_cups, field_cup_positions):
         cup["position"] = position.copy()
-    field_cups.extend(center_cups)
+    field_cups.extend(diagonal_cups)
+    field_cups.extend(toggle_cups)
     loader_cups = take_cups(20)
     for loader_index, team in loader_plan:
         for stack_index in range(5):
@@ -205,6 +248,24 @@ def configure_vexai_objects(state: Dict, include_blue_preloads: bool) -> Dict:
     red_blue_pins = take_pin("red", "blue", 4)
     for pin, position in zip(red_blue_pins, CENTER_STACK_PIN_POSITIONS):
         pin["position"] = np.asarray(position, dtype=np.float32)
+    diagonal_pins = [
+        take_pin("red", "yellow", 1)[0],
+        take_pin("blue", "yellow", 1)[0],
+    ]
+    diagonal_pins[0].update(
+        position=np.asarray((-24.0, -24.0), dtype=np.float32),
+        face_up=False,
+        team="yellow",
+        front_color="yellow",
+        back_color="red",
+    )
+    diagonal_pins[1].update(
+        position=np.asarray((24.0, 24.0), dtype=np.float32),
+        face_up=False,
+        team="yellow",
+        front_color="yellow",
+        back_color="blue",
+    )
     cluster_positions = SPECIAL_PIN_POSITIONS + MIRRORED_PIN_POSITIONS
     left_of_downsloping_line = [
         position for position in cluster_positions
@@ -226,18 +287,37 @@ def configure_vexai_objects(state: Dict, include_blue_preloads: bool) -> Dict:
     for pin, position in zip(mirrored_goal_stack, mirrored_goal_positions):
         pin["position"] = position.copy()
         pin["face_up"] = True
+    center_pin = next(
+        pin for pin in mirrored_goal_stack
+        if np.allclose(pin["position"], np.zeros(2, dtype=np.float32))
+    )
+    previous_tall_pin = goal_pins[2]
+    if previous_tall_pin is not center_pin:
+        previous_tall_pin.update(
+            status=ObjectStatus.ON_FIELD,
+            goal=None,
+            goal_stack_index=None,
+        )
+        selected[:] = [
+            obj for obj in selected
+            if obj is not previous_tall_pin
+        ]
+        center_pin.update(
+            status=ObjectStatus.SCORED,
+            goal=GoalType.TALL.value,
+            goal_stack_index=0,
+        )
 
     field_pins = (
-        take_pin("red", "yellow", 3)
-        + take_pin("blue", "yellow", 3)
-        + red_blue_pins
+        red_blue_pins
+        + diagonal_pins
         + cluster_pins
         + mirrored_goal_stack
-        + take_pin("yellow", "yellow", 3)
+        + toggle_pins
     )
-    field_cups.extend(take_cups(16))
     selected.extend(field_pins)
     selected.extend(field_cups)
+    selected.extend(center_cups)
 
     state["objects"] = selected
     for agent_name, obj in preloads_by_agent.items():
