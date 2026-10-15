@@ -31,9 +31,9 @@ class VexAISkillsGame(OverrideGame):
         if robots is None:
             robots = [
                 Robot("red_robot_0", Team.RED, RobotSize.INCH_15,
-                      np.array([0.0, 64.5], dtype=np.float32), start_orientation=180.0),
+                      np.array([0.0, -64.5], dtype=np.float32), start_orientation=0.0),
                 Robot("red_robot_1", Team.RED, RobotSize.INCH_15,
-                      np.array([64.5, 0.0], dtype=np.float32), start_orientation=270.0),
+                      np.array([-64.5, 0.0], dtype=np.float32), start_orientation=90.0),
             ]
         super().__init__(
             robots, communication_mode=communication_mode, deterministic=deterministic

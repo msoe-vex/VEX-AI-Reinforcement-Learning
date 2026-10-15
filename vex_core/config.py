@@ -25,6 +25,7 @@ class VexEnvConfig:
     deterministic: bool
     temperature: float = 1.0
     copy_message_dropout_prob: float = 0.0
+    use_path_planner: bool = True
 
     @classmethod
     def add_cli_args(

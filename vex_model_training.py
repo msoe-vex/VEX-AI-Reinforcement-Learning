@@ -394,6 +394,7 @@ def env_creator(config=None):
         communication_mode=communication_mode,
         deterministic=deterministic,
         copy_message_dropout_prob=float(config.get("copy_message_dropout_prob", 0.0)),
+        use_path_planner=False,
     )
     
     game_class = get_game_class(game_name)
@@ -759,6 +760,7 @@ if __name__ == "__main__":
             communication_mode=env_config_obj.communication_mode,
             deterministic=env_config_obj.deterministic,
             copy_message_dropout_prob=env_config_obj.copy_message_dropout_prob,
+            use_path_planner=True,
         )
         run_simulation(
             config=test_config,
@@ -768,4 +770,3 @@ if __name__ == "__main__":
         print("Automated testing complete.")
     except Exception as e:
         print(f"Automated testing failed: {e}")
-
