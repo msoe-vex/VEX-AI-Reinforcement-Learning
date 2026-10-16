@@ -25,6 +25,7 @@ class VexEnvConfig:
     deterministic: bool
     temperature: float = 1.0
     copy_message_dropout_prob: float = 0.0
+    use_path_planner: bool = True
 
     @classmethod
     def add_cli_args(
@@ -47,7 +48,7 @@ class VexEnvConfig:
             "--game", 
             type=str, 
             default=game,
-            help="Game variant to use (e.g. 'vexai_skills', 'pushback')"
+            help="Game variant to use (e.g. 'vexai_skills', 'override_vexai_skills', 'pushback')"
         )
         parser.add_argument(
             "--render-mode",

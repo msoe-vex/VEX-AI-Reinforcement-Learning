@@ -648,9 +648,9 @@ class VexGame(ABC):
         Override this to customize the penalty for collisions.
         
         Returns:
-            Penalty value (default: 3.0)
+            Penalty value (default: 10.0)
         """
-        return 3.0
+        return 10.0
 
     def update_robot_position(self, agent: str, position: np.ndarray) -> None:
         """
