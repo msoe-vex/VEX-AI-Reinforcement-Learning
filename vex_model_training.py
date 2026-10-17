@@ -344,8 +344,8 @@ class VexScoreCallback(RLlibCallback):
             env_config.get("randomize", True)
             and iteration < env_config.get("randomize_until_iteration", 0)
         )
-        algorithm.env_runner_group.foreach_env(
-            lambda env: setattr(env.unwrapped, "randomize", randomize)
+        algorithm.env_runner_group.foreach_env_runner(
+            lambda env_runner: set_env_runner_randomization(env_runner, randomize)
         )
         
         red_mean = env_runner_results.get("red_team_score_mean")
@@ -371,6 +371,14 @@ class VexScoreCallback(RLlibCallback):
             pass
             
         sys.stdout.flush()
+
+
+def set_env_runner_randomization(env_runner, randomize):
+    """Update randomization on environments owned by a new-API EnvRunner."""
+    if env_runner.env is None:
+        return
+    for env in env_runner.env.envs:
+        env.unwrapped.randomize = randomize
 
 
 def env_creator(config=None):
