@@ -74,6 +74,7 @@ class VexGame(ABC):
             
         self._robot_map = {r.name: r for r in self.robots}
         self.communication_mode = communication_mode
+        self.randomize_field_objects = False
         self.state: Dict = None  # Game state, initialized by get_initial_state()
         self.reward_weight_team_delta = DEFAULT_REWARD_WEIGHT_TEAM_DELTA
         self.reward_weight_opp_delta = DEFAULT_REWARD_WEIGHT_OPP_DELTA

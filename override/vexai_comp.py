@@ -53,7 +53,11 @@ def remove_field_clusters(
     return state
 
 
-def configure_vexai_objects(state: Dict, include_blue_preloads: bool) -> Dict:
+def configure_vexai_objects(
+    state: Dict,
+    include_blue_preloads: bool,
+    randomize_field_objects: bool = False,
+) -> Dict:
     """Assign the exact VEX AI inventory across goals, robots, loaders, and field."""
     for obj in state["objects"]:
         obj.update(
@@ -326,6 +330,10 @@ def configure_vexai_objects(state: Dict, include_blue_preloads: bool) -> Dict:
         ]
     state["loaders"] = [5] * 4
     state["loader_reserves"] = [5] * 4
+    if randomize_field_objects:
+        for obj in selected:
+            if obj["status"] == ObjectStatus.ON_FIELD:
+                obj["position"] = np.random.uniform(-66, 66, 2).astype(np.float32)
     return state
 
 
@@ -374,8 +382,16 @@ class VexAICompGame(OverrideGame):
         return (UPPER_RIGHT_CUP_POSITION, LOWER_LEFT_CUP_POSITION)
 
     def get_initial_state(self, randomize: bool = False, seed: Optional[int] = None) -> Dict:
-        state = super().get_initial_state(randomize, seed)
-        return configure_vexai_objects(state, include_blue_preloads=True)
+        state = super().get_initial_state(
+            randomize,
+            seed,
+            randomize_field_objects=False,
+        )
+        return configure_vexai_objects(
+            state,
+            include_blue_preloads=True,
+            randomize_field_objects=self.randomize_field_objects,
+        )
 
     def is_valid_action(self, agent: str, action: int, observation: np.ndarray) -> bool:
         """Only 24-inch robots may park in their alliance load zone."""

@@ -339,6 +339,18 @@ class VexScoreCallback(RLlibCallback):
         env_runner_results = result.get("env_runners", {})
         episode_return = env_runner_results.get("episode_return_mean")
         iteration = result.get("training_iteration", 0)
+        env_config = algorithm.config.env_config
+        randomize_field_objects = (
+            env_config.get("randomize_field_objects", False)
+            and iteration < env_config.get("randomize_field_objects_until_iteration", 0)
+        )
+        algorithm.env_runner_group.foreach_env(
+            lambda env: setattr(
+                env.unwrapped.config,
+                "randomize_field_objects",
+                randomize_field_objects,
+            )
+        )
         
         red_mean = env_runner_results.get("red_team_score_mean")
         blue_mean = env_runner_results.get("blue_team_score_mean")
@@ -391,6 +403,7 @@ def env_creator(config=None):
         render_mode=None,
         experiment_path=config.get("experiment_path", "vex_model_training"),
         randomize=config.get("randomize", True),
+        randomize_field_objects=config.get("randomize_field_objects", False),
         communication_mode=communication_mode,
         deterministic=deterministic,
         copy_message_dropout_prob=float(config.get("copy_message_dropout_prob", 0.0)),
@@ -452,6 +465,10 @@ def apply_training_metadata_overrides(args, metadata, explicit_cli_flags):
         "game": ("game", ["--game"]),
         "communication_mode": ("communication_mode", ["--communication-mode"]),
         "randomize": ("randomize", ["--randomize", "--no-randomize"]),
+        "randomize_field_objects": (
+            "randomize_field_objects",
+            ["--randomize-field-objects", "--no-randomize-field-objects"],
+        ),
         "deterministic": ("deterministic", ["--deterministic", "--no-deterministic"]),
         "num_iters": ("num_iters", ["--num-iters"]),
         "copy_message_dropout_prob": ("copy_message_dropout_prob", ["--copy-message-dropout-prob"]),
@@ -501,6 +518,12 @@ if __name__ == "__main__":
 
     parser.add_argument('--cpus-per-task', type=int, default=1, help='Number of CPUs per task')  # Default: 1
     parser.add_argument('--num-iters', type=int, default=None, help='Total number of iterations to run, overriding the sum of training phases')
+    parser.add_argument(
+        '--randomize-field-objects',
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help='Randomize Override Pin and Cup positions during the first third of training (disabled by default)',
+    )
     parser.add_argument('--job-id', type=str, default="", help='SLURM job ID')  # Job ID for logging
     parser.add_argument('--num-gpus', type=int, default=0, help='Number of GPUs to use')
     parser.add_argument('--partition', type=str, default="teaching", help='SLURM partition to use')
@@ -548,6 +571,7 @@ if __name__ == "__main__":
     temp_env = env_creator({
         "game": env_config_obj.game_name,
         "randomize": env_config_obj.randomize,
+        "randomize_field_objects": env_config_obj.randomize_field_objects,
         "communication_mode": env_config_obj.communication_mode.value,
         "deterministic": env_config_obj.deterministic,
         "copy_message_dropout_prob": env_config_obj.copy_message_dropout_prob,
@@ -591,6 +615,8 @@ if __name__ == "__main__":
         num_iters = sum(phase["iterations"] for phase in ACTIVE_TRAINING_PHASES)
         print(f"Total training iterations: {num_iters} (from ACTIVE_TRAINING_PHASES)")
 
+    randomize_field_objects_until_iteration = (num_iters + 2) // 3
+
     print("Using custom callback for LR and entropy scheduling based on iterations.")
 
     # RLlib new API: schedules must be provided directly via `lr` and
@@ -609,6 +635,8 @@ if __name__ == "__main__":
             env="VEX_Multi_Agent_Env",
             env_config={
                 "randomize": env_config_obj.randomize,
+                "randomize_field_objects": env_config_obj.randomize_field_objects,
+                "randomize_field_objects_until_iteration": randomize_field_objects_until_iteration,
                 "game": env_config_obj.game_name,
                 "communication_mode": env_config_obj.communication_mode.value,
                 "deterministic": env_config_obj.deterministic,
@@ -679,6 +707,8 @@ if __name__ == "__main__":
         "base_training_phases": TRAINING_PHASES,
         "discount_factor": args.discount_factor,
         "randomize": env_config_obj.randomize,
+        "randomize_field_objects": env_config_obj.randomize_field_objects,
+        "randomize_field_objects_until_iteration": randomize_field_objects_until_iteration,
         "num_iters": num_iters,
         "source_experiment_directory": restore_experiment_directory,
         "restored_checkpoint_path": restore_path,

@@ -203,6 +203,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         self.game.reset()
         
         # Get initial state from game
+        self.game.randomize_field_objects = self.config.randomize_field_objects
         self.environment_state = self.game.get_initial_state(
             randomize=self.randomize, 
             seed=seed
