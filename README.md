@@ -135,8 +135,8 @@ All commands use SLURM to run on the MSOE computing cluster (ROSIE).
    # Custom game variant and settings
    sbatch scripts/submitTrainingJob.sh --game vexu_skills --num-iters 50 --entropy 0.02
 
-   # Randomize Override and Override AI Pin and Cup positions during the first third of training
-   sbatch scripts/submitTrainingJob.sh --randomize-field-objects
+   # Randomize Override and Override AI Pins and Cups during the first third of training
+   sbatch scripts/submitTrainingJob.sh --randomize
    
    # Training with experiment resumption (auto-loads metadata + latest checkpoint)
    sbatch scripts/submitTrainingJob.sh --experiment-path job_results/job_220065/PPO_2026-01-29_00-36-09
@@ -151,11 +151,11 @@ All commands use SLURM to run on the MSOE computing cluster (ROSIE).
    python -m pip install -r requirements.txt
    ```
 
-   Field-object randomization is disabled by default. Use
-   `--randomize-field-objects` to randomize on-field Pin and Cup positions in
-   Override and Override AI variants during the first third of training
-   iterations; goal-scored objects, robot preloads, and Loader contents remain
-   fixed. Use `--no-randomize-field-objects` to explicitly disable it.
+   The existing `--randomize` setting controls randomization. During training,
+   on-field Pin and Cup positions in Override and Override AI variants are
+   randomized for the first third of iterations; goal-scored objects, robot
+   preloads, and Loader contents remain fixed. Use `--no-randomize` to disable
+   randomization.
 
    - Check job status: `squeue -u $USER`
    - View output: `cat job_results/job_#####/output.txt`

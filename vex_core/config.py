@@ -23,7 +23,6 @@ class VexEnvConfig:
     randomize: bool
     communication_mode: CommunicationOption
     deterministic: bool
-    randomize_field_objects: bool = False
     temperature: float = 1.0
     copy_message_dropout_prob: float = 0.0
     use_path_planner: bool = True
@@ -147,9 +146,6 @@ class VexEnvConfig:
             defaults["temperature"] = args.temperature
         if hasattr(args, "copy_message_dropout_prob") and args.copy_message_dropout_prob is not None:
             defaults["copy_message_dropout_prob"] = args.copy_message_dropout_prob
-        if getattr(args, "randomize_field_objects", None) is not None:
-            defaults["randomize_field_objects"] = args.randomize_field_objects
-
         # Read metadata overrides from the experiment directory (if present)
         metadata_overrides = cls.read_from_metadata(experiment_path, {})
 
@@ -158,11 +154,6 @@ class VexEnvConfig:
         communication_mode_str = args.communication_mode if (hasattr(args, "communication_mode") and args.communication_mode is not None) else metadata_overrides.get("communication_mode", "none")
         randomize = args.randomize if (hasattr(args, "randomize") and args.randomize is not None) else metadata_overrides.get("randomize", True)
         deterministic = args.deterministic if (hasattr(args, "deterministic") and args.deterministic is not None) else metadata_overrides.get("deterministic", False)
-        randomize_field_objects = (
-            args.randomize_field_objects
-            if getattr(args, "randomize_field_objects", None) is not None
-            else metadata_overrides.get("randomize_field_objects", False)
-        )
         temperature = args.temperature if (hasattr(args, "temperature") and args.temperature is not None) else metadata_overrides.get("temperature", 1.0)
         copy_message_dropout_prob = args.copy_message_dropout_prob if (hasattr(args, "copy_message_dropout_prob") and args.copy_message_dropout_prob is not None) else metadata_overrides.get("copy_message_dropout_prob", 0.0)
 
@@ -178,7 +169,6 @@ class VexEnvConfig:
             randomize=randomize,
             communication_mode=communication_mode,
             deterministic=deterministic,
-            randomize_field_objects=randomize_field_objects,
             temperature=float(temperature),
             copy_message_dropout_prob=float(np.clip(copy_message_dropout_prob, 0.0, 1.0)),
         )

@@ -56,7 +56,7 @@ def remove_field_clusters(
 def configure_vexai_objects(
     state: Dict,
     include_blue_preloads: bool,
-    randomize_field_objects: bool = False,
+    randomize: bool = False,
 ) -> Dict:
     """Assign the exact VEX AI inventory across goals, robots, loaders, and field."""
     for obj in state["objects"]:
@@ -330,7 +330,7 @@ def configure_vexai_objects(
         ]
     state["loaders"] = [5] * 4
     state["loader_reserves"] = [5] * 4
-    if randomize_field_objects:
+    if randomize:
         for obj in selected:
             if obj["status"] == ObjectStatus.ON_FIELD:
                 obj["position"] = np.random.uniform(-66, 66, 2).astype(np.float32)
@@ -382,15 +382,11 @@ class VexAICompGame(OverrideGame):
         return (UPPER_RIGHT_CUP_POSITION, LOWER_LEFT_CUP_POSITION)
 
     def get_initial_state(self, randomize: bool = False, seed: Optional[int] = None) -> Dict:
-        state = super().get_initial_state(
-            randomize,
-            seed,
-            randomize_field_objects=False,
-        )
+        state = super().get_initial_state(False, seed)
         return configure_vexai_objects(
             state,
             include_blue_preloads=True,
-            randomize_field_objects=self.randomize_field_objects,
+            randomize=randomize,
         )
 
     def is_valid_action(self, agent: str, action: int, observation: np.ndarray) -> bool:

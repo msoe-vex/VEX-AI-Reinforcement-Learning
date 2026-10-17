@@ -420,14 +420,8 @@ class OverrideGame(VexGame):
         self,
         randomize: bool = False,
         seed: Optional[int] = None,
-        randomize_field_objects: Optional[bool] = None,
     ) -> Dict:
         # Create robots, field objects, Toggles, and available Loaders.
-        should_randomize_field_objects = (
-            self.randomize_field_objects
-            if randomize_field_objects is None
-            else randomize_field_objects
-        )
         if seed is not None:
             # Seed NumPy so randomized layouts can be reproduced.
             np.random.seed(seed)
@@ -606,7 +600,7 @@ class OverrideGame(VexGame):
         self.state = {"agents": agents, "objects": objects, "toggles": [None] * NUM_TOGGLES,
                   "loaders": [6] * NUM_TOGGLES, "loader_reserves": loader_reserves,
                   "toggle_holders": [None] * NUM_TOGGLES, "autonomous_winner": None}
-        if should_randomize_field_objects:
+        if randomize:
             for obj in objects:
                 if obj["status"] == ObjectStatus.ON_FIELD:
                     obj["position"] = np.random.uniform(-66, 66, 2).astype(np.float32)
