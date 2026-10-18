@@ -158,6 +158,10 @@ def apply_head_training_status_on_learner(learner, phase):
                 enc_params.update(target_module._encoder_net.core_net.parameters())
             if hasattr(target_module._encoder_net, "fused_net"):
                 enc_params.update(target_module._encoder_net.fused_net.parameters())
+            if hasattr(target_module._encoder_net, "gru"):
+                enc_params.update(target_module._encoder_net.gru.parameters())
+            if hasattr(target_module._encoder_net, "output_net"):
+                enc_params.update(target_module._encoder_net.output_net.parameters())
             # comm_net will be added below in msg_params
             print(f"Set encoder params for {module_id}, Phase: {phase}")
         else:

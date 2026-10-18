@@ -21,6 +21,8 @@ from vex_core.base_env import MESSAGE_SIZE
 # ============================================================================
 
 class FusionEncoder(nn.Module):
+    """Extract and fuse observations, then process them with a GRU."""
+
     def __init__(self, core_dim, comm_dim):
         super().__init__()
         self.core_dim = core_dim
@@ -47,11 +49,22 @@ class FusionEncoder(nn.Module):
             self.comm_net = None
             fused_dim = 256
             
-        # 3. Fused Network
+        # 3. Fused feature projection
         self.fused_net = nn.Sequential(
             nn.Linear(fused_dim, 512),
             nn.ReLU(),
             nn.Dropout(0.1),
+        )
+
+        # 4. Recurrent feature processing. The current RLModule API supplies
+        # one observation at a time, so each observation is a one-step sequence.
+        self.gru = nn.GRU(
+            input_size=512,
+            hidden_size=512,
+            batch_first=True,
+        )
+
+        self.output_net = nn.Sequential(
             nn.Linear(512, 512),
             nn.ReLU(),
             nn.Dropout(0.1)
@@ -71,11 +84,14 @@ class FusionEncoder(nn.Module):
         else:
             fused = self.core_net(x)
             
-        return self.fused_net(fused)
+        fused = self.fused_net(fused)
+        recurrent_input = fused.unsqueeze(1)
+        recurrent_output, _ = self.gru(recurrent_input)
+        return self.output_net(recurrent_output[:, -1, :])
 
 def build_vex_model(core_dim, comm_dim, action_dim, enable_communication=False):
     """
-    Build a simple feedforward neural network for VEX robotics.
+    Build a GRU-based neural network for VEX robotics.
     
     This is a PURE PyTorch model - no RLlib dependencies!
     Modify this function to change your model architecture.
