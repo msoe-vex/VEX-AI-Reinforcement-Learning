@@ -24,6 +24,7 @@ DRIVER_TIME = 105.0
 FOV = 90.0
 DEFAULT_DURATION = 0.5
 DEFAULT_PENALTY = 1.0
+OPPONENT_GOAL_PENALTY = 200.0
 MAX_HELD_PINS = 1
 MAX_HELD_CUPS = 1
 VISIBILITY_POSITION_THRESHOLD = 3.0
@@ -100,6 +101,14 @@ class GoalType(Enum):
     BLUE_2 = "blue_2"
 
 
+GOAL_ALLIANCES = {
+    GoalType.RED_1: "red",
+    GoalType.RED_2: "red",
+    GoalType.BLUE_1: "blue",
+    GoalType.BLUE_2: "blue",
+}
+
+
 VEXAI_GOAL_TYPES = (
     GoalType.SHORT_1,
     GoalType.SHORT_4,
@@ -129,11 +138,9 @@ VEXAI_GOAL_POSITIONS = {
 }
 # VEX AI omits the second short Goal but retains its field location for the Pin stack.
 VEXAI_SECOND_GOAL_POSITION = np.array([-48.0, 24.0], dtype=np.float32)
-GOAL_RADII = {
-    goal: 12.0 if goal in {GoalType.RED_1, GoalType.RED_2, GoalType.BLUE_1, GoalType.BLUE_2} else 6.0
-    for goal in GoalType
-}
+GOAL_RADII = {goal: 6.0 for goal in GoalType}
 GOAL_STRUCTURE_RADIUS = 5.0
+TOGGLE_RADIUS = 4.0
 TOGGLE_POSITIONS = [
     np.array([0.0, FIELD_HALF], dtype=np.float32),
     np.array([FIELD_HALF, 0.0], dtype=np.float32),
@@ -277,7 +284,7 @@ PERMANENT_OBSTACLES = [
     Obstacle(float(position[0]), float(position[1]), GOAL_RADII[goal_type], False)
     for goal_type, position in GOAL_POSITIONS.items()
 ] + [
-    Obstacle(float(p[0]), float(p[1]), 4.0, False) for p in TOGGLE_POSITIONS
+    Obstacle(float(p[0]), float(p[1]), TOGGLE_RADIUS, False) for p in TOGGLE_POSITIONS
 ]
 
 
@@ -845,6 +852,16 @@ class OverrideGame(VexGame):
         # Stop outside the Goal by its radius plus half the robot length.
         return goal_position + approach * (GOAL_RADII[goal] + robot_length / 2.0)
 
+    def _target_next_to_toggle(self, agent: str, index: int) -> Tuple[np.ndarray, float]:
+        # Approach from inside the field with the robot's front facing the Toggle.
+        toggle_position = TOGGLE_POSITIONS[index]
+        inward = -toggle_position / float(np.linalg.norm(toggle_position))
+        robot_length, _ = self.get_robot_dimensions(agent)
+        clearance = TOGGLE_RADIUS + robot_length / 2.0
+        target = toggle_position + inward * clearance
+        facing_angle = vex_atan2(-inward[0], -inward[1])
+        return target.astype(np.float32), float(facing_angle)
+
     def _move(self, agent: str, target: np.ndarray, event: ActionEvent,
               final_orientation: Optional[float] = None) -> List[ActionStep]:
         # Create a turn, movement, and event-completion action plan.
@@ -924,10 +941,15 @@ class OverrideGame(VexGame):
                     cup_count=int(has_cup),
             ):
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
+            penalty = (
+                OPPONENT_GOAL_PENALTY
+                if GOAL_ALLIANCES.get(goal) not in (None, state["team"])
+                else 0.0
+            )
             return self._move(
                 agent, self._target_next_to_goal(agent, goal),
                 ActionEvent("score", {"kind": kind, "goal": goal.value, "paired": paired}),
-            ), 0.0
+            ), penalty
         if selected in (Actions.TAKE_FROM_LOADER_TL, Actions.TAKE_FROM_LOADER_TR,
                         Actions.TAKE_FROM_LOADER_BL, Actions.TAKE_FROM_LOADER_BR):
             # Approach the selected wall Loader, face it, and clear its contents.
@@ -939,23 +961,18 @@ class OverrideGame(VexGame):
             event = ActionEvent("clear_loader", {"loader_index": loader_index})
             return self._move(agent, loader_target, event, loader_orientation), 0.0
         if selected == Actions.TOGGLE_QUADRANT:
-            # Claim the nearest Toggle and approach its edge before changing it.
+            # Approach the nearest Toggle from inside the field before changing it.
             index = int(np.argmin([np.linalg.norm(state["position"] - p) for p in TOGGLE_POSITIONS]))
             holder = self.state["toggle_holders"][index]
             if holder is not None and holder != agent:
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
-            toggle_position = TOGGLE_POSITIONS[index]
-            toggle_half_size = np.array([12.0, 2.0] if toggle_position[0] == 0.0 else [2.0, 12.0])
-            robot_length, _ = self.get_robot_dimensions(agent)
-            toggle_target = self._target_next_to_rectangle(
-                state["position"], robot_length,
-                toggle_position - toggle_half_size, toggle_position + toggle_half_size,
-            )
-            return self._move(agent, toggle_target, ActionEvent("toggle", {"index": index})), 0.0
-        if selected == Actions.TOGGLE_QUADRANT:
-            # Retain the legacy Toggle movement path for compatibility.
-            index = int(np.argmin([np.linalg.norm(state["position"] - p) for p in TOGGLE_POSITIONS]))
-            return self._move(agent, TOGGLE_POSITIONS[index], ActionEvent("toggle", {"index": index})), 0.0
+            toggle_target, toggle_orientation = self._target_next_to_toggle(agent, index)
+            return self._move(
+                agent,
+                toggle_target,
+                ActionEvent("toggle", {"index": index}),
+                toggle_orientation,
+            ), 0.0
         if selected == Actions.PARK_MIDFIELD:
             # Move next to the center Goal to complete the Midfield park.
             return self._move(
@@ -1203,21 +1220,59 @@ class OverrideGame(VexGame):
             # Invalidate cached field visibility after object status changes.
             self._visibility_revision += 1
 
-    def _score_pin_color(self, pin: Dict, goal_value: str) -> Optional[Tuple[str, int]]:
-        """Return the alliance and value of the pin half facing away from its goal."""
-        if not pin.get("face_up", True):
-            # A face-down Pin does not expose a scoring color.
+    def _yellow_pin_award_color(self, goal_value: str) -> Optional[str]:
+        """Return the alliance that receives yellow-pin points in a Goal."""
+        if GoalType(goal_value) == GoalType.TALL:
+            parked_counts = {
+                alliance: sum(
+                    agent.get("team") == alliance
+                    and agent.get("parked_zone") == "midfield"
+                    for agent in self.state["agents"].values()
+                )
+                for alliance in ("red", "blue")
+            }
+            if parked_counts["red"] == parked_counts["blue"]:
+                return None
+            return max(parked_counts, key=parked_counts.get)
+
+        goal_type = GoalType(goal_value)
+        goal_position = self.goal_positions[goal_type]
+        distances = [
+            float(np.linalg.norm(goal_position - toggle_position))
+            for toggle_position in TOGGLE_POSITIONS
+        ]
+        nearest_distance = min(distances)
+        nearest_toggles = [
+            index for index, distance in enumerate(distances)
+            if np.isclose(distance, nearest_distance)
+        ]
+        if len(nearest_toggles) != 1:
             return None
-        color = pin.get("front_color")
+        toggle_color = self.state["toggles"][nearest_toggles[0]]
+        return toggle_color if toggle_color in {"red", "blue"} else None
+
+    def _score_pin_color(
+        self,
+        pin: Dict,
+        goal_value: str,
+        visible_top_half: bool = True,
+    ) -> Optional[Tuple[str, int]]:
+        """Return the alliance and value of the exposed half of a Pin."""
+        face_up = bool(pin.get("face_up", True))
+        color = (
+            pin.get("front_color")
+            if face_up == visible_top_half
+            else pin.get("back_color")
+        )
         if color not in {"red", "blue", "yellow"}:
             return None
         if color == "yellow":
-            # Yellow halves score for the color of the Goal they occupy.
-            goal_color = goal_value.split("_", 1)[0]
-            if goal_color not in {"red", "blue"}:
+            # Center Goal Pins use the midfield parking majority; other yellow
+            # Pins use the alliance controlling the Goal's quadrant.
+            award_color = self._yellow_pin_award_color(goal_value)
+            if award_color is None:
                 return None
-            return goal_color, 10
-        # A red or blue half scores directly for its alliance.
+            return award_color, 10
         return color, 5
 
     def _score_goal_pins(self) -> Dict[str, int]:
@@ -1240,17 +1295,22 @@ class OverrideGame(VexGame):
             for index, obj in enumerate(stack):
                 if obj["kind"] != "pin":
                     continue
-                # The goal hides the lower half of the first pin. A black cup
-                # underside hides the upper half of the pin immediately below it.
-                if index == 0 and not obj.get("face_up", True):
-                    # The Goal itself hides the lower half of its first Pin.
+                # The Goal hides the bottom half of the first Pin; a face-up Cup
+                # hides the top half of the Pin immediately beneath it.
+                bottom_covered = index == 0
+                top_covered = (
+                    index + 1 < len(stack)
+                    and stack[index + 1]["kind"] == "cup"
+                    and stack[index + 1].get("face_up", True)
+                )
+                if bottom_covered and top_covered:
+                    # Both halves are blocked, so this Pin has no exposed scoring face.
                     continue
-                if index + 1 < len(stack):
-                    cover = stack[index + 1]
-                    if cover["kind"] == "cup" and cover.get("face_up", True):
-                        # A face-up Cup hides the Pin half immediately below it.
-                        continue
-                scored = self._score_pin_color(obj, goal_value)
+                scored = self._score_pin_color(
+                    obj,
+                    goal_value,
+                    visible_top_half=not top_covered,
+                )
                 if scored is not None:
                     alliance, value = scored
                     scores[alliance] += value
@@ -1316,7 +1376,7 @@ class OverrideGame(VexGame):
             )
             for goal_type in self.goal_types
         ] + [
-            Obstacle(float(p[0]), float(p[1]), 4.0, False) for p in TOGGLE_POSITIONS
+            Obstacle(float(p[0]), float(p[1]), TOGGLE_RADIUS, False) for p in TOGGLE_POSITIONS
         ]
 
     def render_field_markings(self, ax: Any) -> None:
