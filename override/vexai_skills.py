@@ -60,8 +60,12 @@ class VexAISkillsGame(OverrideGame):
         return (UPPER_RIGHT_CUP_POSITION, LOWER_LEFT_CUP_POSITION)
 
     def get_initial_state(self, randomize: bool = False, seed: Optional[int] = None) -> Dict:
-        state = super().get_initial_state(randomize, seed)
-        return configure_vexai_objects(state, include_blue_preloads=False)
+        state = super().get_initial_state(False, seed)
+        return configure_vexai_objects(
+            state,
+            include_blue_preloads=False,
+            randomize=randomize,
+        )
 
     def get_team_for_agent(self, _agent: str) -> str:
         return "red"

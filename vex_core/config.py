@@ -146,7 +146,6 @@ class VexEnvConfig:
             defaults["temperature"] = args.temperature
         if hasattr(args, "copy_message_dropout_prob") and args.copy_message_dropout_prob is not None:
             defaults["copy_message_dropout_prob"] = args.copy_message_dropout_prob
-
         # Read metadata overrides from the experiment directory (if present)
         metadata_overrides = cls.read_from_metadata(experiment_path, {})
 
