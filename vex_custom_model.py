@@ -56,8 +56,8 @@ class FusionEncoder(nn.Module):
             nn.Dropout(0.1),
         )
 
-        # 4. Recurrent feature processing. The current RLModule API supplies
-        # one observation at a time, so each observation is a one-step sequence.
+        # 4. Recurrent feature processing. Accept both single observations and
+        # rollout sequences so RLlib can preserve the time dimension.
         self.gru = nn.GRU(
             input_size=512,
             hidden_size=512,
@@ -73,21 +73,31 @@ class FusionEncoder(nn.Module):
         self.output_dim = 512
 
     def forward(self, x):
+        if x.dim() not in (2, 3):
+            raise ValueError(
+                f"FusionEncoder expects [batch, features] or "
+                f"[batch, time, features], got shape {tuple(x.shape)}"
+            )
+
+        is_sequence = x.dim() == 3
+        if not is_sequence:
+            x = x.unsqueeze(1)
+
         if self.comm_net is not None:
-            core_obs = x[:, :self.core_dim]
-            comm_obs = x[:, self.core_dim:]
+            core_obs = x[..., :self.core_dim]
+            comm_obs = x[..., self.core_dim:]
             
             core_feat = self.core_net(core_obs)
             comm_feat = self.comm_net(comm_obs)
             
-            fused = torch.cat([core_feat, comm_feat], dim=1)
+            fused = torch.cat([core_feat, comm_feat], dim=-1)
         else:
             fused = self.core_net(x)
             
         fused = self.fused_net(fused)
-        recurrent_input = fused.unsqueeze(1)
-        recurrent_output, _ = self.gru(recurrent_input)
-        return self.output_net(recurrent_output[:, -1, :])
+        recurrent_output, _ = self.gru(fused)
+        output = self.output_net(recurrent_output)
+        return output if is_sequence else output[:, 0, :]
 
 def build_vex_model(core_dim, comm_dim, action_dim, enable_communication=False):
     """
@@ -273,11 +283,10 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
             msg_mean = msg_mean * gate               # (B, MESSAGE_SIZE) * (B, 1) → broadcast
             
             # Concat outputs for Tuple Distribution: [DiscreteLogits, BoxMean, BoxLogStd]
-            batch_size = features.shape[0]
             gated_log_std = self.msg_log_std + torch.log(gate + 1e-8)
-            msg_log_std_exp = gated_log_std.expand(batch_size, -1)
+            msg_log_std_exp = gated_log_std.expand(*features.shape[:-1], -1)
             
-            dist_inputs = torch.cat([intention_logits, msg_mean, msg_log_std_exp], dim=1)
+            dist_inputs = torch.cat([intention_logits, msg_mean, msg_log_std_exp], dim=-1)
             
             output["attention_logits"] = attention_logits
             output["comm_gate"] = gate
@@ -319,11 +328,10 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
             msg_mean = msg_mean * gate               # (B, MESSAGE_SIZE) * (B, 1) → broadcast
             
             # Concat outputs for Tuple Distribution: [DiscreteLogits, BoxMean, BoxLogStd]
-            batch_size = features.shape[0]
             gated_log_std = self.msg_log_std + torch.log(gate + 1e-8)
-            msg_log_std_exp = gated_log_std.expand(batch_size, -1)
+            msg_log_std_exp = gated_log_std.expand(*features.shape[:-1], -1)
             
-            dist_inputs = torch.cat([intention_logits, msg_mean, msg_log_std_exp], dim=1)
+            dist_inputs = torch.cat([intention_logits, msg_mean, msg_log_std_exp], dim=-1)
             
             output["attention_logits"] = attention_logits
             output["comm_gate"] = gate
