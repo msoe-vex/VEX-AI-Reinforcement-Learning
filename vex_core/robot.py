@@ -29,7 +29,7 @@ class Robot:
     buffer: Optional[float] = 1.0
     # Camera rotation is interpreted as an offset (degrees) relative to the robot body orientation.
     # Positive values rotate the camera clockwise relative to the robot heading.
-    camera_rotation: Optional[float] = -90.0
+    camera_rotation: Optional[float] = 0.0
     
     def __post_init__(self):
         # Default dimensions based on size
