@@ -129,10 +129,7 @@ VEXAI_GOAL_POSITIONS = {
 }
 # VEX AI omits the second short Goal but retains its field location for the Pin stack.
 VEXAI_SECOND_GOAL_POSITION = np.array([-48.0, 24.0], dtype=np.float32)
-GOAL_RADII = {
-    goal: 12.0 if goal in {GoalType.RED_1, GoalType.RED_2, GoalType.BLUE_1, GoalType.BLUE_2} else 6.0
-    for goal in GoalType
-}
+GOAL_RADII = {goal: 6.0 for goal in GoalType}
 GOAL_STRUCTURE_RADIUS = 5.0
 TOGGLE_POSITIONS = [
     np.array([0.0, FIELD_HALF], dtype=np.float32),
@@ -416,7 +413,11 @@ class OverrideGame(VexGame):
                 "team": team, "face_up": face_up, "status": ObjectStatus.ON_FIELD,
             "held_by": None, "goal": None, "goal_stack_index": None}
 
-    def get_initial_state(self, randomize: bool = False, seed: Optional[int] = None) -> Dict:
+    def get_initial_state(
+        self,
+        randomize: bool = False,
+        seed: Optional[int] = None,
+    ) -> Dict:
         # Create robots, field objects, Toggles, and available Loaders.
         if seed is not None:
             # Seed NumPy so randomized layouts can be reproduced.
@@ -446,8 +447,6 @@ class OverrideGame(VexGame):
             # Build each Pin with its position, front/back colors, and orientation.
             position = PIN_START_POSITIONS[index].copy()
             source_position = tuple(float(value) for value in position)
-            if randomize:
-                position = np.random.uniform(-66, 66, 2).astype(np.float32)
             primary_color, secondary_color = PIN_COLOR_PAIRS[index]
             # Stacked Pins start face-up so their visible color matches the stack.
             yellow_stack_count = len(YELLOW_STACK_PIN_POSITIONS) + len(TOGGLE_STACK_PIN_POSITIONS)
@@ -472,8 +471,6 @@ class OverrideGame(VexGame):
             # Build Cups and mark the predefined stacks as face-up.
             position = CUP_START_POSITIONS[index].copy()
             source_position = tuple(float(value) for value in position)
-            if randomize:
-                position = np.random.uniform(-66, 66, 2).astype(np.float32)
             stack_cup = 4 <= index < 36
             cup = self._object("cup", position, face_up=True if stack_cup else (index % 2 == 0))
             cup["source_position"] = source_position
@@ -600,6 +597,10 @@ class OverrideGame(VexGame):
         self.state = {"agents": agents, "objects": objects, "toggles": [None] * NUM_TOGGLES,
                   "loaders": [6] * NUM_TOGGLES, "loader_reserves": loader_reserves,
                   "toggle_holders": [None] * NUM_TOGGLES, "autonomous_winner": None}
+        if randomize:
+            for obj in objects:
+                if obj["status"] == ObjectStatus.ON_FIELD:
+                    obj["position"] = np.random.uniform(-66, 66, 2).astype(np.float32)
         # Force the first observation of this layout to perform a fresh scan.
         self._visibility_revision += 1
         return self.state

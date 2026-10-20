@@ -339,6 +339,14 @@ class VexScoreCallback(RLlibCallback):
         env_runner_results = result.get("env_runners", {})
         episode_return = env_runner_results.get("episode_return_mean")
         iteration = result.get("training_iteration", 0)
+        env_config = algorithm.config.env_config
+        randomize = (
+            env_config.get("randomize", True)
+            and iteration < env_config.get("randomize_until_iteration", 0)
+        )
+        algorithm.env_runner_group.foreach_env_runner(
+            lambda env_runner: set_env_runner_randomization(env_runner, randomize)
+        )
         
         red_mean = env_runner_results.get("red_team_score_mean")
         blue_mean = env_runner_results.get("blue_team_score_mean")
@@ -363,6 +371,14 @@ class VexScoreCallback(RLlibCallback):
             pass
             
         sys.stdout.flush()
+
+
+def set_env_runner_randomization(env_runner, randomize):
+    """Update randomization on environments owned by a new-API EnvRunner."""
+    if env_runner.env is None:
+        return
+    for env in env_runner.env.envs:
+        env.unwrapped.randomize = randomize
 
 
 def env_creator(config=None):
@@ -591,6 +607,8 @@ if __name__ == "__main__":
         num_iters = sum(phase["iterations"] for phase in ACTIVE_TRAINING_PHASES)
         print(f"Total training iterations: {num_iters} (from ACTIVE_TRAINING_PHASES)")
 
+    randomize_until_iteration = (num_iters + 2) // 3
+
     print("Using custom callback for LR and entropy scheduling based on iterations.")
 
     # RLlib new API: schedules must be provided directly via `lr` and
@@ -609,6 +627,7 @@ if __name__ == "__main__":
             env="VEX_Multi_Agent_Env",
             env_config={
                 "randomize": env_config_obj.randomize,
+                "randomize_until_iteration": randomize_until_iteration,
                 "game": env_config_obj.game_name,
                 "communication_mode": env_config_obj.communication_mode.value,
                 "deterministic": env_config_obj.deterministic,
@@ -679,6 +698,7 @@ if __name__ == "__main__":
         "base_training_phases": TRAINING_PHASES,
         "discount_factor": args.discount_factor,
         "randomize": env_config_obj.randomize,
+        "randomize_until_iteration": randomize_until_iteration,
         "num_iters": num_iters,
         "source_experiment_directory": restore_experiment_directory,
         "restored_checkpoint_path": restore_path,
