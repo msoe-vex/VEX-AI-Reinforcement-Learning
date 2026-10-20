@@ -129,10 +129,7 @@ VEXAI_GOAL_POSITIONS = {
 }
 # VEX AI omits the second short Goal but retains its field location for the Pin stack.
 VEXAI_SECOND_GOAL_POSITION = np.array([-48.0, 24.0], dtype=np.float32)
-GOAL_RADII = {
-    goal: 12.0 if goal in {GoalType.RED_1, GoalType.RED_2, GoalType.BLUE_1, GoalType.BLUE_2} else 6.0
-    for goal in GoalType
-}
+GOAL_RADII = {goal: 6.0 for goal in GoalType}
 GOAL_STRUCTURE_RADIUS = 5.0
 TOGGLE_POSITIONS = [
     np.array([0.0, FIELD_HALF], dtype=np.float32),
