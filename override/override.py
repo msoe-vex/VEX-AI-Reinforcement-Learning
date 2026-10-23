@@ -153,6 +153,7 @@ LOADER_POSITIONS = [
     np.array([-FIELD_HALF, -60.0], dtype=np.float32),
     np.array([FIELD_HALF, -60.0], dtype=np.float32),
 ]
+LOADER_TEAMS = ("red", "blue", "red", "blue")
 HORIZONTAL_PIN_POSITIONS = [
     (-36.0, 24.0), (0.0, 48.0),
     (36.0, -24.0), (48.0, -48.0),
@@ -542,7 +543,7 @@ class OverrideGame(VexGame):
             # Remove unused setup Pins without invalidating earlier indices.
             objects.pop(object_index)
 
-        loader_teams = ("red", "blue", "red", "blue")
+        loader_teams = LOADER_TEAMS
         loader_pin_candidates = {
             # Loaders receive Pins matching the alliance on their field side.
             team: [

@@ -4,18 +4,22 @@ The field geometry and game elements are inherited from :mod:`override`.
 The explicit name keeps this variant separate from Pushback's VEX AI game.
 """
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from vex_core.base_game import ActionStep
 from vex_core.config import CommunicationOption
 from vex_core.robot import Robot, RobotSize, Team
 
 from .override import (
     Actions,
+    DEFAULT_PENALTY,
+    GOAL_ALLIANCES,
     GoalType,
     ObjectStatus,
     OverrideGame,
+    LOADER_TEAMS,
     VEXAI_GOAL_POSITIONS,
     VEXAI_GOAL_TYPES,
     MIRRORED_PIN_POSITIONS,
@@ -196,9 +200,7 @@ def configure_vexai_objects(
             ]
             selected.append(obj)
 
-    loader_plan = (
-        (0, "red"), (1, "blue"), (2, "red"), (3, "blue"),
-    )
+    loader_plan = tuple(enumerate(LOADER_TEAMS))
     loader_pins = {
         "red": take_pin("red", "yellow", 10),
         "blue": take_pin("blue", "yellow", 10),
@@ -393,9 +395,57 @@ class VexAICompGame(OverrideGame):
         """Only 24-inch robots may park in their alliance load zone."""
         if not super().is_valid_action(agent, action, observation):
             return False
+        selected = self._decode_action(action)
+        if (
+            not self._loader_action_is_allowed(agent, selected)
+            or not self._goal_action_is_allowed(agent, selected)
+        ):
+            return False
         if self._decode_action(action) != Actions.PARK_MIDFIELD:
             return True
         return self.state["agents"][agent].get("robot_size") == RobotSize.INCH_24.value
+
+    def _loader_action_is_allowed(self, agent: str, selected: Optional[Actions]) -> bool:
+        if selected is None or selected not in (
+            Actions.TAKE_FROM_LOADER_TL,
+            Actions.TAKE_FROM_LOADER_TR,
+            Actions.TAKE_FROM_LOADER_BL,
+            Actions.TAKE_FROM_LOADER_BR,
+        ):
+            return True
+        loader_index = selected.value - Actions.TAKE_FROM_LOADER_TL.value
+        return LOADER_TEAMS[loader_index] == self.state["agents"][agent]["team"]
+
+    def _goal_action_is_allowed(self, agent: str, selected: Optional[Actions]) -> bool:
+        if selected is None or not (
+            Actions.SCORE_GOAL_1.value <= selected.value <= Actions.SCORE_GOAL_9.value
+        ):
+            return True
+        goal_index = selected.value - Actions.SCORE_GOAL_1.value
+        goal_alliance = GOAL_ALLIANCES.get(self.goal_types[goal_index])
+        return goal_alliance is None or goal_alliance == self.state["agents"][agent]["team"]
+
+    def execute_action(self, agent: str, action: int) -> Tuple[List[ActionStep], float]:
+        selected = self._decode_action(action)
+        if (
+            not self._loader_action_is_allowed(agent, selected)
+            or not self._goal_action_is_allowed(agent, selected)
+        ):
+            state = self.state["agents"][agent]
+            return [
+                ActionStep(
+                    0.1,
+                    state["position"].copy(),
+                    state["orientation"].copy(),
+                )
+            ], DEFAULT_PENALTY
+        return super().execute_action(agent, action)
+
+    def split_action(self, action: int, observation: np.ndarray, robot: Robot) -> List[str]:
+        selected = self._decode_action(action)
+        if not self._loader_action_is_allowed(robot.name, selected):
+            return ["WAIT;0.5"]
+        return super().split_action(action, observation, robot)
 
     def compute_score(self) -> Dict[str, int]:
         """Apply the AI parking restriction while retaining Override scoring."""
