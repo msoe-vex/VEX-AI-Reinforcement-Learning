@@ -44,7 +44,10 @@ class Actions(Enum):
     SCORE_GOAL_7 = 8
     SCORE_GOAL_8 = 9
     SCORE_GOAL_9 = 10
-    TOGGLE_QUADRANT = 11
+    FLIP_TOGGLE_1 = 21
+    FLIP_TOGGLE_2 = 22
+    FLIP_TOGGLE_3 = 23
+    FLIP_TOGGLE_4 = 24
     PARK_MIDFIELD = 12
     TURN_TOWARD_CENTER = 13
     TAKE_FROM_LOADER_TL = 14
@@ -381,7 +384,10 @@ class OverrideGame(VexGame):
             Actions.PICKUP_CUP.value,
             *(Actions.SCORE_GOAL_1.value + index for index, _ in enumerate(self.goal_types)),
             *(action.value for action in (
-                Actions.TOGGLE_QUADRANT,
+                Actions.FLIP_TOGGLE_1,
+                Actions.FLIP_TOGGLE_2,
+                Actions.FLIP_TOGGLE_3,
+                Actions.FLIP_TOGGLE_4,
                 Actions.PARK_MIDFIELD,
                 Actions.TURN_TOWARD_CENTER,
                 Actions.TAKE_FROM_LOADER_TL,
@@ -964,9 +970,9 @@ class OverrideGame(VexGame):
             loader_target, loader_orientation = self._loader_wall_pose(agent, loader_index)
             event = ActionEvent("clear_loader", {"loader_index": loader_index})
             return self._move(agent, loader_target, event, loader_orientation), 0.0
-        if selected == Actions.TOGGLE_QUADRANT:
-            # Approach the nearest Toggle from inside the field before changing it.
-            index = int(np.argmin([np.linalg.norm(state["position"] - p) for p in TOGGLE_POSITIONS]))
+        if Actions.FLIP_TOGGLE_1.value <= selected.value <= Actions.FLIP_TOGGLE_4.value:
+            # Approach the selected Toggle from inside the field before changing it.
+            index = selected.value - Actions.FLIP_TOGGLE_1.value
             holder = self.state["toggle_holders"][index]
             if holder is not None and holder != agent:
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
@@ -1004,25 +1010,14 @@ class OverrideGame(VexGame):
         elif selected == Actions.PARK_MIDFIELD:
             # Mark the robot as parked for observations and scoring.
             state["parked"] = True
-        elif selected == Actions.TOGGLE_QUADRANT:
-            # Record the alliance color inferred for the nearest Toggle.
-            toggle_index = int(np.argmin([
-                np.linalg.norm(state["position"] - position)
-                for position in TOGGLE_POSITIONS
-            ]))
+        elif Actions.FLIP_TOGGLE_1.value <= selected.value <= Actions.FLIP_TOGGLE_4.value:
+            # Record the alliance color inferred for the selected Toggle.
+            toggle_index = selected.value - Actions.FLIP_TOGGLE_1.value
             if self.state["toggle_holders"][toggle_index] not in (None, agent):
                 return
             toggle_colors = list(state.get("inferred_toggle_colors", [None] * NUM_TOGGLES))
             toggle_colors[toggle_index] = state["team"]
             state["inferred_toggle_colors"] = toggle_colors
-        elif selected == Actions.TOGGLE_QUADRANT:
-            # Record which robot currently holds the Toggle claim.
-            toggle_index = int(np.argmin([
-                np.linalg.norm(state["position"] - position)
-                for position in TOGGLE_POSITIONS
-            ]))
-            state["held_toggle_index"] = toggle_index
-            self.state["toggle_holders"][toggle_index] = agent
 
     def update_observation_from_tracker(self, agent: str, observation: np.ndarray) -> np.ndarray:
         # Overlay inferred state onto an externally supplied observation.
