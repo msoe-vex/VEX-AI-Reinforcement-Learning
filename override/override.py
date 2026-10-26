@@ -904,6 +904,10 @@ class OverrideGame(VexGame):
         if selected is None:
             # Invalid actions become a short no-op and receive the default penalty.
             return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
+        if selected not in (Actions.IDLE, Actions.PARK_MIDFIELD):
+            # Leaving the park zone removes the robot's parking status and bonus.
+            state["parked"] = False
+            state["parked_zone"] = None
         if selected == Actions.IDLE:
             # Idling is free only after the robot has parked.
             return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], 0.0 if state["parked"] else DEFAULT_PENALTY
@@ -966,7 +970,10 @@ class OverrideGame(VexGame):
             # Approach the selected wall Loader, face it, and clear its contents.
             loader_index = selected.value - Actions.TAKE_FROM_LOADER_TL.value
             loader_count = self.state["loaders"][loader_index]
-            if loader_count <= 0 or state["held_cups"] >= MAX_HELD_CUPS:
+            if loader_count <= 0 or (
+                    state["held_pins"] >= MAX_HELD_PINS
+                    and state["held_cups"] >= MAX_HELD_CUPS
+            ):
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
             loader_target, loader_orientation = self._loader_wall_pose(agent, loader_index)
             event = ActionEvent("clear_loader", {"loader_index": loader_index})
@@ -998,6 +1005,10 @@ class OverrideGame(VexGame):
         if selected is None:
             # Do not update tracker state for an undecodable action.
             return
+        if selected not in (Actions.IDLE, Actions.PARK_MIDFIELD):
+            # Keep inferred parking state synchronized when the robot leaves the zone.
+            state["parked"] = False
+            state["parked_zone"] = None
         if selected == Actions.PICKUP_PIN and state["held_pins"] < MAX_HELD_PINS:
             # Reflect a successful Pin pickup in the inferred inventory.
             state["held_pins"] += 1
@@ -1011,6 +1022,14 @@ class OverrideGame(VexGame):
         elif selected == Actions.PARK_MIDFIELD:
             # Mark the robot as parked for observations and scoring.
             state["parked"] = True
+        elif selected in (Actions.TAKE_FROM_LOADER_TL, Actions.TAKE_FROM_LOADER_TR,
+                          Actions.TAKE_FROM_LOADER_BL, Actions.TAKE_FROM_LOADER_BR):
+            # Reflect the Pin/Cup stack supplied by a Loader when possible.
+            loader_index = selected.value - Actions.TAKE_FROM_LOADER_TL.value
+            if self.state["loaders"][loader_index] > 0 and state["held_pins"] < MAX_HELD_PINS:
+                state["held_pins"] += 1
+            if self.state["loaders"][loader_index] > 0 and state["held_cups"] < MAX_HELD_CUPS:
+                state["held_cups"] += 1
         elif Actions.FLIP_TOGGLE_1.value <= selected.value <= Actions.FLIP_TOGGLE_4.value:
             # Record the alliance color inferred for the selected Toggle.
             toggle_index = selected.value - Actions.FLIP_TOGGLE_1.value
@@ -1201,11 +1220,49 @@ class OverrideGame(VexGame):
                 self.state["toggle_holders"][toggle_index] = agent
                 state["held_toggle_index"] = toggle_index
             elif event.type == "clear_loader":
-                # Clear one Loader and restore any reserved refill count.
+                # Transfer one Pin/Cup stack from the Loader whenever capacity allows.
                 loader_index = int(event.data["loader_index"])
                 if self.state["loaders"][loader_index] > 0:
-                    state["held_cups"] = min(
-                        MAX_HELD_CUPS, state["held_cups"] + 1
+                    loader_objects = sorted(
+                        (
+                            (index, obj) for index, obj in enumerate(self.state["objects"])
+                            if obj["status"] == ObjectStatus.LOADER
+                            and obj.get("loader_index") == loader_index
+                        ),
+                        key=lambda item: item[1].get("loader_stack", 0),
+                    )
+                    for kind, capacity in (
+                        ("pin", MAX_HELD_PINS),
+                        ("cup", MAX_HELD_CUPS),
+                    ):
+                        if state[f"held_{kind}s"] >= capacity:
+                            continue
+                        matching = next(
+                            (
+                                (index, obj) for index, obj in loader_objects
+                                if obj["kind"] == kind
+                            ),
+                            None,
+                        )
+                        if matching is None:
+                            continue
+                        object_index, obj = matching
+                        obj.update(status=ObjectStatus.HELD, held_by=agent)
+                        state[f"held_{kind}s"] += 1
+                        if kind == "pin":
+                            ordered_colors = [obj.get("front_color"), obj.get("back_color")]
+                            if not bool(obj.get("face_up", True)):
+                                ordered_colors.reverse()
+                            state["held_pin_order"] = ordered_colors
+                        else:
+                            state["held_cup_face_up"] = bool(obj.get("face_up", False))
+                    held_indices = [
+                        index for index, held_obj in enumerate(self.state["objects"])
+                        if held_obj["status"] == ObjectStatus.HELD and held_obj["held_by"] == agent
+                    ]
+                    state["held_stack"] = sorted(
+                        held_indices,
+                        key=lambda index: 0 if self.state["objects"][index]["kind"] == "cup" else 1,
                     )
                     self.state["loaders"][loader_index] = 0
                     reserve_count = self.state.get("loader_reserves", [0] * NUM_TOGGLES)[loader_index]
@@ -1226,6 +1283,7 @@ class OverrideGame(VexGame):
             parked_counts = {
                 alliance: sum(
                     agent.get("team") == alliance
+                    and agent.get("parked", False)
                     and agent.get("parked_zone") == "midfield"
                     for agent in self.state["agents"].values()
                 )
@@ -1325,7 +1383,7 @@ class OverrideGame(VexGame):
             scores[alliance] += value
         for agent in self.state["agents"].values():
             # Award the Midfield parking bonus to each parked robot's alliance.
-            if agent.get("parked_zone") == "midfield":
+            if agent.get("parked", False) and agent.get("parked_zone") == "midfield":
                 scores[agent["team"]] += 8
         if self.state.get("autonomous_winner") in scores:
             # Apply the autonomous bonus to the recorded winning alliance.
