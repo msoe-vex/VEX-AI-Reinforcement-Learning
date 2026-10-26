@@ -1283,7 +1283,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                                     msg_str = f" | msg={msg_fmt}"
                         else:
                             action_val = action
-                        action_name = self.game.get_action_name(int(action_val))
+                        action_name = self.game.action_to_name(int(action_val))
                         print(f"  {agent}: STARTED {action_name}{msg_str}")
                 
                 if has_completed:
