@@ -406,22 +406,23 @@ class VexAICompGame(OverrideGame):
         return self.state["agents"][agent].get("robot_size") == RobotSize.INCH_24.value
 
     def _loader_action_is_allowed(self, agent: str, selected: Optional[Actions]) -> bool:
-        if selected is None or selected not in (
-            Actions.TAKE_FROM_LOADER_TL,
-            Actions.TAKE_FROM_LOADER_TR,
-            Actions.TAKE_FROM_LOADER_BL,
-            Actions.TAKE_FROM_LOADER_BR,
-        ):
+        descriptor = next(
+            (item for item in self._action_descriptors if item.action == selected),
+            None,
+        )
+        if descriptor is None or descriptor.kind != "take_loader":
             return True
-        loader_index = selected.value - Actions.TAKE_FROM_LOADER_TL.value
+        loader_index = descriptor.target
         return LOADER_TEAMS[loader_index] == self.state["agents"][agent]["team"]
 
     def _goal_action_is_allowed(self, agent: str, selected: Optional[Actions]) -> bool:
-        if selected is None or not (
-            Actions.SCORE_GOAL_1.value <= selected.value <= Actions.SCORE_GOAL_9.value
-        ):
+        descriptor = next(
+            (item for item in self._action_descriptors if item.action == selected),
+            None,
+        )
+        if descriptor is None or descriptor.kind != "score_goal":
             return True
-        goal_index = selected.value - Actions.SCORE_GOAL_1.value
+        goal_index = descriptor.target
         goal_alliance = GOAL_ALLIANCES.get(self.goal_types[goal_index])
         return goal_alliance is None or goal_alliance == self.state["agents"][agent]["team"]
 
