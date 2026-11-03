@@ -43,6 +43,40 @@ def vex_atan2(delta_x: float, delta_y: float) -> float:
     rad = math.atan2(delta_x, delta_y)
     return vex_normalize_angle(math.degrees(rad))
 
+def relative_polar(
+    position,
+    origin,
+    reference_heading: float,
+) -> tuple[float, float, float]:
+    """Encode a world position as distance and heading-relative sine/cosine."""
+    delta_x = float(position[0]) - float(origin[0])
+    delta_y = float(position[1]) - float(origin[1])
+    distance = math.hypot(delta_x, delta_y)
+    if distance == 0.0:
+        return 0.0, 0.0, 1.0
+
+    relative_angle = math.radians(
+        vex_shortest_angular_distance(
+            reference_heading,
+            vex_atan2(delta_x, delta_y),
+        )
+    )
+    return distance, math.sin(relative_angle), math.cos(relative_angle)
+
+def relative_polar_to_position(
+    polar: tuple[float, float, float],
+    origin,
+    reference_heading: float,
+) -> tuple[float, float]:
+    """Convert distance and heading-relative sine/cosine to a world position."""
+    distance, sin_theta, cos_theta = polar
+    theta = math.degrees(math.atan2(sin_theta, cos_theta))
+    bearing = math.radians(reference_heading + theta)
+    return (
+        float(origin[0]) + distance * math.sin(bearing),
+        float(origin[1]) + distance * math.cos(bearing),
+    )
+
 def vex_shortest_angular_distance(current_deg: float, target_deg: float) -> float:
     """
     Computes the shortest rotation from current_deg to target_deg in VEX degrees.

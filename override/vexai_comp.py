@@ -179,6 +179,7 @@ def configure_vexai_objects(
             status=ObjectStatus.SCORED,
             goal=goal.value,
             goal_stack_index=0,
+            position=VEXAI_GOAL_POSITIONS[goal].copy(),
         )
         selected.append(obj)
 
@@ -406,24 +407,18 @@ class VexAICompGame(OverrideGame):
         return self.state["agents"][agent].get("robot_size") == RobotSize.INCH_24.value
 
     def _loader_action_is_allowed(self, agent: str, selected: Optional[Actions]) -> bool:
-        descriptor = next(
-            (item for item in self._action_descriptors if item.action == selected),
-            None,
-        )
-        if descriptor is None or descriptor.kind != "take_loader":
+        if selected is None or selected not in self.loader_action_map:
             return True
-        loader_index = descriptor.target
+        loader_index = self._loader_index_for_action(agent, selected)
+        if loader_index is None:
+            return False
         return LOADER_TEAMS[loader_index] == self.state["agents"][agent]["team"]
 
     def _goal_action_is_allowed(self, agent: str, selected: Optional[Actions]) -> bool:
-        descriptor = next(
-            (item for item in self._action_descriptors if item.action == selected),
-            None,
-        )
-        if descriptor is None or descriptor.kind != "score_goal":
+        goal = self._goal_for_action(selected)
+        if goal is None:
             return True
-        goal_index = descriptor.target
-        goal_alliance = GOAL_ALLIANCES.get(self.goal_types[goal_index])
+        goal_alliance = GOAL_ALLIANCES.get(goal)
         return goal_alliance is None or goal_alliance == self.state["agents"][agent]["team"]
 
     def execute_action(self, agent: str, action: int) -> Tuple[List[ActionStep], float]:

@@ -105,6 +105,27 @@ If you are using a local Windows shell instead of WSL or ROSIE, use the activati
 - **Explicit Field Setup**: Accurate block coordinates, loader sequences, and robot starting positions derived from official setup notes.
 - **Advanced Randomization**: Full-field block scatter (-70" to +70") for robust training.
 - **Standardized Scoring**: Unified `Dict[str, int]` scoring interface for all modes.
+- **Robot-relative observations**: Policy observations omit absolute robot/object
+  x/y coordinates. Visible field objects and other robots are encoded as distance
+  plus heading-relative sine/cosine; absolute robot positions remain internal for
+  simulation and action planning. Override observations include the ten closest
+  visible Pins and Cups, plus a visibility flag for every Pin and Cup; coordinates
+  outside those nearest-ten sets are hidden. Goal features include relative
+  coordinates, Pin counts by exposed alliance/neutral color, and a one-hot
+  description of the top object (empty, black/clear Cup, or friendly/opponent/
+  neutral Pin), inferred from objects within one inch of each active Goal.
+  Toggle, visible Pin, held Pin, and Loader alliance indicators are encoded
+  relative to the robot: friendly `+1`, neutral `0`, opponent `-1`. Loader
+  availability remains a separate binary feature. Opponent robot positions are
+  not part of the observations, and the Pin/Cup orientation actions are not
+  available in the action space. Goal-scoring actions are included only for
+  Goals active in each game variant and are mapped explicitly rather than
+  inferred from enum-value ranges. Loader actions offer two alliance-relative
+  choices, each targeting one of the acting robot's friendly Loaders.
+  This observation-layout change requires models to be retrained; existing
+  checkpoints are not compatible. In hardware inference, pass the robot's
+  current world position separately as `robot_position` to
+  `VexModelRunner.get_inference`; it is used for control, not given to the policy.
 
 ## General Workflow (ROSIE)
 
