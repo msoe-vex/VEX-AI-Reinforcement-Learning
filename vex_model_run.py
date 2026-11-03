@@ -5,7 +5,7 @@ import numpy as np
 from vex_core.base_game import VexGame
 from vex_core.config import CommunicationOption
 from vex_core.base_env import MESSAGE_SIZE
-from typing import Dict
+from typing import Optional
 
 class VexModelRunner:
     def __init__(self, model_path: str, game: VexGame, temperature: float = 1.0, agent_name: str = None, model: torch.jit.ScriptModule = None):
@@ -246,12 +246,27 @@ class VexModelRunner:
 
         return int(action), message_vector
 
-    def get_inference(self, observation: np.ndarray):
+    def get_inference(
+        self,
+        observation: np.ndarray,
+        robot_position: Optional[np.ndarray] = None,
+    ):
         """Get action for the robot based on current observation.
+
+        Args:
+            observation: Robot-relative policy observation with no absolute x/y.
+            robot_position: Optional absolute world position used internally for
+                action planning. It is not included in the policy observation.
         
         Returns:
             Tuple of (high_level_action: int, split_actions: List[str], message_vector: np.ndarray or None)
         """
+        if robot_position is not None:
+            position = np.asarray(robot_position, dtype=np.float32)
+            if position.shape != (2,) or not np.isfinite(position).all():
+                raise ValueError("robot_position must contain two finite world coordinates")
+            self.game.state["agents"][self.agent_name]["position"] = position.copy()
+            self.game.update_robot_position(self.agent_name, position)
 
         observation = self.game.update_observation_from_tracker(
             agent=self.agent_name,

@@ -10,13 +10,28 @@ from vex_core.base_game import ActionEvent, ActionStep, VexGame
 from vex_core.config import CommunicationOption
 from vex_core.path_planner import Obstacle, PathPlanner
 from vex_core.robot import Robot, RobotSize, Team
-from vex_core.utils import vex_atan2, vex_normalize_angle, vex_shortest_angular_distance
+from vex_core.utils import (
+    relative_polar,
+    vex_atan2,
+    vex_normalize_angle,
+    vex_shortest_angular_distance,
+)
 
 FIELD_SIZE_INCHES = 144.0
 FIELD_HALF = FIELD_SIZE_INCHES / 2.0
 MIDFIELD_SIZE_INCHES = 24.0
 NUM_CUPS = 48
 NUM_PINS = 63
+MAX_OBSERVED_PINS = NUM_PINS
+PIN_OBJECT_FEATURES = 5
+CUP_OBJECT_FEATURES = 4
+ROBOT_POSITION_FEATURES = 3
+MAX_VISIBLE_OBJECTS = 10
+NUM_GOALS = 9
+GOAL_POLAR_FEATURES = 3
+GOAL_PIN_COUNT_FEATURES = 3
+GOAL_TOP_FEATURES = 6
+GOAL_FEATURES = GOAL_POLAR_FEATURES + GOAL_PIN_COUNT_FEATURES + GOAL_TOP_FEATURES
 NUM_TOGGLES = 4
 MATCH_TIME = 120.0
 AUTONOMOUS_TIME = 15.0
@@ -50,13 +65,32 @@ class Actions(Enum):
     FLIP_TOGGLE_4 = 24
     PARK_MIDFIELD = 12
     TURN_TOWARD_CENTER = 13
-    TAKE_FROM_LOADER_TL = 14
-    TAKE_FROM_LOADER_TR = 15
-    TAKE_FROM_LOADER_BL = 16
-    TAKE_FROM_LOADER_BR = 17
+    TAKE_FROM_LOADER_1 = 14
+    TAKE_FROM_LOADER_2 = 15
     IDLE = 18
-    ORIENT_NEXT_PIN = 19
-    ORIENT_NEXT_CUP = 20
+
+
+GOAL_SCORE_ACTIONS = (
+    Actions.SCORE_GOAL_1,
+    Actions.SCORE_GOAL_2,
+    Actions.SCORE_GOAL_3,
+    Actions.SCORE_GOAL_4,
+    Actions.SCORE_GOAL_5,
+    Actions.SCORE_GOAL_6,
+    Actions.SCORE_GOAL_7,
+    Actions.SCORE_GOAL_8,
+    Actions.SCORE_GOAL_9,
+)
+LOADER_ACTIONS = (
+    Actions.TAKE_FROM_LOADER_1,
+    Actions.TAKE_FROM_LOADER_2,
+)
+TOGGLE_ACTIONS = (
+    Actions.FLIP_TOGGLE_1,
+    Actions.FLIP_TOGGLE_2,
+    Actions.FLIP_TOGGLE_3,
+    Actions.FLIP_TOGGLE_4,
+)
 
 
 class ObjectStatus:
@@ -67,29 +101,43 @@ class ObjectStatus:
 
 
 class ObsIndex:
-    SELF_POS_X = 0
-    SELF_POS_Y = 1
-    SELF_ORIENT = 2
-    HELD_PINS = 3
-    HELD_CUPS = 4
-    PARKED = 5
-    TIME_REMAINING = 6
-    PIN_COUNT = 7
-    CUP_COUNT = 8
-    PIN_POSITIONS = 9
-    CUP_POSITIONS = 29
-    TOGGLES = 49
-    LOADERS = 53
-    HELD_PIN_FRONT_COLOR = 57
-    HELD_PIN_BACK_COLOR = 58
-    HELD_CUP_FACE_UP = 59
-    TEAMMATE_POS_X = 60
-    TEAMMATE_POS_Y = 61
-    OPPOSING_ROBOT_1_POS_X = 62
-    OPPOSING_ROBOT_1_POS_Y = 63
-    OPPOSING_ROBOT_2_POS_X = 64
-    OPPOSING_ROBOT_2_POS_Y = 65
-    TOTAL = 66
+    OBJECT_DISTANCE_OFFSET = 0
+    OBJECT_SIN_THETA_OFFSET = 1
+    OBJECT_COS_THETA_OFFSET = 2
+    OBJECT_VISIBLE_OFFSET = 3
+    PIN_COLOR_OFFSET = 4
+    GOAL_DISTANCE_OFFSET = 0
+    GOAL_SIN_THETA_OFFSET = 1
+    GOAL_COS_THETA_OFFSET = 2
+    GOAL_FRIENDLY_PIN_COUNT_OFFSET = 3
+    GOAL_OPPONENT_PIN_COUNT_OFFSET = 4
+    GOAL_NEUTRAL_PIN_COUNT_OFFSET = 5
+    GOAL_TOP_EMPTY = 0
+    GOAL_TOP_BLACK_CUP = 1
+    GOAL_TOP_CLEAR_CUP = 2
+    GOAL_TOP_FRIENDLY_PIN = 3
+    GOAL_TOP_OPPONENT_PIN = 4
+    GOAL_TOP_NEUTRAL_PIN = 5
+    SELF_ORIENT = 0
+    HELD_PINS = 1
+    HELD_CUPS = 2
+    PARKED = 3
+    TIME_REMAINING = 4
+    PIN_COUNT = 5
+    CUP_COUNT = 6
+    # Pin slots add an alliance-relative color after the four shared features.
+    # Coordinates are populated only for the ten closest visible objects.
+    PIN_POSITIONS = 7
+    CUP_POSITIONS = PIN_POSITIONS + MAX_OBSERVED_PINS * PIN_OBJECT_FEATURES
+    TOGGLES = CUP_POSITIONS + NUM_CUPS * CUP_OBJECT_FEATURES
+    LOADERS = TOGGLES + NUM_TOGGLES
+    LOADER_OWNERS = LOADERS + NUM_TOGGLES
+    HELD_PIN_FRONT_COLOR = LOADER_OWNERS + NUM_TOGGLES
+    HELD_PIN_BACK_COLOR = HELD_PIN_FRONT_COLOR + 1
+    HELD_CUP_FACE_UP = HELD_PIN_BACK_COLOR + 1
+    TEAMMATE_POSITION = HELD_CUP_FACE_UP + 1
+    GOALS = TEAMMATE_POSITION + ROBOT_POSITION_FEATURES
+    TOTAL = GOALS + NUM_GOALS * GOAL_FEATURES
 
 
 class GoalType(Enum):
@@ -363,6 +411,42 @@ class OverrideGame(VexGame):
         return tuple(GoalType)
 
     @property
+    def goal_action_map(self) -> Dict[Actions, GoalType]:
+        """Map each active Goal's score action to its Goal explicitly."""
+        if len(self.goal_types) > len(GOAL_SCORE_ACTIONS):
+            raise ValueError(
+                f"At most {len(GOAL_SCORE_ACTIONS)} scoreable Goals are supported"
+            )
+        return dict(zip(GOAL_SCORE_ACTIONS, self.goal_types))
+
+    @property
+    def loader_action_map(self) -> Dict[Actions, int]:
+        return {action: index for index, action in enumerate(LOADER_ACTIONS)}
+
+    def _loader_index_for_action(
+        self, agent: str, action: Optional[Actions]
+    ) -> Optional[int]:
+        action_index = self.loader_action_map.get(action) if action is not None else None
+        if action_index is None:
+            return None
+        friendly_loader_indices = tuple(
+            index for index, team in enumerate(LOADER_TEAMS)
+            if team == self.get_team_for_agent(agent)
+        )
+        if len(friendly_loader_indices) != len(LOADER_ACTIONS):
+            raise ValueError(
+                f"Expected {len(LOADER_ACTIONS)} friendly Loaders for {agent}"
+            )
+        return friendly_loader_indices[action_index]
+
+    @property
+    def toggle_action_map(self) -> Dict[Actions, int]:
+        return {action: index for index, action in enumerate(TOGGLE_ACTIONS)}
+
+    def _goal_for_action(self, action: Optional[Actions]) -> Optional[GoalType]:
+        return self.goal_action_map.get(action) if action is not None else None
+
+    @property
     def goal_positions(self) -> Dict[GoalType, np.ndarray]:
         # Return the goal coordinates used by this game variant.
         return GOAL_POSITIONS
@@ -383,21 +467,13 @@ class OverrideGame(VexGame):
         return (
             Actions.PICKUP_PIN.value,
             Actions.PICKUP_CUP.value,
-            *(Actions.SCORE_GOAL_1.value + index for index, _ in enumerate(self.goal_types)),
+            *(action.value for action in self.goal_action_map),
             *(action.value for action in (
-                Actions.FLIP_TOGGLE_1,
-                Actions.FLIP_TOGGLE_2,
-                Actions.FLIP_TOGGLE_3,
-                Actions.FLIP_TOGGLE_4,
+                *TOGGLE_ACTIONS,
                 Actions.PARK_MIDFIELD,
                 Actions.TURN_TOWARD_CENTER,
-                Actions.TAKE_FROM_LOADER_TL,
-                Actions.TAKE_FROM_LOADER_TR,
-                Actions.TAKE_FROM_LOADER_BL,
-                Actions.TAKE_FROM_LOADER_BR,
+                *LOADER_ACTIONS,
                 Actions.IDLE,
-                Actions.ORIENT_NEXT_PIN,
-                Actions.ORIENT_NEXT_CUP,
             )),
         )
 
@@ -529,6 +605,7 @@ class OverrideGame(VexGame):
             # Place the initial Pin into the center Goal stack.
             objects[obj_index]["status"] = ObjectStatus.SCORED
             objects[obj_index]["goal"] = goal_type.value
+            objects[obj_index]["position"] = GOAL_POSITIONS[goal_type].copy()
             objects[obj_index]["held_by"] = None
             objects[obj_index]["goal_stack_index"] = 0
 
@@ -622,12 +699,18 @@ class OverrideGame(VexGame):
         self._visibility_revision += 1
         return self.state
 
-    def _visible(self, agent: str, kind: str) -> List[Tuple[float, int]]:
+    def _visible(
+        self,
+        agent: str,
+        kind: str,
+        include_goal_objects: bool = False,
+    ) -> List[Tuple[float, int]]:
         # Return visible field objects of a type sorted by distance.
         state = self.state["agents"][agent]
         # Include the robot's camera offset when calculating its viewing direction.
         camera = vex_normalize_angle(float(state["orientation"][0]) + state["camera_rotation_offset"])
-        cache = state.setdefault("visibility_cache", {}).get(kind)
+        cache_key = (kind, include_goal_objects)
+        cache = state.setdefault("visibility_cache", {}).get(cache_key)
         if cache is not None:
             moved = np.linalg.norm(state["position"] - cache["position"]) > VISIBILITY_POSITION_THRESHOLD
             rotated = abs(vex_shortest_angular_distance(camera, cache["camera"])) > VISIBILITY_ORIENTATION_THRESHOLD
@@ -635,8 +718,11 @@ class OverrideGame(VexGame):
                 return cache["visible"]
         visible = []
         for index, obj in enumerate(self.state["objects"]):
-            # Ignore objects that are not the requested type or are no longer on the field.
-            if obj["kind"] != kind or obj["status"] != ObjectStatus.ON_FIELD:
+            allowed_statuses = {ObjectStatus.ON_FIELD}
+            if include_goal_objects:
+                # Goal-stacked objects remain field-visible at their observed coordinates.
+                allowed_statuses.add(ObjectStatus.SCORED)
+            if obj["kind"] != kind or obj["status"] not in allowed_statuses:
                 continue
             direction = obj["position"] - state["position"]
             distance = float(np.linalg.norm(direction))
@@ -644,13 +730,25 @@ class OverrideGame(VexGame):
             if distance <= 72 and abs(vex_shortest_angular_distance(camera, vex_atan2(direction[0], direction[1]))) <= FOV / 2:
                 visible.append((distance, index))
         visible = sorted(visible)
-        state.setdefault("visibility_cache", {})[kind] = {
+        state.setdefault("visibility_cache", {})[cache_key] = {
             "position": state["position"].copy(),
             "camera": camera,
             "revision": self._visibility_revision,
             "visible": visible,
         }
         return visible
+
+    @staticmethod
+    def _object_goal_color(obj: Dict) -> Optional[str]:
+        """Return the exposed color for a Pin or Cup's top-facing feature."""
+        if obj["kind"] == "cup":
+            return "clear" if bool(obj.get("face_up", False)) else "black"
+        color = (
+            obj.get("front_color")
+            if bool(obj.get("face_up", True))
+            else obj.get("back_color")
+        )
+        return color if color in {"red", "blue", "yellow"} else None
 
     def _visible_opponent_robots(self, agent: str, game_time: float = 0.0) -> List[Tuple[float, str, np.ndarray]]:
         # Return opposing robots currently visible to this agent, sorted by distance.
@@ -732,38 +830,88 @@ class OverrideGame(VexGame):
         return 0.0
 
     @staticmethod
-    def _color_to_index(color: Optional[str]) -> float:
-        # Convert a pin color name to its observation-space index.
-        color_map = {"red": 1.0, "blue": 2.0, "yellow": 3.0}
-        return float(color_map.get(color, -1.0))
+    def _color_to_alliance_value(color: Optional[str], alliance: str) -> float:
+        # Encode an alliance color relative to this robot; yellow/unknown is neutral.
+        if color == "yellow" or color not in {"red", "blue"}:
+            return 0.0
+        return 1.0 if color == alliance else -1.0
 
     def get_game_observation(self, agent: str, game_time: float = 0.0) -> np.ndarray:
         # Build the agent's partial observation, including tracker fields.
         state = self.state["agents"][agent]
         # Detect Pins and Cups independently because they occupy separate observation slots.
-        pin_visible = self._visible(agent, "pin")
-        cup_visible = self._visible(agent, "cup")
-        # Start with robot state, inventory, and the remaining match time.
-        values = [state["position"][0], state["position"][1],
-                  vex_normalize_angle(float(state["orientation"][0]) + state["camera_rotation_offset"]),
+        pin_visible = self._visible(agent, "pin", include_goal_objects=True)
+        cup_visible = self._visible(agent, "cup", include_goal_objects=True)
+        camera_angle = vex_normalize_angle(
+            float(state["orientation"][0]) + state["camera_rotation_offset"]
+        )
+        # Absolute robot position stays internal for control and path planning.
+        values = [camera_angle,
                   state["held_pins"], state["held_cups"], float(state["parked"]), self.total_time - game_time,
                   len(pin_visible), len(cup_visible)]
-        for visible in (pin_visible[:10], cup_visible[:10]):
-            # Encode up to ten visible objects and pad unused slots with the sentinel value.
-            values.extend([self.state["objects"][i]["position"][0] for _, i in visible])
-            values.extend([self.state["objects"][i]["position"][1] for _, i in visible])
-            values.extend([-144.0] * (20 - 2 * len(visible)))
-        # Encode team-owned Toggles and available Loaders as binary tracker values.
-        values.extend(float(toggle == state["team"]) for toggle in self.state["toggles"])
+        for kind, visible, max_objects in (
+            ("pin", pin_visible, MAX_OBSERVED_PINS),
+            ("cup", cup_visible, NUM_CUPS),
+        ):
+            objects = [
+                (index, obj)
+                for index, obj in enumerate(self.state["objects"])
+                if obj["kind"] == kind
+            ]
+            if len(objects) > max_objects:
+                raise ValueError(
+                    f"Observation supports at most {max_objects} {kind}s, "
+                    f"but the game state contains {len(objects)}"
+                )
+            visible_indices = {index for _, index in visible}
+            nearest_indices = {
+                index for _, index in visible[:MAX_VISIBLE_OBJECTS]
+            }
+            alliance = self.get_team_for_agent(agent)
+
+            # Keep each object's slot tied to its fixed state-list index.
+            # Only the ten closest visible objects expose relative coordinates.
+            for index, obj in objects:
+                if index in nearest_indices:
+                    values.extend(relative_polar(
+                        obj["position"],
+                        state["position"],
+                        camera_angle,
+                    ))
+                else:
+                    values.extend([-144.0, 0.0, 0.0])
+                values.append(float(index in visible_indices))
+                if kind == "pin":
+                    color = self._object_goal_color(obj) if index in visible_indices else None
+                    values.append(
+                        self._color_to_alliance_value(color, alliance)
+                    )
+
+            for _ in range(max_objects - len(objects)):
+                values.extend([-144.0, 0.0, 0.0, 0.0])
+                if kind == "pin":
+                    values.append(0.0)
+        # Encode Toggles, Loader availability, and Loader alliance relative to this robot.
+        values.extend(
+            self._color_to_alliance_value(
+                toggle, self.get_team_for_agent(agent)
+            )
+            for toggle in self.state["toggles"]
+        )
         values.extend(float(count > 0) for count in self.state["loaders"])
+        values.extend(
+            1.0 if loader_team == self.get_team_for_agent(agent) else -1.0
+            for loader_team in LOADER_TEAMS
+        )
 
         # Encode the orientation and colors of objects currently held by the robot.
         held_pin_order = state.get("held_pin_order", [None, None])
         pin_front = held_pin_order[0] if state["held_pins"] > 0 else None
         pin_back = held_pin_order[1] if state["held_pins"] > 0 else None
+        alliance = self.get_team_for_agent(agent)
         values.extend([
-            self._color_to_index(pin_front),
-            self._color_to_index(pin_back),
+            self._color_to_alliance_value(pin_front, alliance),
+            self._color_to_alliance_value(pin_back, alliance),
             1.0 if state["held_cups"] > 0 and bool(state.get("held_cup_face_up", False)) else 0.0,
         ])
 
@@ -775,17 +923,83 @@ class OverrideGame(VexGame):
             None,
         )
         if teammate is None:
-            values.extend([0.0, 0.0])
+            values.extend([-144.0, 0.0, 0.0])
         else:
-            values.extend([float(teammate["position"][0]), float(teammate["position"][1])])
+            values.extend(relative_polar(
+                teammate["position"], state["position"], camera_angle
+            ))
 
         self._update_opponent_memory(agent, game_time)
-        seen_positions = state.get("opponent_seen_positions", [None, None])
-        for seen_position in seen_positions[:2]:
-            if seen_position is None:
-                values.extend([0.0, 0.0])
+        alliance = self.get_team_for_agent(agent)
+        opponent = "blue" if alliance == "red" else "red"
+        active_goals = tuple(self.goal_types)
+        for goal_type in active_goals:
+            goal_position = self.goal_positions[goal_type]
+            values.extend(relative_polar(
+                goal_position, state["position"], camera_angle
+            ))
+            goal_objects = [
+                (index, obj)
+                for index, obj in enumerate(self.state["objects"])
+                if obj["kind"] in {"pin", "cup"}
+                and obj["status"] in {ObjectStatus.ON_FIELD, ObjectStatus.SCORED}
+                and np.all(np.abs(obj["position"] - goal_position) <= 1.0)
+            ]
+
+            pin_counts = {"friendly": 0.0, "opponent": 0.0, "neutral": 0.0}
+            for _, obj in goal_objects:
+                if obj["kind"] != "pin":
+                    continue
+                color = self._object_goal_color(obj)
+                if color == alliance:
+                    pin_counts["friendly"] += 1.0
+                elif color == opponent:
+                    pin_counts["opponent"] += 1.0
+                else:
+                    pin_counts["neutral"] += 1.0
+            values.extend([
+                pin_counts["friendly"],
+                pin_counts["opponent"],
+                pin_counts["neutral"],
+            ])
+
+            if goal_objects:
+                # Unassigned objects on the Goal are treated as the visible top;
+                # otherwise use stack order, with stable object order as fallback.
+                _, top_object = max(
+                    goal_objects,
+                    key=lambda item: (
+                        item[1].get("goal_stack_index") is None,
+                        int(item[1].get("goal_stack_index") or 0),
+                        item[0],
+                    ),
+                )
+
+                if top_object["kind"] == "cup":
+                    top_feature = (
+                        ObsIndex.GOAL_TOP_BLACK_CUP
+                        if self._object_goal_color(top_object) == "black"
+                        else ObsIndex.GOAL_TOP_CLEAR_CUP
+                    )
+                else:
+                    top_color = self._object_goal_color(top_object)
+                    if top_color == alliance:
+                        top_feature = ObsIndex.GOAL_TOP_FRIENDLY_PIN
+                    elif top_color == opponent:
+                        top_feature = ObsIndex.GOAL_TOP_OPPONENT_PIN
+                    else:
+                        top_feature = ObsIndex.GOAL_TOP_NEUTRAL_PIN
             else:
-                values.extend([float(seen_position[0]), float(seen_position[1])])
+                top_feature = ObsIndex.GOAL_TOP_EMPTY
+
+            values.extend(
+                1.0 if index == top_feature else 0.0
+                for index in range(GOAL_TOP_FEATURES)
+            )
+
+        for _ in range(NUM_GOALS - len(active_goals)):
+            values.extend([-144.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            values.extend([1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
         return np.asarray(values, dtype=np.float32)
 
@@ -915,18 +1129,6 @@ class OverrideGame(VexGame):
             # Turn toward the field center while accounting for camera offset.
             angle = vex_atan2(-state["position"][0], -state["position"][1]) - state["camera_rotation_offset"]
             return [ActionStep(DEFAULT_DURATION, state["position"].copy(), np.array([angle], dtype=np.float32), [ActionEvent("turn", {"angle": angle})])], 0.0
-        if selected == Actions.ORIENT_NEXT_PIN:
-            # Remember the desired Pin color for the next pickup.
-            return [ActionStep(
-                DEFAULT_DURATION, state["position"].copy(), state["orientation"].copy(),
-                [ActionEvent("orient_next", {"kind": "pin", "color": state["team"]})],
-            )], 0.0
-        if selected == Actions.ORIENT_NEXT_CUP:
-            # Remember that the next Cup should be picked up face-up.
-            return [ActionStep(
-                DEFAULT_DURATION, state["position"].copy(), state["orientation"].copy(),
-                [ActionEvent("orient_next", {"kind": "cup", "face_up": True})],
-            )], 0.0
         if selected in (Actions.PICKUP_PIN, Actions.PICKUP_CUP):
             # Select the nearest visible object of the requested type.
             kind = "pin" if selected == Actions.PICKUP_PIN else "cup"
@@ -938,13 +1140,13 @@ class OverrideGame(VexGame):
             index = visible[0][1]
             # Apply the pickup event after the movement plan reaches the object.
             return self._move(agent, self.state["objects"][index]["position"], ActionEvent("pickup", {"index": index})), 0.0
-        if Actions.SCORE_GOAL_1.value <= selected.value <= Actions.SCORE_GOAL_9.value:
+        goal = self._goal_for_action(selected)
+        if goal is not None:
             # Score the Pin, Cup, or pair currently held by the robot.
             has_pin = state["held_pins"] > 0
             has_cup = state["held_cups"] > 0
             if not has_pin and not has_cup:
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
-            goal = self.goal_types[selected.value - Actions.SCORE_GOAL_1.value]
             paired = has_pin and has_cup
             kind = "pin" if has_pin else "cup"
             scoring_kind = kind
@@ -965,10 +1167,11 @@ class OverrideGame(VexGame):
                 agent, self._target_next_to_goal(agent, goal),
                 ActionEvent("score", {"kind": kind, "goal": goal.value, "paired": paired}),
             ), penalty
-        if selected in (Actions.TAKE_FROM_LOADER_TL, Actions.TAKE_FROM_LOADER_TR,
-                        Actions.TAKE_FROM_LOADER_BL, Actions.TAKE_FROM_LOADER_BR):
+        if selected in self.loader_action_map:
             # Approach the selected wall Loader, face it, and clear its contents.
-            loader_index = selected.value - Actions.TAKE_FROM_LOADER_TL.value
+            loader_index = self._loader_index_for_action(agent, selected)
+            if loader_index is None:
+                raise ValueError(f"Unable to resolve Loader action {selected}")
             loader_count = self.state["loaders"][loader_index]
             if loader_count <= 0 or (
                     state["held_pins"] >= MAX_HELD_PINS
@@ -978,9 +1181,9 @@ class OverrideGame(VexGame):
             loader_target, loader_orientation = self._loader_wall_pose(agent, loader_index)
             event = ActionEvent("clear_loader", {"loader_index": loader_index})
             return self._move(agent, loader_target, event, loader_orientation), 0.0
-        if Actions.FLIP_TOGGLE_1.value <= selected.value <= Actions.FLIP_TOGGLE_4.value:
+        if selected in self.toggle_action_map:
             # Approach the selected Toggle from inside the field before changing it.
-            index = selected.value - Actions.FLIP_TOGGLE_1.value
+            index = self.toggle_action_map[selected]
             holder = self.state["toggle_holders"][index]
             if holder is not None and holder != agent:
                 return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
@@ -1015,28 +1218,29 @@ class OverrideGame(VexGame):
         elif selected == Actions.PICKUP_CUP and state["held_cups"] < MAX_HELD_CUPS:
             # Reflect a successful Cup pickup in the inferred inventory.
             state["held_cups"] += 1
-        elif Actions.SCORE_GOAL_1.value <= selected.value <= Actions.SCORE_GOAL_9.value:
+        elif self._goal_for_action(selected) is not None:
             # Scoring transfers all held objects out of the inferred inventory.
             state["held_pins"] = 0
             state["held_cups"] = 0
         elif selected == Actions.PARK_MIDFIELD:
             # Mark the robot as parked for observations and scoring.
             state["parked"] = True
-        elif selected in (Actions.TAKE_FROM_LOADER_TL, Actions.TAKE_FROM_LOADER_TR,
-                          Actions.TAKE_FROM_LOADER_BL, Actions.TAKE_FROM_LOADER_BR):
+        elif selected in self.loader_action_map:
             # Reflect the Pin/Cup stack supplied by a Loader when possible.
-            loader_index = selected.value - Actions.TAKE_FROM_LOADER_TL.value
+            loader_index = self._loader_index_for_action(agent, selected)
+            if loader_index is None:
+                raise ValueError(f"Unable to resolve Loader action {selected}")
             if self.state["loaders"][loader_index] > 0 and state["held_pins"] < MAX_HELD_PINS:
                 state["held_pins"] += 1
             if self.state["loaders"][loader_index] > 0 and state["held_cups"] < MAX_HELD_CUPS:
                 state["held_cups"] += 1
-        elif Actions.FLIP_TOGGLE_1.value <= selected.value <= Actions.FLIP_TOGGLE_4.value:
+        elif selected in self.toggle_action_map:
             # Record the alliance color inferred for the selected Toggle.
-            toggle_index = selected.value - Actions.FLIP_TOGGLE_1.value
+            toggle_index = self.toggle_action_map[selected]
             if self.state["toggle_holders"][toggle_index] not in (None, agent):
                 return
             toggle_colors = list(state.get("inferred_toggle_colors", [None] * NUM_TOGGLES))
-            toggle_colors[toggle_index] = state["team"]
+            toggle_colors[toggle_index] = self.get_team_for_agent(agent)
             state["inferred_toggle_colors"] = toggle_colors
 
     def update_observation_from_tracker(self, agent: str, observation: np.ndarray) -> np.ndarray:
@@ -1048,13 +1252,22 @@ class OverrideGame(VexGame):
         toggle_colors = state.get("inferred_toggle_colors")
         if toggle_colors is not None:
             for index, color in enumerate(toggle_colors):
-                observation[ObsIndex.TOGGLES + index] = float(color == state["team"])
+                observation[ObsIndex.TOGGLES + index] = (
+                    self._color_to_alliance_value(
+                        color, self.get_team_for_agent(agent)
+                    )
+                )
 
         held_pin_order = state.get("held_pin_order", [None, None])
         pin_front = held_pin_order[0] if state["held_pins"] > 0 else None
         pin_back = held_pin_order[1] if state["held_pins"] > 0 else None
-        observation[ObsIndex.HELD_PIN_FRONT_COLOR] = self._color_to_index(pin_front)
-        observation[ObsIndex.HELD_PIN_BACK_COLOR] = self._color_to_index(pin_back)
+        alliance = self.get_team_for_agent(agent)
+        observation[ObsIndex.HELD_PIN_FRONT_COLOR] = self._color_to_alliance_value(
+            pin_front, alliance
+        )
+        observation[ObsIndex.HELD_PIN_BACK_COLOR] = self._color_to_alliance_value(
+            pin_back, alliance
+        )
         observation[ObsIndex.HELD_CUP_FACE_UP] = 1.0 if state["held_cups"] > 0 and bool(state.get("held_cup_face_up", False)) else 0.0
         return observation
 
@@ -1189,6 +1402,7 @@ class OverrideGame(VexGame):
                             held_by=None,
                             goal=goal_value,
                             goal_stack_index=next_stack_index,
+                            position=self.goal_positions[GoalType(goal_value)].copy(),
                         )
                         next_stack_index += 1
                 for scored_kind in scored_kinds:
@@ -1409,16 +1623,18 @@ class OverrideGame(VexGame):
         if selected == Actions.PICKUP_CUP and observation[ObsIndex.HELD_CUPS] >= MAX_HELD_CUPS:
             # Do not pick up another Cup when the Cup capacity is full.
             return False
-        if Actions.SCORE_GOAL_1.value <= selected.value <= Actions.SCORE_GOAL_9.value and (
-                observation[ObsIndex.HELD_PINS] <= 0
-                and observation[ObsIndex.HELD_CUPS] <= 0):
+        if self._goal_for_action(selected) is not None and (
+            observation[ObsIndex.HELD_PINS] <= 0
+            and observation[ObsIndex.HELD_CUPS] <= 0
+        ):
             # A scoring action requires at least one held object.
             return False
         if selected == Actions.IDLE and observation[ObsIndex.PARKED] < 1:
             return False
-        if selected in (Actions.TAKE_FROM_LOADER_TL, Actions.TAKE_FROM_LOADER_TR,
-                        Actions.TAKE_FROM_LOADER_BL, Actions.TAKE_FROM_LOADER_BR):
-            loader_index = selected.value - Actions.TAKE_FROM_LOADER_TL.value
+        if selected in self.loader_action_map:
+            loader_index = self._loader_index_for_action(agent, selected)
+            if loader_index is None:
+                return False
             if observation[ObsIndex.LOADERS + loader_index] < 1:
                 return False
         return not (selected == Actions.PARK_MIDFIELD and observation[ObsIndex.PARKED] >= 1)
@@ -1505,9 +1721,11 @@ class OverrideGame(VexGame):
         if selected == Actions.TURN_TOWARD_CENTER:
             # Use the shared controller command to face the field center.
             return ["TURN_TO_POINT;(0.0,0.0);40"]
-        if Actions.TAKE_FROM_LOADER_TL.value <= selected.value <= Actions.TAKE_FROM_LOADER_BR.value:
+        if selected in self.loader_action_map:
             # Convert a Loader action into approach, turn, and clear commands.
-            loader_index = selected.value - Actions.TAKE_FROM_LOADER_TL.value
+            loader_index = self._loader_index_for_action(robot.name, selected)
+            if loader_index is None:
+                return ["WAIT;0.5"]
             loader_target, _ = self._loader_wall_pose(robot.name, loader_index)
             wall_x = -FIELD_HALF if LOADER_POSITIONS[loader_index][0] < 0.0 else FIELD_HALF
             return [
