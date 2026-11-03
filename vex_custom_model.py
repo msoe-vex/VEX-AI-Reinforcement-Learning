@@ -365,5 +365,5 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
 
     @property
     def clean_encoder(self):
-        """Returns the pure PyTorch encoder for TorchScript export."""
+        """Returns the pure PyTorch encoder for torch.export."""
         return self._encoder_net

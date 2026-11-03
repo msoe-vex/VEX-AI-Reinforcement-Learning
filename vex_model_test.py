@@ -33,7 +33,7 @@ def load_agent_models(model_dir, agents, device):
     Load models for each agent from the model directory.
     
     Args:
-        model_dir: Directory containing .pt model files
+        model_dir: Directory containing .pt2 exported model files
         agents: List of agent IDs
         device: torch device to load models to
         
@@ -46,10 +46,10 @@ def load_agent_models(model_dir, agents, device):
         # Search for model files matching the agent_id
         # Try exact match first, then partial match
         patterns = [
-            os.path.join(model_dir, f"{agent_id}.pt"),
-            os.path.join(model_dir, f"{agent_id}_*.pt"),
-            os.path.join(model_dir, f"*_{agent_id}.pt"),
-            os.path.join(model_dir, f"*{agent_id}*.pt"),
+            os.path.join(model_dir, f"{agent_id}.pt2"),
+            os.path.join(model_dir, f"{agent_id}_*.pt2"),
+            os.path.join(model_dir, f"*_{agent_id}.pt2"),
+            os.path.join(model_dir, f"*{agent_id}*.pt2"),
         ]
         
         model_path = None
@@ -60,20 +60,25 @@ def load_agent_models(model_dir, agents, device):
                 break
         
         if model_path is None:
-            # Fall back to shared_policy.pt if no agent-specific model found
-            shared_path = os.path.join(model_dir, "shared_policy.pt")
+            # Fall back to shared_policy.pt2 if no agent-specific model found
+            shared_path = os.path.join(model_dir, "shared_policy.pt2")
             if os.path.exists(shared_path):
                 model_path = shared_path
                 print(f"Using shared policy for agent {agent_id}")
             else:
+                legacy_paths = glob.glob(os.path.join(model_dir, "*.pt"))
+                if legacy_paths:
+                    raise RuntimeError(
+                        f"Found legacy TorchScript model {legacy_paths[0]}. "
+                        "Re-export the checkpoint with vex_model_compile.py to "
+                        "create a .pt2 model compatible with torch.export."
+                    )
                 raise FileNotFoundError(f"No model found for agent {agent_id} in {model_dir}")
         else:
             print(f"Found model for agent {agent_id}: {model_path}")
         
         try:
-            model = torch.jit.load(model_path, map_location=device)
-            model.eval()
-            model = torch.jit.optimize_for_inference(model)
+            model = torch.export.load(model_path).module().to(device)
             models[agent_id] = model
         except Exception as e:
             raise RuntimeError(f"Error loading model for agent {agent_id}: {e}")

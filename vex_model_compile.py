@@ -134,8 +134,7 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
         
         if hasattr(rl_module, 'clean_encoder'):
             clean_encoder = rl_module.clean_encoder
-            # Export head: include message head + log-std when available so
-            # the exported TorchScript matches RLModule ACTION_DIST_INPUTS.
+            # Include message outputs when available to match RLModule ACTION_DIST_INPUTS.
             pi_head = rl_module.pi
             message_head = getattr(rl_module, "message_head", None)
             msg_log_std = getattr(rl_module, "msg_log_std", None)
@@ -172,24 +171,6 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
 
             clean_head = CombinedHead(pi_head, message_head, msg_log_std, attention_unit)
             
-            # CRITICAL: Convert any numpy types to Python native types
-            # This is necessary for torch.jit.script compatibility
-            def convert_module_to_native_types(module):
-                """Recursively convert numpy types in module attributes to Python types."""
-                import numpy as np
-                for name, value in module.__dict__.items():
-                    if isinstance(value, np.integer):
-                        setattr(module, name, int(value))
-                    elif isinstance(value, np.floating):
-                        setattr(module, name, float(value))
-                # Also check submodules
-                for submodule in module.children():
-                    convert_module_to_native_types(submodule)
-            
-            # Apply conversion to both encoder and head
-            convert_module_to_native_types(clean_encoder)
-            convert_module_to_native_types(clean_head)
-            
             # Combine them into a simple container for export
             class ExportModel(nn.Module):
                 def __init__(self, encoder, head):
@@ -204,13 +185,23 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
             export_model = ExportModel(clean_encoder, clean_head)
             export_model.eval()
             
-            # Save using JIT SCRIPT (Best for C++)
-            save_path = os.path.join(output_path, f"{policy_id}.pt")
+            save_path = os.path.join(output_path, f"{policy_id}.pt2")
             # Handle Dict observation spaces (with "observations" + "action_mask")
             if hasattr(obs_space, 'spaces') and "observations" in obs_space.spaces:
                 obs_shape = obs_space["observations"].shape
             else:
                 obs_shape = obs_space.shape
+            encoder_core_dim = getattr(clean_encoder, "core_dim", None)
+            encoder_comm_dim = getattr(clean_encoder, "comm_dim", None)
+            if encoder_core_dim is not None and encoder_comm_dim is not None:
+                encoder_obs_dim = int(encoder_core_dim) + int(encoder_comm_dim)
+                if encoder_obs_dim != obs_shape[0]:
+                    raise ValueError(
+                        f"Checkpoint policy {policy_id} expects {encoder_obs_dim} "
+                        f"observation features, but the current environment provides "
+                        f"{obs_shape[0]}. Use a checkpoint and environment with the "
+                        f"same game and observation layout, or train a new checkpoint."
+                    )
             dummy_obs = torch.randn(1, *obs_shape)
             # Determine action mask shape from action space
             if hasattr(act_space, 'spaces') and len(act_space.spaces) > 0 and hasattr(act_space.spaces[0], 'n'):
@@ -221,17 +212,9 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
                 mask_dim = obs_shape[0]  # fallback
             dummy_mask = torch.ones(1, mask_dim)
             
-            try:
-                # We can script this directly because it has no dicts/kwargs!
-                scripted = torch.jit.script(export_model)
-                scripted.save(save_path)
-                print(f"✓ SUCCESS: Saved fully JIT Scripted model to {save_path}")
-            except Exception as e:
-                print(f"Scripting failed ({e}), trying trace...")
-                # Fallback to trace if needed
-                traced = torch.jit.trace(export_model, (dummy_obs, dummy_mask))
-                traced.save(save_path)
-                print(f"✓ SUCCESS: Saved JIT Traced model to {save_path}")
+            exported = torch.export.export(export_model, (dummy_obs, dummy_mask))
+            torch.export.save(exported, save_path)
+            print(f"✓ SUCCESS: Saved exported model to {save_path}")
 
         else:
             print("Could not find clean encoder in custom model.")

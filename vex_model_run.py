@@ -8,7 +8,7 @@ from vex_core.base_env import MESSAGE_SIZE
 from typing import Optional
 
 class VexModelRunner:
-    def __init__(self, model_path: str, game: VexGame, temperature: float = 1.0, agent_name: str = None, model: torch.jit.ScriptModule = None):
+    def __init__(self, model_path: str, game: VexGame, temperature: float = 1.0, agent_name: str = None, model: torch.nn.Module = None):
         self.model_path = model_path
         self.game = game
         if hasattr(self.game, "deterministic"):
@@ -52,18 +52,21 @@ class VexModelRunner:
         else:
             self._expected_obs_dim = self._base_obs_dim
 
-        # Load the TorchScript model
+        # Load the exported model
         if self.model is None and self.model_path:
             try:
-                self.model = torch.jit.load(self.model_path, map_location=self.device)
-                self.model.eval()
-                
-                self.model = torch.jit.optimize_for_inference(self.model)
-                
-                print(f"Successfully loaded and optimized model from {self.model_path}")
-            except Exception as e:
-                print(f"Error loading model: {e}")
-                return
+                if self.model_path.endswith(".pt"):
+                    raise RuntimeError(
+                        f"{self.model_path} is a legacy TorchScript artifact. "
+                        "Re-export the checkpoint with vex_model_compile.py to "
+                        "create a .pt2 model compatible with torch.export."
+                    )
+                self.model = torch.export.load(self.model_path).module().to(self.device)
+                print(f"Successfully loaded exported model from {self.model_path}")
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Unable to load exported model from {self.model_path}: {exc}"
+                ) from exc
 
         if self.model is not None:
             try:
@@ -95,18 +98,29 @@ class VexModelRunner:
                             _ = self.model(dummy_input, dummy_mask)
                         warmup_ok = True
                         break
-                    except RuntimeError as exc:
-                        if "size of tensor a" not in str(exc) or "non-singleton dimension 1" not in str(exc):
+                    except (RuntimeError, AssertionError) as exc:
+                        message = str(exc)
+                        action_mask_mismatch = (
+                            "size of tensor a" in message
+                            and "non-singleton dimension 1" in message
+                        ) or (
+                            "action_mask.size()" in message and "==" in message
+                        )
+                        if not action_mask_mismatch:
                             raise
                 if warmup_ok:
                     print(f"Model warmed up and ready for inference for {self.agent_name}")
                 else:
                     raise RuntimeError(f"Unable to warm up model for {self.agent_name} with any compatible action-mask width")
-            except Exception as e:
-                print(f"Error warming up model: {e}")
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Model for agent {self.agent_name} is incompatible with the "
+                    f"{self._comm_mode_name} environment observation "
+                    f"(expected {self._expected_obs_dim} features)."
+                ) from exc
 
     def _prepare_model_observation(self, observation: np.ndarray) -> np.ndarray:
-        """Normalize observation length for TorchScript model input."""
+        """Normalize observation length for exported model input."""
         obs = np.nan_to_num(observation, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
         current_dim = int(obs.shape[0])
 
@@ -183,9 +197,15 @@ class VexModelRunner:
                     resolved_model_output = self.model(obs_tensor, mask_tensor)
                 resolved_mask = candidate_mask
                 break
-            except RuntimeError as exc:
+            except (RuntimeError, AssertionError) as exc:
                 msg = str(exc)
-                if "size of tensor a" not in msg or "non-singleton dimension 1" not in msg:
+                action_mask_mismatch = (
+                    "size of tensor a" in msg
+                    and "non-singleton dimension 1" in msg
+                ) or (
+                    "action_mask.size()" in msg and "==" in msg
+                )
+                if not action_mask_mismatch:
                     raise
                 continue
 
