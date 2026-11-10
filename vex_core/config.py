@@ -11,6 +11,29 @@ class CommunicationOption(Enum):
     ATTENTION = "attention"
     COPY = "copy"
 
+
+OVERRIDE_GAME_NAMES = {
+    "override",
+    "vexu_override",
+    "vex_override",
+    "vexu_comp",
+    "override_comp",
+    "vexai_comp",
+    "vexai_skills",
+    "override_vexai_skills",
+    "vexai_override_skills",
+    "vexu_skills",
+    "override_skills",
+}
+
+
+def default_communication_mode(game_name: str) -> CommunicationOption:
+    """Return the default communication mode for a game family."""
+    if game_name.lower() in OVERRIDE_GAME_NAMES:
+        return CommunicationOption.COPY
+    return CommunicationOption.NONE
+
+
 @dataclass
 class VexEnvConfig:
     """
@@ -35,7 +58,7 @@ class VexEnvConfig:
         render_mode: Optional[str] = "image",
         experiment_path: Optional[str] = "vex_env_output",
         randomize: Optional[bool] = True,
-        communication_mode: Optional[str] = "none",
+        communication_mode: Optional[str] = None,
         deterministic: Optional[bool] = False,
         temperature: Optional[float] = 1.0,
         copy_message_dropout_prob: Optional[float] = 0.0,
@@ -151,7 +174,13 @@ class VexEnvConfig:
 
         # Resolve final values: prefer CLI args, then metadata, then hardcoded defaults
         game_name = args.game if (hasattr(args, "game") and args.game is not None) else metadata_overrides.get("game", "override")
-        communication_mode_str = args.communication_mode if (hasattr(args, "communication_mode") and args.communication_mode is not None) else metadata_overrides.get("communication_mode", "none")
+        communication_mode_str = (
+            args.communication_mode
+            if hasattr(args, "communication_mode") and args.communication_mode is not None
+            else metadata_overrides.get(
+                "communication_mode", default_communication_mode(game_name).value
+            )
+        )
         randomize = args.randomize if (hasattr(args, "randomize") and args.randomize is not None) else metadata_overrides.get("randomize", True)
         deterministic = args.deterministic if (hasattr(args, "deterministic") and args.deterministic is not None) else metadata_overrides.get("deterministic", False)
         temperature = args.temperature if (hasattr(args, "temperature") and args.temperature is not None) else metadata_overrides.get("temperature", 1.0)

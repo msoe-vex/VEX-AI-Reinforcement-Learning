@@ -386,11 +386,13 @@ class VexAICompGame(OverrideGame):
 
     def get_initial_state(self, randomize: bool = False, seed: Optional[int] = None) -> Dict:
         state = super().get_initial_state(False, seed)
-        return configure_vexai_objects(
+        state = configure_vexai_objects(
             state,
             include_blue_preloads=True,
             randomize=randomize,
         )
+        self._refresh_object_heights()
+        return state
 
     def is_valid_action(self, agent: str, action: int, observation: np.ndarray) -> bool:
         """Only 24-inch robots may park in their alliance load zone."""

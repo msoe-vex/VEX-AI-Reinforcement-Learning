@@ -14,7 +14,11 @@ import glob
 
 # Import from new modular architecture
 from vex_core.base_env import VexMultiAgentEnv
-from vex_core.config import VexEnvConfig, CommunicationOption
+from vex_core.config import (
+    VexEnvConfig,
+    CommunicationOption,
+    default_communication_mode,
+)
 from pushback import PushBackGame
 from override import OverrideGame
 from vex_custom_model import VexCustomPPO
@@ -388,6 +392,7 @@ def set_env_runner_randomization(env_runner, randomize):
 def env_creator(config=None):
     """Create environment instance for RLlib registration."""
     config = config or {}
+    game_name = config.get("game", "override")
     
     # Handle backward compatibility
     if "communication_mode" in config:
@@ -401,11 +406,16 @@ def env_creator(config=None):
                 communication_mode = CommunicationOption.NONE
     else:
         enable_comm = config.get("enable_communication", True)
-        communication_mode = CommunicationOption.ATTENTION if enable_comm else CommunicationOption.NONE
-        
+        communication_mode = (
+            default_communication_mode(game_name)
+            if enable_comm and default_communication_mode(game_name) != CommunicationOption.NONE
+            else CommunicationOption.ATTENTION
+            if enable_comm
+            else CommunicationOption.NONE
+        )
+
     deterministic = config.get("deterministic", True)
-    game_name = config.get("game", "override")
-    
+
     env_config = VexEnvConfig(
         game_name=game_name,
         render_mode=None,
@@ -413,10 +423,10 @@ def env_creator(config=None):
         randomize=config.get("randomize", True),
         communication_mode=communication_mode,
         deterministic=deterministic,
-        copy_message_dropout_prob=float(config.get("copy_message_dropout_prob", 0.0)),
+        copy_message_dropout_prob=float(config.get("copy_message_dropout_prob", 0.1)),
         use_path_planner=False,
     )
-    
+
     game_class = get_game_class(game_name)
     game = game_class.get_game(
         game_name,
@@ -508,8 +518,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train multiple agents concurrently.")
     VexEnvConfig.add_cli_args(
         parser,
-        communication_mode="attention",
-        experiment_path=""
+        communication_mode=None,
+        experiment_path="",
+        copy_message_dropout_prob=0.1,
     )
     parser.add_argument('--learning-rate', type=float, default=0.0005, help='Learning rate')  # Default: 0.0005
     parser.add_argument('--learning-rate-final', type=float, default=0.00005,
@@ -547,6 +558,12 @@ if __name__ == "__main__":
             print(f"Found latest checkpoint: {restore_path}")
         else:
             print(f"Warning: No checkpoint directories found under {restore_experiment_directory}; training will start fresh.")
+
+    if (
+        args.communication_mode is None
+        and default_communication_mode(args.game) == CommunicationOption.NONE
+    ):
+        args.communication_mode = CommunicationOption.ATTENTION
 
     env_config_obj = VexEnvConfig.from_args(args)
 
