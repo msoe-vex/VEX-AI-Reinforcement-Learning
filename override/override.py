@@ -49,7 +49,7 @@ OPPONENT_SCAN_INTERVAL = 0.25
 
 
 class Actions(Enum):
-    PICKUP_PIN = 0
+    PICKUP_PIN_RED_YELLOW = 0
     PICKUP_CUP = 1
     SCORE_GOAL_1 = 2
     SCORE_GOAL_2 = 3
@@ -69,6 +69,9 @@ class Actions(Enum):
     TAKE_FROM_LOADER_1 = 14
     TAKE_FROM_LOADER_2 = 15
     IDLE = 18
+    PICKUP_PIN_BLUE_YELLOW = 25
+    PICKUP_PIN_RED_BLUE = 26
+    PICKUP_PIN_YELLOW_YELLOW = 27
 
 
 GOAL_SCORE_ACTIONS = (
@@ -343,6 +346,18 @@ PIN_COLOR_PAIRS = (
     ("blue", "yellow"), ("blue", "yellow"),
     *[("yellow", "yellow")] * 19,
 )
+PIN_COLOR_COMBINATIONS = (
+    ("red", "yellow"),
+    ("blue", "yellow"),
+    ("red", "blue"),
+    ("yellow", "yellow"),
+)
+PIN_PICKUP_ACTIONS = (
+    Actions.PICKUP_PIN_RED_YELLOW,
+    Actions.PICKUP_PIN_BLUE_YELLOW,
+    Actions.PICKUP_PIN_RED_BLUE,
+    Actions.PICKUP_PIN_YELLOW_YELLOW,
+)
 PERMANENT_OBSTACLES = [
     Obstacle(float(position[0]), float(position[1]), GOAL_RADII[goal_type], False)
     for goal_type, position in GOAL_POSITIONS.items()
@@ -483,9 +498,17 @@ class OverrideGame(VexGame):
 
     def _build_action_descriptors(self) -> Tuple[ActionDescriptor, ...]:
         descriptors = [
-            ActionDescriptor(Actions.PICKUP_PIN, "PICKUP_PIN", "pickup_pin"),
-            ActionDescriptor(Actions.PICKUP_CUP, "PICKUP_CUP", "pickup_cup"),
+            ActionDescriptor(
+                action,
+                action.name,
+                "pickup_pin",
+                index,
+            )
+            for index, action in enumerate(PIN_PICKUP_ACTIONS)
         ]
+        descriptors.append(
+            ActionDescriptor(Actions.PICKUP_CUP, "PICKUP_CUP", "pickup_cup")
+        )
         descriptors.extend(
             ActionDescriptor(action, action.name, "score_goal", index)
             for index, action in enumerate(self.goal_action_map)
@@ -1171,10 +1194,24 @@ class OverrideGame(VexGame):
             # Turn toward the field center while accounting for camera offset.
             angle = vex_atan2(-state["position"][0], -state["position"][1]) - state["camera_rotation_offset"]
             return [ActionStep(DEFAULT_DURATION, state["position"].copy(), np.array([angle], dtype=np.float32), [ActionEvent("turn", {"angle": angle})])], 0.0
-        if selected in (Actions.PICKUP_PIN, Actions.PICKUP_CUP):
+        if descriptor.kind in ("pickup_pin", "pickup_cup"):
             # Select the nearest visible object of the requested type.
             kind = "pin" if descriptor.kind == "pickup_pin" else "cup"
             visible = self._visible(agent, kind)
+            if descriptor.kind == "pickup_pin":
+                if descriptor.target is None:
+                    raise ValueError(
+                        f"Pin pickup action {descriptor.name} has no color combination"
+                    )
+                color_pair = PIN_COLOR_COMBINATIONS[descriptor.target]
+                visible = [
+                    item
+                    for item in visible
+                    if (
+                        self.state["objects"][item[1]].get("front_color"),
+                        self.state["objects"][item[1]].get("back_color"),
+                    ) == color_pair
+                ]
             held_key = f"held_{kind}s"
             capacity = MAX_HELD_PINS if kind == "pin" else MAX_HELD_CUPS
             if not visible or state[held_key] >= capacity:
