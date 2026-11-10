@@ -28,6 +28,8 @@ PIN_OBJECT_FEATURES = 5
 CUP_OBJECT_FEATURES = 4
 ROBOT_POSITION_FEATURES = 3
 MAX_VISIBLE_OBJECTS = 10
+MAX_NEAREST_STACKS = 3
+STACK_OBJECT_FEATURES = 7
 NUM_GOALS = 9
 GOAL_POLAR_FEATURES = 3
 GOAL_PIN_COUNT_FEATURES = 3
@@ -46,10 +48,13 @@ MAX_HELD_CUPS = 1
 VISIBILITY_POSITION_THRESHOLD = 3.0
 VISIBILITY_ORIENTATION_THRESHOLD = 15.0
 OPPONENT_SCAN_INTERVAL = 0.25
+GROUND_OBJECT_HEIGHT = 1.5
+STANDING_CUP_HEIGHT = 3.0
+STACK_HEIGHT_INCREMENT = 3.25
 
 
 class Actions(Enum):
-    PICKUP_PIN = 0
+    PICKUP_PIN_RED_YELLOW = 0
     PICKUP_CUP = 1
     SCORE_GOAL_1 = 2
     SCORE_GOAL_2 = 3
@@ -69,6 +74,9 @@ class Actions(Enum):
     TAKE_FROM_LOADER_1 = 14
     TAKE_FROM_LOADER_2 = 15
     IDLE = 18
+    PICKUP_PIN_BLUE_YELLOW = 25
+    PICKUP_PIN_RED_BLUE = 26
+    PICKUP_PIN_YELLOW_YELLOW = 27
 
 
 GOAL_SCORE_ACTIONS = (
@@ -147,7 +155,8 @@ class ObsIndex:
     HELD_PIN_BACK_COLOR = HELD_PIN_FRONT_COLOR + 1
     HELD_CUP_FACE_UP = HELD_PIN_BACK_COLOR + 1
     TEAMMATE_POSITION = HELD_CUP_FACE_UP + 1
-    GOALS = TEAMMATE_POSITION + ROBOT_POSITION_FEATURES
+    STACKS = TEAMMATE_POSITION + ROBOT_POSITION_FEATURES
+    GOALS = STACKS + MAX_NEAREST_STACKS * STACK_OBJECT_FEATURES
     TOTAL = GOALS + NUM_GOALS * GOAL_FEATURES
 
 
@@ -343,6 +352,18 @@ PIN_COLOR_PAIRS = (
     ("blue", "yellow"), ("blue", "yellow"),
     *[("yellow", "yellow")] * 19,
 )
+PIN_COLOR_COMBINATIONS = (
+    ("red", "yellow"),
+    ("blue", "yellow"),
+    ("red", "blue"),
+    ("yellow", "yellow"),
+)
+PIN_PICKUP_ACTIONS = (
+    Actions.PICKUP_PIN_RED_YELLOW,
+    Actions.PICKUP_PIN_BLUE_YELLOW,
+    Actions.PICKUP_PIN_RED_BLUE,
+    Actions.PICKUP_PIN_YELLOW_YELLOW,
+)
 PERMANENT_OBSTACLES = [
     Obstacle(float(position[0]), float(position[1]), GOAL_RADII[goal_type], False)
     for goal_type, position in GOAL_POSITIONS.items()
@@ -483,9 +504,17 @@ class OverrideGame(VexGame):
 
     def _build_action_descriptors(self) -> Tuple[ActionDescriptor, ...]:
         descriptors = [
-            ActionDescriptor(Actions.PICKUP_PIN, "PICKUP_PIN", "pickup_pin"),
-            ActionDescriptor(Actions.PICKUP_CUP, "PICKUP_CUP", "pickup_cup"),
+            ActionDescriptor(
+                action,
+                action.name,
+                "pickup_pin",
+                index,
+            )
+            for index, action in enumerate(PIN_PICKUP_ACTIONS)
         ]
+        descriptors.append(
+            ActionDescriptor(Actions.PICKUP_CUP, "PICKUP_CUP", "pickup_cup")
+        )
         descriptors.extend(
             ActionDescriptor(action, action.name, "score_goal", index)
             for index, action in enumerate(self.goal_action_map)
@@ -547,8 +576,83 @@ class OverrideGame(VexGame):
                 face_up: Optional[bool] = None) -> Dict:
         # Create a field object record for a Pin or Cup.
         return {"kind": kind, "position": np.asarray(position, dtype=np.float32),
+                "z": self._base_object_height(kind, face_up),
+                "unstacked": False,
                 "team": team, "face_up": face_up, "status": ObjectStatus.ON_FIELD,
             "held_by": None, "goal": None, "goal_stack_index": None}
+
+    @staticmethod
+    def _base_object_height(kind: str, face_up: Optional[bool]) -> float:
+        """Return the height of an unstacked Pin or Cup in inches."""
+        if kind == "cup" and face_up:
+            return STANDING_CUP_HEIGHT
+        return GROUND_OBJECT_HEIGHT
+
+    def _refresh_object_heights(self) -> None:
+        """Recompute object z coordinates from their current stack placement."""
+        stack_groups: Dict[Tuple, List[Dict]] = {}
+        for obj in self.state["objects"]:
+            if obj["status"] == ObjectStatus.SCORED and obj.get("goal") is not None:
+                key = ("goal", obj["goal"])
+                stack_index = int(obj.get("goal_stack_index") or 0)
+            elif obj["status"] == ObjectStatus.LOADER:
+                key = ("loader", obj.get("loader_index", -1))
+                stack_index = int(obj.get("loader_stack", 0))
+            elif obj["status"] == ObjectStatus.HELD:
+                key = ("held", obj.get("held_by"))
+                stack_index = 0
+            else:
+                position = np.asarray(obj["position"], dtype=np.float32)
+                if obj.get("unstacked", False):
+                    key = ("unstacked", id(obj))
+                    stack_groups.setdefault(key, []).append((-1, obj))
+                    continue
+                nearest_goal = next(
+                    (
+                        goal.value for goal in self.goal_types
+                        if np.linalg.norm(position - self.goal_positions[goal]) <= GOAL_RADII[goal]
+                    ),
+                    None,
+                )
+                if nearest_goal is not None:
+                    key = ("goal", nearest_goal)
+                else:
+                    key = (
+                        "field",
+                        round(float(position[0]), 3),
+                        round(float(position[1]), 3),
+                    )
+                stack_index = -1
+
+            stack_groups.setdefault(key, []).append((stack_index, obj))
+
+        for key, entries in stack_groups.items():
+            if key[0] == "held":
+                entries.sort(
+                    key=lambda item: (
+                        0 if item[1]["kind"] == "cup" else 1,
+                        item[1].get("kind", ""),
+                    )
+                )
+            elif key[0] == "field":
+                entries.sort(
+                    key=lambda item: (
+                        0 if item[1]["kind"] == "cup" else 1,
+                        item[1].get("kind", ""),
+                    )
+                )
+            else:
+                entries.sort(key=lambda item: (item[0], item[1].get("kind", "")))
+
+            stack_height = 0.0
+            for index, (_, obj) in enumerate(entries):
+                if index == 0:
+                    stack_height = self._base_object_height(
+                        obj["kind"], obj.get("face_up")
+                    )
+                else:
+                    stack_height += STACK_HEIGHT_INCREMENT
+                obj["z"] = stack_height
 
     def get_initial_state(
         self,
@@ -739,6 +843,7 @@ class OverrideGame(VexGame):
             for obj in objects:
                 if obj["status"] == ObjectStatus.ON_FIELD:
                     obj["position"] = np.random.uniform(-66, 66, 2).astype(np.float32)
+        self._refresh_object_heights()
         # Force the first observation of this layout to perform a fresh scan.
         self._visibility_revision += 1
         return self.state
@@ -974,6 +1079,57 @@ class OverrideGame(VexGame):
                 teammate["position"], state["position"], camera_angle
             ))
 
+        stack_groups: Dict[Tuple[float, float], List[Dict]] = {}
+        for obj in self.state["objects"]:
+            if obj["status"] not in {ObjectStatus.ON_FIELD, ObjectStatus.SCORED}:
+                continue
+            if obj.get("unstacked", False):
+                continue
+            position = np.asarray(obj["position"], dtype=np.float32)
+            goal_position = next(
+                (
+                    self.goal_positions[goal]
+                    for goal in self.goal_types
+                    if np.linalg.norm(position - self.goal_positions[goal]) <= GOAL_RADII[goal]
+                ),
+                None,
+            )
+            if goal_position is not None:
+                position = goal_position
+            key = (round(float(position[0]), 3), round(float(position[1]), 3))
+            stack_groups.setdefault(key, []).append(obj)
+
+        stack_candidates = []
+        for position, stack_objects in stack_groups.items():
+            if len(stack_objects) < 2:
+                continue
+            stack_position = np.asarray(position, dtype=np.float32)
+            stack_candidates.append((
+                float(np.linalg.norm(stack_position - state["position"])),
+                stack_position,
+                stack_objects,
+            ))
+        stack_candidates.sort(key=lambda item: item[0])
+
+        for _, stack_position, stack_objects in stack_candidates[:MAX_NEAREST_STACKS]:
+            values.extend(relative_polar(
+                stack_position,
+                state["position"],
+                camera_angle,
+            ))
+            values.extend([
+                max(float(obj["z"]) for obj in stack_objects),
+                float(sum(obj["kind"] == "pin" for obj in stack_objects)),
+                float(sum(obj["kind"] == "cup" for obj in stack_objects)),
+                float(any(
+                    obj["kind"] == "pin" and float(obj["z"]) >= 6.25
+                    for obj in stack_objects
+                )),
+            ])
+
+        for _ in range(MAX_NEAREST_STACKS - min(len(stack_candidates), MAX_NEAREST_STACKS)):
+            values.extend([-144.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+
         self._update_opponent_memory(agent, game_time)
         opponent = "blue" if alliance == "red" else "red"
         active_goals = tuple(self.goal_types)
@@ -1152,6 +1308,18 @@ class OverrideGame(VexGame):
         return [ActionStep(DEFAULT_DURATION, start, orientation), ActionStep(duration, target, orientation),
                 ActionStep(DEFAULT_DURATION, target, orientation), ActionStep(DEFAULT_DURATION, target, orientation, [event])]
 
+    def _pickup_stack_at(self, index: int) -> List[int]:
+        """Return all field Pins and Cups occupying the selected object's stack."""
+        selected = self.state["objects"][index]
+        if selected["status"] != ObjectStatus.ON_FIELD:
+            return [index]
+        return [
+            object_index for object_index, obj in enumerate(self.state["objects"])
+            if obj["status"] == ObjectStatus.ON_FIELD
+            and obj["kind"] in {"pin", "cup"}
+            and np.allclose(obj["position"], selected["position"])
+        ]
+
     def execute_action(self, agent: str, action: int) -> Tuple[List[ActionStep], float]:
         # Translate a high-level action into timed steps and a penalty.
         state = self.state["agents"][agent]
@@ -1171,15 +1339,48 @@ class OverrideGame(VexGame):
             # Turn toward the field center while accounting for camera offset.
             angle = vex_atan2(-state["position"][0], -state["position"][1]) - state["camera_rotation_offset"]
             return [ActionStep(DEFAULT_DURATION, state["position"].copy(), np.array([angle], dtype=np.float32), [ActionEvent("turn", {"angle": angle})])], 0.0
-        if selected in (Actions.PICKUP_PIN, Actions.PICKUP_CUP):
+        if descriptor.kind in ("pickup_pin", "pickup_cup"):
             # Select the nearest visible object of the requested type.
             kind = "pin" if descriptor.kind == "pickup_pin" else "cup"
             visible = self._visible(agent, kind)
+            if descriptor.kind == "pickup_pin":
+                if descriptor.target is None:
+                    raise ValueError(
+                        f"Pin pickup action {descriptor.name} has no color combination"
+                    )
+                color_pair = PIN_COLOR_COMBINATIONS[descriptor.target]
+                visible = [
+                    item
+                    for item in visible
+                    if (
+                        self.state["objects"][item[1]].get("front_color"),
+                        self.state["objects"][item[1]].get("back_color"),
+                    ) == color_pair
+                ]
             held_key = f"held_{kind}s"
             capacity = MAX_HELD_PINS if kind == "pin" else MAX_HELD_CUPS
             if not visible or state[held_key] >= capacity:
-                return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
+                index = visible[0][1] if visible else None
+                stack_indices = self._pickup_stack_at(index) if index is not None else []
+                if len(stack_indices) <= 1 or not (state["held_pins"] or state["held_cups"]):
+                    return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
             index = visible[0][1]
+            stack_indices = self._pickup_stack_at(index)
+            stack_pickup = len(stack_indices) > 1
+            if stack_pickup:
+                delta = self.state["objects"][index]["position"] - state["position"]
+                reverse_heading = vex_atan2(float(delta[0]), float(delta[1])) + 180.0
+                event = ActionEvent(
+                    "pickup",
+                    {"index": index, "stack_indices": stack_indices, "replace_held": True},
+                )
+                state["_pending_stack_pickup"] = True
+                return self._move(
+                    agent,
+                    self.state["objects"][index]["position"],
+                    event,
+                    reverse_heading,
+                ), 0.0
             # Apply the pickup event after the movement plan reaches the object.
             return self._move(agent, self.state["objects"][index]["position"], ActionEvent("pickup", {"index": index})), 0.0
         goal = self._goal_for_action(selected)
@@ -1255,7 +1456,10 @@ class OverrideGame(VexGame):
             # Keep inferred parking state synchronized when the robot leaves the zone.
             state["parked"] = False
             state["parked_zone"] = None
-        if descriptor.kind == "pickup_pin" and state["held_pins"] < MAX_HELD_PINS:
+        if descriptor.kind in ("pickup_pin", "pickup_cup") and state.pop("_pending_stack_pickup", False):
+            state["held_pins"] = 1
+            state["held_cups"] = 1
+        elif descriptor.kind == "pickup_pin" and state["held_pins"] < MAX_HELD_PINS:
             # Reflect a successful Pin pickup in the inferred inventory.
             state["held_pins"] += 1
         elif descriptor.kind == "pickup_cup" and state["held_cups"] < MAX_HELD_CUPS:
@@ -1342,11 +1546,27 @@ class OverrideGame(VexGame):
         objects_changed = any(event.type in {"pickup", "score"} for event in events)
         for event in events:
             if event.type == "pickup":
-                # Move the selected field object into the robot's inventory.
-                obj = self.state["objects"][event.data["index"]]
-                held_key = f"held_{obj['kind']}s"
-                capacity = MAX_HELD_PINS if obj["kind"] == "pin" else MAX_HELD_CUPS
-                if obj["status"] == ObjectStatus.ON_FIELD and state[held_key] < capacity:
+                # Move the selected field object, or its entire stack, into inventory.
+                if event.data.get("replace_held"):
+                    drop_position = state["position"].copy()
+                    for held_obj in self.state["objects"]:
+                        if held_obj["status"] == ObjectStatus.HELD and held_obj["held_by"] == agent:
+                            held_obj.update(status=ObjectStatus.ON_FIELD, held_by=None,
+                                            position=drop_position.copy())
+                            held_obj["unstacked"] = True
+                    state["held_pins"] = 0
+                    state["held_cups"] = 0
+                    state["held_pin_order"] = [None, None]
+                    state["held_cup_face_up"] = False
+                    state["held_stack"] = []
+
+                pickup_indices = event.data.get("stack_indices", [event.data["index"]])
+                for pickup_index in pickup_indices:
+                    obj = self.state["objects"][int(pickup_index)]
+                    held_key = f"held_{obj['kind']}s"
+                    capacity = MAX_HELD_PINS if obj["kind"] == "pin" else MAX_HELD_CUPS
+                    if obj["status"] != ObjectStatus.ON_FIELD or state[held_key] >= capacity:
+                        continue
                     if obj["kind"] == "pin":
                         # Apply a requested Pin face before storing its visible colors.
                         desired_color = state.get("next_pin_color")
@@ -1372,40 +1592,6 @@ class OverrideGame(VexGame):
                     elif obj["kind"] == "cup":
                         # Preserve the Cup face for the held-object observation.
                         state["held_cup_face_up"] = bool(obj.get("face_up", False))
-                    held_indices = [
-                        index for index, held_obj in enumerate(self.state["objects"])
-                        if held_obj["status"] == ObjectStatus.HELD and held_obj["held_by"] == agent
-                    ]
-                    for partner in self.state["objects"]:
-                        # Pick up a paired object occupying the same field location.
-                        same_position = np.allclose(partner["position"], obj["position"])
-                        partner_key = f"held_{partner['kind']}s"
-                        partner_capacity = MAX_HELD_PINS if partner["kind"] == "pin" else MAX_HELD_CUPS
-                        if (partner is not obj and same_position
-                                and partner["kind"] != obj["kind"]
-                                and partner["status"] == ObjectStatus.ON_FIELD
-                                and state[partner_key] < partner_capacity):
-                            if partner["kind"] == "pin":
-                                desired_color = state.get("next_pin_color")
-                                if desired_color == partner.get("front_color"):
-                                    partner["face_up"] = True
-                                elif desired_color == partner.get("back_color"):
-                                    partner["face_up"] = False
-                                state["next_pin_color"] = None
-                            else:
-                                desired_face_up = state.get("next_cup_face_up")
-                                if desired_face_up is not None:
-                                    partner["face_up"] = bool(desired_face_up)
-                                state["next_cup_face_up"] = None
-                            partner.update(status=ObjectStatus.HELD, held_by=agent)
-                            state[partner_key] += 1
-                            if partner["kind"] == "pin":
-                                ordered_colors = [partner.get("front_color"), partner.get("back_color")]
-                                if not bool(partner.get("face_up", True)):
-                                    ordered_colors = list(reversed(ordered_colors))
-                                state["held_pin_order"] = ordered_colors
-                            elif partner["kind"] == "cup":
-                                state["held_cup_face_up"] = bool(partner.get("face_up", False))
                     held_indices = [
                         index for index, held_obj in enumerate(self.state["objects"])
                         if held_obj["status"] == ObjectStatus.HELD and held_obj["held_by"] == agent
@@ -1531,6 +1717,7 @@ class OverrideGame(VexGame):
             elif event.type == "turn":
                 state["orientation"] = np.array([event.data["angle"]], dtype=np.float32)
         if objects_changed:
+            self._refresh_object_heights()
             # Invalidate cached field visibility after object status changes.
             self._visibility_revision += 1
 
