@@ -1947,15 +1947,38 @@ class OverrideGame(VexGame):
         descriptor = self.action_descriptor(action)
         if descriptor is None:
             return ["WAIT;0.5"]
+
+        if descriptor.kind == "pickup_pin":
+            # Pin pickup requires the controller's camera targeting sequence.
+            return ["WAIT;0.5"]
+
+        if descriptor.kind == "pickup_cup":
+            # Cup pickup requires the controller's camera targeting sequence.
+            return ["WAIT;0.5"]
+
+        if descriptor.kind == "score_goal":
+            # Goal scoring requires the controller's goal alignment sequence.
+            return ["WAIT;0.5"]
+
+        if descriptor.kind == "toggle":
+            # Toggle interaction requires the controller's field alignment sequence.
+            return ["WAIT;0.5"]
+
+        if descriptor.kind == "park":
+            # Parking requires the controller's field alignment sequence.
+            return ["WAIT;0.5"]
+
         if descriptor.kind == "idle":
             # Keep the physical robot still while it idles.
             return ["WAIT;0.5"]
+
         if descriptor.kind == "turn_center":
             # Use the shared controller command to face the field center.
             return ["TURN_TO_POINT;(0.0,0.0);40"]
-        if selected in self.loader_action_map:
+
+        if descriptor.kind == "take_loader":
             # Convert a Loader action into approach, turn, and clear commands.
-            loader_index = self._loader_index_for_action(robot.name, selected)
+            loader_index = self._loader_index_for_action(robot.name, descriptor.action)
             if loader_index is None:
                 return ["WAIT;0.5"]
             loader_target, _ = self._loader_wall_pose(robot.name, loader_index)
@@ -1965,6 +1988,7 @@ class OverrideGame(VexGame):
                 f"TURN_TO_POINT;({wall_x:.1f}, {loader_target[1]:.1f});30",
                 "CLEAR_LOADER",
             ]
+
         # Actions without a direct controller sequence remain a short wait.
         return ["WAIT;0.5"]
 
