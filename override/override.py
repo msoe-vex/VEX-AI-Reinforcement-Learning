@@ -34,7 +34,13 @@ NUM_GOALS = 9
 GOAL_POLAR_FEATURES = 3
 GOAL_PIN_COUNT_FEATURES = 3
 GOAL_TOP_FEATURES = 6
-GOAL_FEATURES = GOAL_POLAR_FEATURES + GOAL_PIN_COUNT_FEATURES + GOAL_TOP_FEATURES
+GOAL_HEIGHT_FEATURES = 1
+GOAL_FEATURES = (
+    GOAL_POLAR_FEATURES
+    + GOAL_PIN_COUNT_FEATURES
+    + GOAL_TOP_FEATURES
+    + GOAL_HEIGHT_FEATURES
+)
 NUM_TOGGLES = 4
 MATCH_TIME = 120.0
 AUTONOMOUS_TIME = 15.0
@@ -486,6 +492,20 @@ class OverrideGame(VexGame):
 
     def _goal_for_action(self, action: Optional[Actions]) -> Optional[GoalType]:
         return self.goal_action_map.get(action) if action is not None else None
+
+    def _goal_objects(self, goal: GoalType) -> List[Dict]:
+        goal_position = self.goal_positions[goal]
+        return [
+            obj for obj in self.state["objects"]
+            if obj["kind"] in {"pin", "cup"}
+            and obj["status"] in {ObjectStatus.ON_FIELD, ObjectStatus.SCORED}
+            and np.linalg.norm(obj["position"] - goal_position) <= GOAL_RADII[goal]
+        ]
+
+    def _goal_stack_height(self, goal: GoalType) -> float:
+        """Return the highest item currently occupying a Goal."""
+        objects = self._goal_objects(goal)
+        return max((float(obj.get("z", 0.0)) for obj in objects), default=0.0)
 
     @property
     def goal_positions(self) -> Dict[GoalType, np.ndarray]:
@@ -1141,9 +1161,10 @@ class OverrideGame(VexGame):
             goal_objects = [
                 (index, obj)
                 for index, obj in enumerate(self.state["objects"])
-                if obj["kind"] in {"pin", "cup"}
-                and obj["status"] in {ObjectStatus.ON_FIELD, ObjectStatus.SCORED}
-                and np.all(np.abs(obj["position"] - goal_position) <= 1.0)
+                if any(
+                    candidate is obj
+                    for candidate in self._goal_objects(goal_type)
+                )
             ]
 
             pin_counts = {"friendly": 0.0, "opponent": 0.0, "neutral": 0.0}
@@ -1188,10 +1209,12 @@ class OverrideGame(VexGame):
                 1.0 if index == top_feature else 0.0
                 for index in range(GOAL_TOP_FEATURES)
             )
+            values.append(self._goal_stack_height(goal_type))
 
         for _ in range(NUM_GOALS - len(active_goals)):
             values.extend([-144.0, 0.0, 0.0, 0.0, 0.0, 0.0])
             values.extend([1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            values.append(0.0)
 
         observation = np.asarray(values, dtype=np.float32)
         if observation.shape != (ObsIndex.TOTAL,):
@@ -1319,6 +1342,25 @@ class OverrideGame(VexGame):
             and obj["kind"] in {"pin", "cup"}
             and np.allclose(obj["position"], selected["position"])
         ]
+
+    def _pickup_item_index(self, agent: str, descriptor: ActionDescriptor) -> Optional[int]:
+        kind = "cup" if descriptor.action == Actions.PICKUP_CUP else "pin"
+        visible = self._visible(agent, kind)
+        if kind == "pin":
+            if descriptor.target is None:
+                raise ValueError(
+                    f"Pin pickup action {descriptor.name} has no color combination"
+                )
+            color_pair = PIN_COLOR_COMBINATIONS[descriptor.target]
+            visible = [
+                item
+                for item in visible
+                if (
+                    self.state["objects"][item[1]].get("front_color"),
+                    self.state["objects"][item[1]].get("back_color"),
+                ) == color_pair
+            ]
+        return visible[0][1] if visible else None
 
     def execute_action(self, agent: str, action: int) -> Tuple[List[ActionStep], float]:
         # Translate a high-level action into timed steps and a penalty.
@@ -1850,10 +1892,8 @@ class OverrideGame(VexGame):
             return False
         selected = descriptor.action
         if descriptor.kind == "pickup_pin" and state["held_pins"] >= MAX_HELD_PINS:
-            # Do not pick up another Pin when the Pin capacity is full.
             return False
         if descriptor.kind == "pickup_cup" and state["held_cups"] >= MAX_HELD_CUPS:
-            # Do not pick up another Cup when the Cup capacity is full.
             return False
         if self._goal_for_action(selected) is not None and (
             observation[ObsIndex.HELD_PINS] <= 0
@@ -1948,25 +1988,106 @@ class OverrideGame(VexGame):
         if descriptor is None:
             return ["WAIT;0.5"]
 
-        if descriptor.kind == "pickup_pin":
-            # Pin pickup requires the controller's camera targeting sequence.
-            return ["WAIT;0.5"]
-
-        if descriptor.kind == "pickup_cup":
-            # Cup pickup requires the controller's camera targeting sequence.
-            return ["WAIT;0.5"]
+        if descriptor.kind == "pickup_item":
+            item_index = self._pickup_item_index(robot.name, descriptor)
+            if item_index is None:
+                return ["WAIT;0.5"]
+            state = self.state["agents"].get(robot.name)
+            start_position = (
+                np.asarray(state["position"], dtype=np.float32)
+                if state is not None
+                else np.asarray(robot.start_position, dtype=np.float32)
+            )
+            item_position = self.state["objects"][item_index]["position"]
+            path, _, _, _ = self.path_planner.Solve(
+                start_position,
+                item_position,
+                self.get_permanent_obstacles(),
+                robot,
+                optimize=False,
+            )
+            path_text = ",".join(
+                f"({float(point[0]):.1f}, {float(point[1]):.1f})"
+                for point in path
+            )
+            reverse = int(len(self._pickup_stack_at(item_index)) > 1)
+            return [f"PICKUP_ITEM;{path_text};{reverse}"]
 
         if descriptor.kind == "score_goal":
-            # Goal scoring requires the controller's goal alignment sequence.
-            return ["WAIT;0.5"]
+            goal = self._goal_for_action(descriptor.action)
+            if goal is None:
+                return ["WAIT;0.5"]
+            state = self.state["agents"].get(robot.name)
+            start_position = (
+                np.asarray(state["position"], dtype=np.float32)
+                if state is not None
+                else np.asarray(robot.start_position, dtype=np.float32)
+            )
+            target_position = self._target_next_to_goal(robot.name, goal)
+            path, _, _, _ = self.path_planner.Solve(
+                start_position,
+                target_position,
+                self.get_permanent_obstacles(),
+                robot,
+                optimize=False,
+            )
+            path_text = ",".join(
+                f"({float(point[0]):.1f}, {float(point[1]):.1f})"
+                for point in path
+            )
+            return [
+                f"SCORE;{path_text};{self._goal_stack_height(goal):.2f}"
+            ]
 
         if descriptor.kind == "toggle":
-            # Toggle interaction requires the controller's field alignment sequence.
-            return ["WAIT;0.5"]
+            toggle_index = descriptor.target
+            if toggle_index is None or toggle_index >= len(self.toggle_positions):
+                return ["WAIT;0.5"]
+            state = self.state["agents"].get(robot.name)
+            start_position = (
+                np.asarray(state["position"], dtype=np.float32)
+                if state is not None
+                else np.asarray(robot.start_position, dtype=np.float32)
+            )
+            target_position, _ = self._target_next_to_toggle(robot.name, toggle_index)
+            path, _, _, _ = self.path_planner.Solve(
+                start_position,
+                target_position,
+                self.get_permanent_obstacles(),
+                robot,
+                optimize=False,
+            )
+            path_text = ",".join(
+                f"({float(point[0]):.1f}, {float(point[1]):.1f})"
+                for point in path
+            )
+            toggle_color = self.state["toggles"][toggle_index] or "yellow"
+            toggle_color_value = self._color_to_alliance_value(
+                toggle_color,
+                robot.team.value,
+            )
+            return [f"TOGGLE;{path_text};{toggle_color_value:.0f}"]
 
         if descriptor.kind == "park":
-            # Parking requires the controller's field alignment sequence.
-            return ["WAIT;0.5"]
+            state = self.state["agents"].get(robot.name)
+            start_position = (
+                np.asarray(state["position"], dtype=np.float32)
+                if state is not None
+                else np.asarray(robot.start_position, dtype=np.float32)
+            )
+            target_position = self._target_next_to_goal(robot.name, GoalType.TALL)
+            path, _, _, _ = self.path_planner.Solve(
+                start_position,
+                target_position,
+                self.get_permanent_obstacles(),
+                robot,
+                optimize=False,
+            )
+            path_text = ",".join(
+                f"({float(point[0]):.1f}, {float(point[1]):.1f})"
+                for point in path
+            )
+            return [f"PARK;{path_text}"]
 
         if descriptor.kind == "idle":
             # Keep the physical robot still while it idles.
@@ -1977,17 +2098,29 @@ class OverrideGame(VexGame):
             return ["TURN_TO_POINT;(0.0,0.0);40"]
 
         if descriptor.kind == "take_loader":
-            # Convert a Loader action into approach, turn, and clear commands.
+            # Convert a Loader action into a collision-aware approach path.
             loader_index = self._loader_index_for_action(robot.name, descriptor.action)
             if loader_index is None:
                 return ["WAIT;0.5"]
             loader_target, _ = self._loader_wall_pose(robot.name, loader_index)
-            wall_x = -FIELD_HALF if self.loader_positions[loader_index][0] < 0.0 else FIELD_HALF
-            return [
-                f"FOLLOW;({loader_target[0]:.1f}, {loader_target[1]:.1f});50",
-                f"TURN_TO_POINT;({wall_x:.1f}, {loader_target[1]:.1f});30",
-                "CLEAR_LOADER",
-            ]
+            state = self.state["agents"].get(robot.name)
+            start_position = (
+                np.asarray(state["position"], dtype=np.float32)
+                if state is not None
+                else np.asarray(robot.start_position, dtype=np.float32)
+            )
+            path, _, _, _ = self.path_planner.Solve(
+                start_position,
+                loader_target,
+                self.get_permanent_obstacles(),
+                robot,
+                optimize=False,
+            )
+            path_text = ",".join(
+                f"({float(point[0]):.1f}, {float(point[1]):.1f})"
+                for point in path
+            )
+            return [f"LOADER;{path_text}"]
 
         # Actions without a direct controller sequence remain a short wait.
         return ["WAIT;0.5"]
