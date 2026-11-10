@@ -1267,7 +1267,7 @@ class OverrideGame(VexGame):
         return edge + approach * (robot_length / 2.0)
 
     def _loader_wall_pose(self, agent: str, loader_index: int) -> Tuple[np.ndarray, float]:
-        # Return the approach pose and wall-facing orientation for a Loader.
+        # Return the approach pose and reverse-entry orientation for a Loader.
         position = self.loader_positions[loader_index]
         robot = self.get_robot_for_agent(agent)
         wall_clearance = float(robot.total_radius) + 0.5 if robot else 0.0
@@ -1276,11 +1276,11 @@ class OverrideGame(VexGame):
             return np.array([
                 -FIELD_HALF + wall_clearance,
                 position[1],
-            ], dtype=np.float32), 270.0
+            ], dtype=np.float32), 90.0
         return np.array([
             FIELD_HALF - wall_clearance,
             position[1],
-        ], dtype=np.float32), 90.0
+        ], dtype=np.float32), 270.0
 
     def _target_next_to_goal(self, agent: str, goal: GoalType) -> np.ndarray:
         # Return a point outside the selected Goal along the robot's approach vector.
@@ -1453,7 +1453,7 @@ class OverrideGame(VexGame):
                 ActionEvent("score", {"kind": kind, "goal": goal.value, "paired": paired}),
             ), penalty
         if selected in self.loader_action_map:
-            # Approach the selected wall Loader, face it, and clear its contents.
+            # Reverse into the selected wall Loader before clearing its contents.
             loader_index = self._loader_index_for_action(agent, selected)
             if loader_index is None:
                 raise ValueError(f"Unable to resolve Loader action {selected}")
@@ -2098,7 +2098,7 @@ class OverrideGame(VexGame):
             return ["TURN_TO_POINT;(0.0,0.0);40"]
 
         if descriptor.kind == "take_loader":
-            # Convert a Loader action into a collision-aware approach path.
+            # Convert a Loader action into a collision-aware reverse-entry path.
             loader_index = self._loader_index_for_action(robot.name, descriptor.action)
             if loader_index is None:
                 return ["WAIT;0.5"]
