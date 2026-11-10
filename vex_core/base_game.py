@@ -7,6 +7,7 @@ The VexMultiAgentEnv delegates game-specific logic to a VexGame instance.
 
 from abc import ABC, abstractmethod
 from typing import Dict, List, Tuple, Optional, Any
+import json
 import numpy as np
 from gymnasium import spaces
 from dataclasses import dataclass, field
@@ -193,6 +194,58 @@ class VexGame(ABC):
     def get_game_observation_space(self, agent: str) -> spaces.Space:
         """Get the observation space for an agent."""
         pass
+
+    @staticmethod
+    def observation_to_json(observation: np.ndarray) -> str:
+        """Serialize a numpy observation with its dtype and shape."""
+        array = np.asarray(observation)
+        if not np.issubdtype(array.dtype, np.number):
+            raise TypeError(
+                f"Observation dtype must be numeric, got {array.dtype}"
+            )
+        return json.dumps({
+            "dtype": array.dtype.str,
+            "shape": list(array.shape),
+            "data": array.tolist(),
+        }, separators=(",", ":"))
+
+    @staticmethod
+    def json_to_observation(observation_json: str) -> np.ndarray:
+        """Deserialize an observation produced by observation_to_json."""
+        try:
+            payload = json.loads(observation_json)
+        except (TypeError, json.JSONDecodeError) as error:
+            raise ValueError("Observation JSON is not valid JSON") from error
+
+        if not isinstance(payload, dict):
+            raise ValueError("Observation JSON must contain an object")
+        for key in ("dtype", "shape", "data"):
+            if key not in payload:
+                raise ValueError(f"Observation JSON is missing '{key}'")
+
+        try:
+            dtype = np.dtype(payload["dtype"])
+        except (TypeError, ValueError) as error:
+            raise ValueError("Observation JSON contains an invalid dtype") from error
+        if not np.issubdtype(dtype, np.number):
+            raise ValueError(f"Observation dtype must be numeric, got {dtype}")
+
+        if not isinstance(payload["shape"], list):
+            raise ValueError("Observation shape must be a list")
+        shape = tuple(payload["shape"])
+        if any(
+            isinstance(dimension, bool)
+            or not isinstance(dimension, int)
+            or dimension < 0
+            for dimension in shape
+        ):
+            raise ValueError("Observation shape must contain non-negative integers")
+
+        try:
+            observation = np.asarray(payload["data"], dtype=dtype).reshape(shape)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Observation JSON data does not match its shape") from error
+        return observation
     
     @abstractmethod
     def get_game_action_space(self, agent: str) -> spaces.Space:
