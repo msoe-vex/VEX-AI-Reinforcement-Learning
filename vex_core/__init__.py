@@ -13,5 +13,21 @@ Import it explicitly: from vex_core.base_env import VexMultiAgentEnv
 from .base_game import VexGame, ActionEvent, ActionStep
 from .robot import Robot, RobotSize, Team
 from .path_planner import PathPlanner
+from .game_adapter import BaseGameAdapter
+from .factory import GameAdapterFactory
+from .converters import json_to_numpy, numpy_to_json, get_default_observation_dict
 
-__all__ = ['VexGame', 'Robot', 'RobotSize', 'Team', 'ActionEvent', 'ActionStep', 'PathPlanner']
+__all__ = [
+    'VexGame',
+    'Robot',
+    'RobotSize',
+    'Team',
+    'ActionEvent',
+    'ActionStep',
+    'PathPlanner',
+    'BaseGameAdapter',
+    'GameAdapterFactory',
+    'json_to_numpy',
+    'numpy_to_json',
+    'get_default_observation_dict',
+]
