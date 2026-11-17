@@ -185,6 +185,29 @@ class TestGameAdapterAndSerialization(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIsNone(reason)
 
+    def test_check_runtime_preemption(self):
+        """Test real-time Option-Critic runtime preemption evaluations."""
+        state = self.adapter.get_initial_state_dict()
+
+        # No obstacles -> should not preempt
+        preempt, reason = self.adapter.check_runtime_preemption(Actions.SCORE_GOAL_1.value, state)
+        self.assertFalse(preempt)
+
+        # Place obstacle 10 inches ahead -> should preempt
+        state["camera_objects"] = [
+            {"class_name": "opponent_robot", "distance_in": 10.0, "angle_deg": 5.0}
+        ]
+        preempt, reason = self.adapter.check_runtime_preemption(Actions.SCORE_GOAL_1.value, state)
+        self.assertTrue(preempt)
+        self.assertIn("ObstacleDetectedAhead", reason)
+
+        # Clear obstacle, test teammate collision risk
+        state["camera_objects"] = []
+        state["teammate"] = {"connected": True, "visible": True, "distance": 18.0}
+        preempt, reason = self.adapter.check_runtime_preemption(Actions.SCORE_GOAL_1.value, state)
+        self.assertTrue(preempt)
+        self.assertIn("TeammateCollisionRisk", reason)
+
 
 if __name__ == "__main__":
     unittest.main()

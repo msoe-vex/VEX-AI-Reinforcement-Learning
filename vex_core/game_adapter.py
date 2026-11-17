@@ -135,3 +135,15 @@ class BaseGameAdapter(ABC):
         Returns (should_proceed, reason_if_aborted).
         """
         pass
+
+    def check_runtime_preemption(
+        self,
+        option_idx: int,
+        current_state: Dict[str, Any],
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Evaluates whether the currently executing option should be preempted
+        based on real-time field state (e.g. obstacle in path, stall, target lost).
+        Returns (should_preempt, reason).
+        """
+        return False, None

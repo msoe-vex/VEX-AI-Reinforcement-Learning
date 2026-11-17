@@ -310,6 +310,31 @@ class VexModelRunner:
         # Update tracker fields based on completed action (uses game.state)
         self.game.update_tracker(agent=self.agent_name, action=action)
 
+    def evaluate_termination(self, option_id: int, obs_array: np.ndarray, threshold: float = 0.5) -> bool:
+        """
+        Evaluates whether option_id should terminate in observation state obs_array.
+        If the model provides an explicit termination head, queries beta_omega(s).
+        Otherwise returns False, deferring to heuristic/adapter preemption rules.
+        """
+        if self.model is None:
+            return False
+
+        if hasattr(self.model, "termination_head") or hasattr(self.model, "beta_head"):
+            try:
+                obs_t = torch.tensor(obs_array, dtype=torch.float32, device=self.device).unsqueeze(0)
+                with torch.no_grad():
+                    if hasattr(self.model, "evaluate_termination"):
+                        prob = float(self.model.evaluate_termination(option_id, obs_t))
+                        return prob >= threshold
+            except Exception:
+                pass
+        return False
+
+    def predict_option(self, obs_array: np.ndarray) -> int:
+        """Selects the next optimal option given the current observation."""
+        action_idx, _ = self.get_prediction(obs_array)
+        return action_idx
+
 
 """
 Flow in USB script will be something like this:

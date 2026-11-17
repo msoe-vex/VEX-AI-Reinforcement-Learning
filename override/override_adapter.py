@@ -332,6 +332,48 @@ class OverrideGameAdapter(BaseGameAdapter):
 
         return True, None
 
+    def check_runtime_preemption(
+        self,
+        option_idx: int,
+        current_state: Dict[str, Any],
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Evaluates real-time preemption triggers for Override game options.
+        Triggers:
+        1. Safety / Obstacle Proximity:
+           If a detected dynamic object is directly in front within collision zone
+           (< 18 inches, angle within +/- 30 degrees).
+        2. Teammate Collision Risk:
+           If teammate robot is detected within 24 inches directly ahead.
+        3. Inventory Invalidation:
+           If a scoring action is executing but held inventory unexpectedly becomes empty.
+        """
+        # 1. Safety / Obstacle Proximity Check
+        camera_objs = current_state.get("camera_objects", [])
+        for obj in camera_objs:
+            dist = float(obj.get("distance_in", 999.0))
+            theta = float(obj.get("angle_deg", 999.0))
+            if dist < 18.0 and abs(theta) <= 30.0:
+                kind = obj.get("class_name", "obstacle")
+                return True, f"ObstacleDetectedAhead:{kind}@{dist:.1f}in"
+
+        # 2. Teammate Collision Risk
+        tm_bot = current_state.get("teammate", {})
+        if tm_bot and tm_bot.get("connected") and tm_bot.get("visible", False):
+            tm_dist = float(tm_bot.get("distance", -144.0))
+            if 0.0 < tm_dist < 24.0:
+                return True, f"TeammateCollisionRisk@{tm_dist:.1f}in"
+
+        # 3. Inventory Invalidation during scoring options
+        self_bot = current_state.get("self_robot", {})
+        if self_bot and option_idx in (7, 8):
+            held_pins = int(self_bot.get("held_pins", 0))
+            held_cups = int(self_bot.get("held_cups", 0))
+            if held_pins <= 0 and held_cups <= 0:
+                return True, "HeldInventoryEmptyDuringScoring"
+
+        return False, None
+
 
 # Automatically register Override with the factory
 GameAdapterFactory.register("override", OverrideGameAdapter)
