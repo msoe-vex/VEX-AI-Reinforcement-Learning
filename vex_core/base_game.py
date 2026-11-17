@@ -280,6 +280,10 @@ class VexGame(ABC):
             Tuple of (list of ActionSteps, penalty value)
         """
         pass
+
+    def cancel_action(self, agent: str, action: int) -> None:
+        """Release game-specific pending state when an action is interrupted."""
+        return None
     
     @abstractmethod
     def get_action_name(self, action: int) -> str:

@@ -2,7 +2,10 @@ import ray
 import argparse
 from ray.tune.registry import register_env
 from ray.rllib.algorithms.ppo import PPOConfig
+from ray.rllib.algorithms.ppo.torch.ppo_torch_learner import PPOTorchLearner
 from ray.rllib.callbacks.callbacks import RLlibCallback
+from ray.rllib.core.columns import Columns
+from ray.rllib.evaluation.postprocessing import Postprocessing
 from ray.tune.logger.json import JsonLoggerCallback
 from ray.tune.logger.csv import CSVLoggerCallback
 # from ray.tune.logger.tensorboardx import TBXLoggerCallback  # Uncomment if you want TensorBoard
@@ -11,9 +14,10 @@ import warnings
 import time
 import os
 import glob
+import torch
 
 # Import from new modular architecture
-from vex_core.base_env import VexMultiAgentEnv
+from vex_core.base_env import MESSAGE_SIZE, VexMultiAgentEnv
 from vex_core.config import (
     VexEnvConfig,
     CommunicationOption,
@@ -27,6 +31,59 @@ from vex_model_compile import compile_checkpoint_to_torchscript
 from vex_model_test import run_simulation
 import sys
 import json
+
+OPTION_CRITIC_SWITCHING_COST = 1.0
+
+
+def _option_critic_termination_loss(
+    beta,
+    active_action_one_hot,
+    advantages,
+    loss_mask=None,
+):
+    if beta.shape != active_action_one_hot.shape:
+        raise ValueError(
+            "Termination probabilities and active-action mask must have the same shape"
+        )
+    if beta.shape[:-1] != advantages.shape:
+        raise ValueError(
+            "Termination probabilities and PPO advantages must share their batch shape"
+        )
+
+    active_action_one_hot = active_action_one_hot.to(dtype=beta.dtype)
+    active_beta = torch.sum(beta * active_action_one_hot, dim=-1)
+    weights = torch.sum(active_action_one_hot, dim=-1)
+    if loss_mask is not None:
+        weights = weights * loss_mask.to(dtype=weights.dtype)
+    return torch.sum(
+        active_beta
+        * (advantages.detach() + OPTION_CRITIC_SWITCHING_COST)
+        * weights
+    ) / torch.clamp(torch.sum(weights), min=1.0)
+
+
+class OptionCriticPPOTorchLearner(PPOTorchLearner):
+    def compute_loss_for_module(self, *, module_id, config, batch, fwd_out):
+        ppo_loss = super().compute_loss_for_module(
+            module_id=module_id,
+            config=config,
+            batch=batch,
+            fwd_out=fwd_out,
+        )
+        beta = fwd_out["termination_probabilities"]
+        termination_loss = _option_critic_termination_loss(
+            beta,
+            fwd_out["active_action_one_hot"],
+            batch[Postprocessing.ADVANTAGES],
+            loss_mask=batch.get(Columns.LOSS_MASK),
+        )
+        self.metrics.log_dict(
+            {"option_critic/termination_loss": termination_loss},
+            key=module_id,
+            window=1,
+        )
+        return ppo_loss + termination_loss
+
 
 TRAINING_PHASES = [
     # Phase 1: BOOTSTRAP (The "Silent" Era)
@@ -173,6 +230,7 @@ def apply_head_training_status_on_learner(learner, phase):
             
         if hasattr(target_module, "pi"):
             act_params.update(target_module.pi.parameters())
+            act_params.update(target_module.termination_head.parameters())
             print(f"Set action params for {module_id}, Phase: {phase}")
         else:
             print(f"Warning: No pi (action head) found for {module_id}")
@@ -585,6 +643,19 @@ if __name__ == "__main__":
     sample_agent = temp_env.possible_agents[0]
     obs_space = temp_env.observation_space(sample_agent)
     act_space = temp_env.action_space(sample_agent)
+    core_obs_size = temp_env.game.get_game_observation_space(sample_agent).shape[0]
+    if env_config_obj.communication_mode == CommunicationOption.ATTENTION:
+        communication_dim = MESSAGE_SIZE
+    elif env_config_obj.communication_mode == CommunicationOption.COPY:
+        team = temp_env.game.get_team_for_agent(sample_agent)
+        teammate_count = sum(
+            1
+            for other in temp_env.possible_agents
+            if other != sample_agent and temp_env.game.get_team_for_agent(other) == team
+        )
+        communication_dim = core_obs_size * teammate_count
+    else:
+        communication_dim = 0
     
     # Initialize Ray with GPU detection and runtime environment config
     ray.init(
@@ -655,6 +726,7 @@ if __name__ == "__main__":
         .learners(
             num_learners=1 if num_gpus_available > 0 else 0,  # Use 1 GPU learner if available
             num_gpus_per_learner=1 if num_gpus_available > 0 else 0,  # Assign GPU to learner
+            learner_class=OptionCriticPPOTorchLearner,
         )
         .env_runners(
             num_env_runners=num_env_runners,
@@ -672,7 +744,10 @@ if __name__ == "__main__":
                 module_class=VexCustomPPO,  # Use custom model with clean architecture
                 observation_space=obs_space,
                 action_space=act_space,
-                model_config={"communication_mode": env_config_obj.communication_mode.value}  # Model architecture defined in vex_custom_model.py
+                model_config={
+                    "communication_mode": env_config_obj.communication_mode.value,
+                    "communication_dim": communication_dim,
+                }  # Model architecture defined in vex_custom_model.py
             )
         )
         .fault_tolerance(

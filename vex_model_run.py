@@ -4,7 +4,7 @@ import numpy as np
 # Import from new modular architecture
 from vex_core.base_game import VexGame
 from vex_core.config import CommunicationOption
-from vex_core.base_env import MESSAGE_SIZE
+from vex_core.base_env import MESSAGE_SIZE, OPTION_TERMINATION_THRESHOLD
 from typing import Optional
 
 class VexModelRunner:
@@ -22,6 +22,7 @@ class VexModelRunner:
         self.temperature = max(1e-6, float(temperature))
         self._base_obs_dim = 0
         self._expected_obs_dim = 0
+        self._num_actions = int(self.game.num_actions)
         self._comm_mode_name = "none"
 
         self.model = model
@@ -134,7 +135,12 @@ class VexModelRunner:
         padded[:current_dim] = obs
         return padded
 
-    def get_prediction(self, observation: np.ndarray, action_mask: np.ndarray = None):
+    def get_prediction(
+        self,
+        observation: np.ndarray,
+        action_mask: np.ndarray = None,
+        active_action: Optional[int] = None,
+    ):
         """
         Runs inference on the model to get the predicted action and message vector.
         
@@ -149,7 +155,7 @@ class VexModelRunner:
             action_mask: Optional pre-computed action mask.
             
         Returns:
-            Tuple of (action: int, message_vector: np.ndarray or None)
+            Tuple of (action, message_vector, termination_probability)
         """
         # Zero-Copy Tensor Creation: Use from_numpy() instead of tensor()
         # Avoids memory copy if numpy array is already contiguous and correct dtype
@@ -215,8 +221,8 @@ class VexModelRunner:
         model_output = resolved_model_output
         action_mask_np = resolved_mask
 
-        # Handle both Discrete and Tuple action spaces.
-        # Tuple structure is (Discrete(action), Box(message)).
+        # The game exposes the discrete macro-action space; the exported
+        # policy may additionally contain message and termination outputs.
         action_space = self.game.get_game_action_space(self.agent_name)
         output_dim = int(model_output.shape[1])
         if hasattr(action_space, 'n'):
@@ -229,19 +235,22 @@ class VexModelRunner:
         # Some legacy checkpoints export the action logits without the full
         # mask width or with the message tail concatenated, so prefer the model's
         # actual output width when it is smaller than the env's nominal action count.
-        if output_dim >= 2 * MESSAGE_SIZE and self._comm_mode_name == "attention":
-            action_dim = max(1, output_dim - 2 * MESSAGE_SIZE)
-        elif output_dim > 0 and output_dim <= max(1, action_dim):
-            action_dim = output_dim
+        message_output_dim = 2 * MESSAGE_SIZE if self._comm_mode_name == "attention" else 0
+        has_termination_head = (
+            output_dim >= action_dim + message_output_dim + self._num_actions
+        )
+        if not has_termination_head:
+            if self._comm_mode_name == "attention" and output_dim >= 2 * MESSAGE_SIZE:
+                action_dim = max(1, output_dim - 2 * MESSAGE_SIZE)
+            elif output_dim > 0 and output_dim <= max(1, action_dim):
+                action_dim = output_dim
 
         action_logits = model_output[:, :action_dim]
 
-        # Extract message vector (MESSAGE_SIZE dims) if present after action logits
         message_vector = None
-        remaining = model_output.shape[1] - action_dim
-        if remaining >= MESSAGE_SIZE:
+        if self._comm_mode_name == "attention" and output_dim >= action_dim + MESSAGE_SIZE:
             message_mean = model_output[:, action_dim:action_dim + MESSAGE_SIZE]
-            if remaining >= 2 * MESSAGE_SIZE:
+            if output_dim >= action_dim + 2 * MESSAGE_SIZE:
                 msg_log_std = model_output[:, action_dim + MESSAGE_SIZE:action_dim + 2 * MESSAGE_SIZE]
                 msg_std = torch.exp(msg_log_std) * getattr(self, "temperature", 1.0)
                 msg_dist = torch.distributions.Normal(message_mean, msg_std)
@@ -264,12 +273,62 @@ class VexModelRunner:
         if not self.game.is_valid_action(self.agent_name, action, observation):
             action = self.game.fallback_action
 
-        return int(action), message_vector
+        if not has_termination_head:
+            raise RuntimeError(
+                "The loaded model has no Option-Critic termination head. "
+                "Train and export a checkpoint with the current model code."
+            )
+        termination_probability = 0.0
+        if active_action is not None:
+            active_action = int(active_action)
+            start = action_dim + message_output_dim
+            probabilities = model_output[0, start:start + self._num_actions]
+            if active_action < 0 or active_action >= probabilities.numel():
+                raise ValueError(f"active_action {active_action} is outside the policy action range")
+            termination_probability = float(probabilities[active_action].item())
+
+        return int(action), message_vector, termination_probability
+
+    def evaluate_termination(
+        self,
+        observation: np.ndarray,
+        active_action: int,
+        action_mask: np.ndarray = None,
+    ) -> float:
+        """Return beta(s, active_action), the probability of terminating the option."""
+        active_action = int(active_action)
+        if active_action < 0 or active_action >= self._num_actions:
+            raise ValueError(f"active_action {active_action} is outside the policy action range")
+
+        obs_np = self._prepare_model_observation(observation)
+        obs_tensor = torch.from_numpy(obs_np).unsqueeze(0).to(self.device)
+        if action_mask is None:
+            mask_np = np.ones(self._num_actions, dtype=np.float32)
+        else:
+            mask_np = np.asarray(action_mask, dtype=np.float32).reshape(-1)
+            if mask_np.size != self._num_actions:
+                raise ValueError(
+                    f"action_mask must have {self._num_actions} entries, got {mask_np.size}"
+                )
+        mask_tensor = torch.from_numpy(mask_np).unsqueeze(0).to(self.device)
+
+        with torch.no_grad():
+            output = self.model(obs_tensor, mask_tensor)
+        message_output_dim = 2 * MESSAGE_SIZE if self._comm_mode_name == "attention" else 0
+        start = self._num_actions + message_output_dim
+        end = start + self._num_actions
+        if output.shape[-1] < end:
+            raise RuntimeError(
+                "The loaded model has no compatible Option-Critic termination head. "
+                "Train and export a checkpoint with the current model code."
+            )
+        return float(output[0, start + active_action].item())
 
     def get_inference(
         self,
         observation: np.ndarray,
         robot_position: Optional[np.ndarray] = None,
+        active_action: Optional[int] = None,
     ):
         """Get action for the robot based on current observation.
 
@@ -277,9 +336,11 @@ class VexModelRunner:
             observation: Robot-relative policy observation with no absolute x/y.
             robot_position: Optional absolute world position used internally for
                 action planning. It is not included in the policy observation.
+            active_action: Policy action currently being executed, if any.
         
         Returns:
-            Tuple of (high_level_action: int, split_actions: List[str], message_vector: np.ndarray or None)
+            Tuple of action, split actions, message, termination probability, and
+            whether to preempt the active action.
         """
         if robot_position is not None:
             position = np.asarray(robot_position, dtype=np.float32)
@@ -293,14 +354,23 @@ class VexModelRunner:
             observation=observation
         )
 
-        # Get action and message vector using current observation
-        # Observation uses tracker fields (held_blocks, loaders_taken, goals_added)
-        action, message_vector = self.get_prediction(observation)
+        # The observation uses tracker fields (held_blocks, loaders_taken, goals_added).
+        action, message_vector, termination_probability = self.get_prediction(
+            observation,
+            active_action=active_action,
+        )
         
-        # Get split actions
-        split_actions = self.game.split_action(action, observation, self.robot)
-        
-        return action, split_actions, message_vector
+        should_stop = (
+            active_action is not None
+            and action != int(active_action)
+            and termination_probability >= OPTION_TERMINATION_THRESHOLD
+        )
+        split_actions = (
+            self.game.split_action(action, observation, self.robot)
+            if active_action is None or should_stop
+            else []
+        )
+        return action, split_actions, message_vector, termination_probability, should_stop
 
     def run_action(self, action):
         """Called after robot successfully completes an action.
@@ -318,8 +388,14 @@ while True:
     if message is action done:
         runner.run_action(action) assuming action was successful
     if message is ready for next action: (can happen immediately after action done)
-        runner.get_inference(data)
-        send action back over usb
+        action, split_actions, message, beta, should_stop = runner.get_inference(
+            data,
+            active_action=current_action,
+        )
+        if current_action is None:
+            send action back over usb
+        elif should_stop:
+            send PREEMPT_ACTION and then split_actions over usb
     else:
         update data (position, blocks, etc)
 

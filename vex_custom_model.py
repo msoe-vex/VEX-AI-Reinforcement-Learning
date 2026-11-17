@@ -119,6 +119,7 @@ def build_vex_model(core_dim, comm_dim, action_dim, enable_communication=False):
         attention_unit: nn.Linear for communication attention (or None if disabled)
         message_encoder: nn.Linear for message encoding (or None if disabled)
         message_log_std: nn.Parameter for message log std (or None if disabled)
+        termination_head: nn.Linear for per-option termination probabilities
     """
     encoder = FusionEncoder(core_dim, comm_dim)
     prev_dim = encoder.output_dim
@@ -126,6 +127,7 @@ def build_vex_model(core_dim, comm_dim, action_dim, enable_communication=False):
     # ATOC Heads
     # 1. Intention Head (The Policy)
     intention_head = nn.Linear(prev_dim, action_dim)
+    termination_head = nn.Linear(prev_dim, action_dim)
     
     # 2. Value Head
     value_head = nn.Linear(prev_dim, 1)
@@ -144,7 +146,15 @@ def build_vex_model(core_dim, comm_dim, action_dim, enable_communication=False):
         message_encoder = None
         message_log_std = None
     
-    return encoder, intention_head, value_head, attention_unit, message_encoder, message_log_std
+    return (
+        encoder,
+        intention_head,
+        value_head,
+        attention_unit,
+        message_encoder,
+        message_log_std,
+        termination_head,
+    )
 
 
 
@@ -166,29 +176,18 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
         else:
             obs_dim = self.observation_space.shape[0]
         
-        # Determine enable_communication from action space type.
-        # When communication is enabled, action space is Tuple(Discrete, Box).
-        # When disabled, action space is just Discrete.
-        enable_communication = isinstance(self.action_space, Tuple)
-        
         if isinstance(self.action_space, Discrete):
             action_dim = self.action_space.n
-            is_continuous = False
         elif isinstance(self.action_space, Box):
             action_dim = self.action_space.shape[0]
-            is_continuous = True
         elif isinstance(self.action_space, Tuple):
             first_space = self.action_space[0]
             if isinstance(first_space, Discrete):
                 action_dim = first_space.n
-                is_continuous = False
             else:
                  raise ValueError(f"Unsupported first element in Tuple action space: {type(first_space)}")
         else:
             raise ValueError(f"Unsupported action space: {type(self.action_space)}")
-        
-        # For continuous actions, double the output size (mean + log_std)
-        policy_output_dim = action_dim * 2 if is_continuous else action_dim
         
         try:
             comm_mode_str = self.model_config.get("communication_mode", "none")
@@ -198,20 +197,32 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
             from vex_core.config import CommunicationOption
             comm_mode = CommunicationOption.NONE
 
+        enable_communication = comm_mode == CommunicationOption.ATTENTION
         if comm_mode == CommunicationOption.ATTENTION:
             from vex_core.base_env import MESSAGE_SIZE
-            comm_dim = MESSAGE_SIZE
-            core_dim = obs_dim - comm_dim
+            default_comm_dim = MESSAGE_SIZE
         elif comm_mode == CommunicationOption.COPY:
-            num_teammates = 1  # Standard for VEX AI
-            core_dim = obs_dim // (num_teammates + 1)
-            comm_dim = obs_dim - core_dim
+            default_comm_dim = obs_dim // 2
         else:
-            core_dim = obs_dim
-            comm_dim = 0
+            default_comm_dim = 0
+
+        comm_dim = int(self.model_config.get("communication_dim", default_comm_dim))
+        if comm_dim < 0 or comm_dim >= obs_dim:
+            raise ValueError(f"Invalid communication dimension {comm_dim} for observation size {obs_dim}")
+        core_dim = obs_dim - comm_dim
+        self.action_dim = action_dim
+        self.core_dim = core_dim
             
         # Build the actual model using our simple function
-        self._encoder_net, self.pi, self.value_head, self.attention_unit, self.message_head, self.msg_log_std = build_vex_model(
+        (
+            self._encoder_net,
+            self.pi,
+            self.value_head,
+            self.attention_unit,
+            self.message_head,
+            self.msg_log_std,
+            self.termination_head,
+        ) = build_vex_model(
             core_dim=core_dim,
             comm_dim=comm_dim,
             action_dim=action_dim,
@@ -242,9 +253,9 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
         
         self.encoder_bridge = EncoderBridge(self._encoder_net)
 
-        # Set action distribution class for Tuple action spaces (Discrete + Box)
-        # The default TorchRLModule only handles Discrete/Box, not Tuple.
-        if enable_communication:
+        # Tuple actions need RLlib's composite distribution, including when the
+        # only extra action is the termination command.
+        if isinstance(self.action_space, Tuple):
             from ray.rllib.core.models.catalog import Catalog
             import gymnasium as gym
             # Use a dummy obs space — Catalog can't handle Dict obs spaces,
@@ -272,6 +283,10 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
                 action_mask = obs_dict["action_mask"]
                 inf_mask = torch.clamp(torch.log(action_mask + 1e-10), min=-1e8)
                 intention_logits = intention_logits + inf_mask
+
+        termination_probabilities, active_action_one_hot, termination_logits = (
+            self._termination_outputs(features, batch)
+        )
         
         if self.attention_unit is not None and self.message_head is not None:
             # ATOC Outputs - Communication enabled (Tuple action space)
@@ -286,20 +301,56 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
             gated_log_std = self.msg_log_std + torch.log(gate + 1e-8)
             msg_log_std_exp = gated_log_std.expand(*features.shape[:-1], -1)
             
-            dist_inputs = torch.cat([intention_logits, msg_mean, msg_log_std_exp], dim=-1)
+            dist_inputs = torch.cat(
+                [intention_logits, msg_mean, msg_log_std_exp, termination_logits],
+                dim=-1,
+            )
             
             output["attention_logits"] = attention_logits
             output["comm_gate"] = gate
             output["message"] = msg_mean
         else:
             # Communication disabled (Discrete action space) - only action logits
-            dist_inputs = intention_logits
+            dist_inputs = torch.cat([intention_logits, termination_logits], dim=-1)
         
         output[Columns.ACTION_DIST_INPUTS] = dist_inputs
         output[Columns.VF_PREDS] = self.value_head(features).squeeze(-1)
         output[Columns.EMBEDDINGS] = features
+        output["termination_probabilities"] = termination_probabilities
+        output["active_action_one_hot"] = active_action_one_hot
         
         return output
+
+    def _termination_outputs(self, features, batch):
+        termination_probabilities = torch.sigmoid(self.termination_head(features))
+        obs_dict = batch.get(Columns.OBS, batch) if isinstance(batch, dict) else batch
+        if isinstance(obs_dict, dict) and "active_action" in obs_dict:
+            active_action_one_hot = obs_dict["active_action"]
+        else:
+            active_action_one_hot = torch.zeros_like(termination_probabilities)
+        if active_action_one_hot.shape != termination_probabilities.shape:
+            raise ValueError(
+                "Active-action observation shape must match termination-head output "
+                f"({tuple(termination_probabilities.shape)}), got "
+                f"{tuple(active_action_one_hot.shape)}"
+            )
+        active_probability = torch.sum(
+            termination_probabilities * active_action_one_hot,
+            dim=-1,
+            keepdim=True,
+        )
+        has_active_action = torch.sum(active_action_one_hot, dim=-1, keepdim=True) > 0.5
+        active_probability = torch.where(
+            has_active_action,
+            active_probability,
+            torch.zeros_like(active_probability),
+        )
+        active_probability = torch.clamp(active_probability, min=1e-6, max=1.0 - 1e-6)
+        termination_logits = torch.cat(
+            [torch.log1p(-active_probability), torch.log(active_probability)],
+            dim=-1,
+        )
+        return termination_probabilities, active_action_one_hot, termination_logits
 
 
     @override(RLModule)
@@ -317,6 +368,10 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
                 action_mask = obs_dict["action_mask"]
                 inf_mask = torch.clamp(torch.log(action_mask + 1e-10), min=-1e8)
                 intention_logits = intention_logits + inf_mask
+
+        termination_probabilities, active_action_one_hot, termination_logits = (
+            self._termination_outputs(features, batch)
+        )
         
         if self.attention_unit is not None and self.message_head is not None:
             # ATOC Outputs - Communication enabled (Tuple action space)
@@ -331,16 +386,21 @@ class VexCustomPPO(DefaultPPOTorchRLModule):
             gated_log_std = self.msg_log_std + torch.log(gate + 1e-8)
             msg_log_std_exp = gated_log_std.expand(*features.shape[:-1], -1)
             
-            dist_inputs = torch.cat([intention_logits, msg_mean, msg_log_std_exp], dim=-1)
+            dist_inputs = torch.cat(
+                [intention_logits, msg_mean, msg_log_std_exp, termination_logits],
+                dim=-1,
+            )
             
             output["attention_logits"] = attention_logits
             output["comm_gate"] = gate
             output["message"] = msg_mean
         else:
             # Communication disabled (Discrete action space) - only action logits
-            dist_inputs = intention_logits
+            dist_inputs = torch.cat([intention_logits, termination_logits], dim=-1)
         
         output[Columns.ACTION_DIST_INPUTS] = dist_inputs
+        output["termination_probabilities"] = termination_probabilities
+        output["active_action_one_hot"] = active_action_one_hot
         
         return output
 

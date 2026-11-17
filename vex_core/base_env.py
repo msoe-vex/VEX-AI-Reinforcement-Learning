@@ -22,6 +22,8 @@ from .utils import vex_atan2, vex_normalize_angle, vex_shortest_angular_distance
 DELTA_T = 0.1  # Discrete time step in seconds
 COMM_DELAY_TICKS = 0  # Message delivery delay in ticks (4 ticks = ~0.375s, half of 0.75s RTT)
 MESSAGE_SIZE = 8  # Dimension of inter-agent communication message vector
+ACTION_INTERRUPTION_PENALTY = 10.0
+OPTION_TERMINATION_THRESHOLD = 0.5
 
 
 class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
@@ -135,48 +137,47 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
     def observation_space(self, agent: str) -> spaces.Space:
         """Get observation space for an agent."""
         game_space = self.game.get_game_observation_space(agent)
-        
-        if self.communication_mode == CommunicationOption.NONE:
-            obs_space = game_space
-            
-        # Append MESSAGE_SIZE dimensions to the observation space
-        elif isinstance(game_space, spaces.Box):
-            orig_shape = game_space.shape[0]
-            
-            if self.communication_mode == CommunicationOption.ATTENTION:
-                new_shape = (orig_shape + MESSAGE_SIZE,)
-            elif self.communication_mode == CommunicationOption.COPY:
-                # Append observation shape of teammates
-                my_team = self.game.get_team_for_agent(agent)
-                num_teammates = sum(1 for a in self.possible_agents if self.game.get_team_for_agent(a) == my_team and a != agent)
-                new_shape = (orig_shape + (orig_shape * num_teammates),)
-            else:
-                new_shape = (orig_shape,)
-                
-            low = np.full(new_shape, -1e10, dtype=np.float32)
-            high = np.full(new_shape, 1e10, dtype=np.float32)
-            obs_space = spaces.Box(low=low, high=high, dtype=np.float32)
-        else:
+        if not isinstance(game_space, spaces.Box):
             raise ValueError(f"Expected Box observation space from game, got {type(game_space)}")
-            
+
+        base_obs_size = game_space.shape[0]
+        obs_size = base_obs_size
+        if self.communication_mode == CommunicationOption.ATTENTION:
+            obs_size += MESSAGE_SIZE
+        elif self.communication_mode == CommunicationOption.COPY:
+            my_team = self.game.get_team_for_agent(agent)
+            num_teammates = sum(
+                1
+                for other in self.possible_agents
+                if self.game.get_team_for_agent(other) == my_team and other != agent
+            )
+            obs_size += base_obs_size * num_teammates
+
+        obs_space = spaces.Box(
+            low=np.full((obs_size,), -1e10, dtype=np.float32),
+            high=np.full((obs_size,), 1e10, dtype=np.float32),
+            dtype=np.float32,
+        )
+
         num_actions = self.game.num_actions
         return spaces.Dict({
             "action_mask": spaces.Box(0.0, 1.0, shape=(num_actions,), dtype=np.float32),
-            "observations": obs_space
+            "observations": obs_space,
+            "active_action": spaces.Box(0.0, 1.0, shape=(num_actions,), dtype=np.float32),
         })
     
     @functools.lru_cache(maxsize=None)
     def action_space(self, agent: str) -> spaces.Space:
         """Get action space for an agent."""
         game_space = self.game.get_game_action_space(agent)
-        
+        termination_space = spaces.Discrete(2)
         if self.communication_mode == CommunicationOption.ATTENTION:
             return spaces.Tuple((
                 game_space,
-                spaces.Box(low=-1.0, high=1.0, shape=(MESSAGE_SIZE,), dtype=np.float32)
+                spaces.Box(low=-1.0, high=1.0, shape=(MESSAGE_SIZE,), dtype=np.float32),
+                termination_space,
             ))
-        else:
-            return game_space
+        return spaces.Tuple((game_space, termination_space))
     
     def reset(
         self, 
@@ -233,6 +234,9 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         for agent in list(self.busy_state.keys()):
             busy_info = self.busy_state[agent]
             busy_info["remaining_ticks"] -= 1
+            busy_info["ticks_until_check"] = int(
+                busy_info.get("ticks_until_check", 1)
+            ) - 1
 
             agent_state = self.environment_state["agents"][agent]
 
@@ -321,6 +325,87 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 agent_state["orientation"] = current_orient
                 completed[agent] = False
         return completed
+
+    def _queue_due_termination_checks(self) -> None:
+        for agent, busy in self.busy_state.items():
+            if (
+                busy["remaining_ticks"] > 0
+                and busy["ticks_until_check"] <= 0
+                and agent not in self._terminated_agents
+                and agent not in self.agents
+            ):
+                self.agents.append(agent)
+
+    def _unpack_policy_action(self, action: Any) -> Tuple[int, Optional[Any], bool]:
+        action_value = action
+        emitted_message = None
+        stop_value: Any = 0
+        if isinstance(action, (tuple, list)):
+            if len(action) not in (2, 3):
+                raise ValueError(
+                    f"Expected a 2- or 3-item policy action, received {len(action)} items"
+                )
+            action_value = action[0]
+            if len(action) == 3:
+                emitted_message, stop_value = action[1], action[2]
+            else:
+                second_value = action[1]
+                second_array = np.asarray(second_value)
+                if second_array.ndim > 0 and second_array.size > 1:
+                    emitted_message = second_value
+                else:
+                    stop_value = second_value
+
+        if hasattr(action_value, "value"):
+            action_value = action_value.value
+        action_array = np.asarray(action_value)
+        if action_array.size != 1:
+            raise ValueError(f"Expected a scalar macro-action, received shape {action_array.shape}")
+        action_int = int(action_array.reshape(-1)[0])
+
+        stop_array = np.asarray(stop_value)
+        if stop_array.size != 1:
+            raise ValueError(f"Expected a scalar termination command, received shape {stop_array.shape}")
+        stop_int = int(stop_array.reshape(-1)[0])
+        if stop_int not in (0, 1):
+            raise ValueError(f"Termination command must be 0 or 1, received {stop_int}")
+        return action_int, emitted_message, bool(stop_int)
+
+    def _interrupt_busy_action(
+        self,
+        agent: str,
+        rewards: Dict[str, float],
+        infos: Dict[str, Dict],
+    ) -> None:
+        self.busy_state.pop(agent)
+        agent_state = self.environment_state["agents"][agent]
+        current_action = agent_state.get("current_action")
+        if current_action is None:
+            raise RuntimeError(f"Busy agent {agent} has no current action to interrupt")
+
+        self.game.cancel_action(agent, int(current_action))
+        self.agent_movements[agent] = None
+
+        deferred = self._deferred_rewards.get(agent)
+        if deferred is None:
+            raise RuntimeError(f"Busy agent {agent} has no deferred reward to finalize")
+        deferred["penalty"] = (
+            float(deferred.get("penalty", 0.0)) + ACTION_INTERRUPTION_PENALTY
+        )
+        self._add_agent_penalty(agent, ACTION_INTERRUPTION_PENALTY)
+
+        finalized = self._complete_deferred_reward(agent)
+        if finalized is None:
+            raise RuntimeError(f"Unable to finalize interrupted action for agent {agent}")
+        reward, action_name = finalized
+        rewards[agent] = reward
+        agent_state["last_action_name"] = action_name
+        agent_state["last_action_reward"] = reward
+        agent_state["current_action"] = None
+        if hasattr(self.game, "clear_opponent_memory"):
+            self.game.clear_opponent_memory(agent)
+        infos[agent]["action_interrupted"] = True
+        infos[agent]["interruption_penalty"] = ACTION_INTERRUPTION_PENALTY
 
     def _advance_time_and_messages(self):
         """Advance game clock by one tick and update inter-agent messages."""
@@ -494,6 +579,11 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         communication is enabled, appends the received messages vector.
         """
         obs = self.game.get_game_observation(agent, game_time=game_time)
+        active_action = np.zeros(self.game.num_actions, dtype=np.float32)
+        if agent in self.busy_state:
+            current_action = self.environment_state["agents"][agent].get("current_action")
+            if current_action is not None and 0 <= int(current_action) < self.game.num_actions:
+                active_action[int(current_action)] = 1.0
         
         if self.communication_mode == CommunicationOption.ATTENTION:
             agent_state = self.environment_state["agents"].get(agent, {})
@@ -525,6 +615,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         return {
             "action_mask": action_mask,
             "observations": obs,
+            "active_action": active_action,
         }
 
     def step(
@@ -534,11 +625,9 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         """
         Execute one environment step.
 
-        Only agents that are NOT busy appear in self.agents.  RLlib/the caller
-        sends actions only for those agents.  After processing the new actions
-        (which make agents busy), we fast-forward through ticks until at
-        least one agent becomes free again.  Each internal tick renders a
-        frame and updates messages so communication is never lost.
+        Idle agents and busy agents due for a termination check appear in
+        self.agents. Busy actions are checked every second, or every five
+        seconds when the original action lasts longer than ten seconds.
 
         Rewards are computed AFTER the busy state completes (events have been
         applied and scores have changed), giving correct score-based rewards.
@@ -567,30 +656,30 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         infos = {agent: {} for agent in all_agents}
         
         # ──────────────────────────────────────────────────────────────
-        # 1. Process new actions for non-busy agents
+        # 1. Process new actions and termination decisions
         # ──────────────────────────────────────────────────────────────
         newly_actioned = set()
         for agent, action in actions.items():
             if agent not in all_agents:
                 continue
+
+            action_int, emitted_msg, should_stop = self._unpack_policy_action(action)
             if agent in self.busy_state:
-                continue
+                busy = self.busy_state[agent]
+                current_action = self.environment_state["agents"][agent].get("current_action")
+                if not should_stop or action_int == current_action:
+                    busy["ticks_until_check"] = busy["check_interval_ticks"]
+                    if agent in self.agents:
+                        self.agents.remove(agent)
+                    infos[agent]["action_skipped"] = True
+                    continue
+                self._interrupt_busy_action(agent, rewards, infos)
 
             agent_state = self.environment_state["agents"][agent]
             infos[agent]["action_skipped"] = False
             
             start_pos = agent_state["position"].copy()
             start_orient = agent_state["orientation"].copy()
-            # Parse action tuple (Control, Message)
-            action_val = action
-            emitted_msg = None
-            if isinstance(action, (tuple, list)) and len(action) >= 2:
-                action_val = action[0]
-                emitted_msg = action[1]
-            elif isinstance(action, np.ndarray) and action.ndim > 0 and action.size > 1:
-                pass
-                
-            action_int = int(action_val.value if hasattr(action_val, 'value') else action_val)
             agent_state["current_action"] = action_int
             agent_state["game_time"] = self._get_agent_time(agent)
             
@@ -674,6 +763,11 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             ticks = max(1, int(tick_cursor))
             final_target_pos = plan[-1]["end_pos"].copy()
             final_target_orient = plan[-1]["end_orient"].copy()
+            check_interval_ticks = (
+                max(1, int(round(5.0 / DELTA_T)))
+                if ticks * DELTA_T > 10.0
+                else max(1, int(round(1.0 / DELTA_T)))
+            )
             
             if ticks > 0:
                 self.busy_state[agent] = {
@@ -684,6 +778,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                     "plan": plan,
                     "total_ticks": ticks,
                     "remaining_ticks": ticks,
+                    "check_interval_ticks": check_interval_ticks,
+                    "ticks_until_check": check_interval_ticks,
                     "completed_segments": set(),
                 }
                 newly_actioned.add(agent)
@@ -731,6 +827,8 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                 }],
                 "total_ticks": 1,
                 "remaining_ticks": 1,
+                "check_interval_ticks": 1,
+                "ticks_until_check": 1,
                 "completed_segments": set(),
             }
             self.agent_movements[agent] = None
@@ -758,6 +856,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
         for agent, did_complete in tick_results.items():
             if did_complete:
                 self._mark_action_completed(agent, rewards, infos)
+        self._queue_due_termination_checks()
 
         self._advance_time_and_messages()
         self.score = self.game.compute_score()
@@ -774,6 +873,7 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
             for agent, did_complete in tick_results.items():
                 if did_complete:
                     self._mark_action_completed(agent, rewards, infos)
+            self._queue_due_termination_checks()
 
             self._advance_time_and_messages()
             self.score = self.game.compute_score()
@@ -1264,8 +1364,15 @@ class VexMultiAgentEnv(MultiAgentEnv, ParallelEnv):
                         msg_str = ""
                         if isinstance(action, (tuple, list, np.ndarray)):
                             action_val = action[0]
-                            if isinstance(action, (tuple, list)) and len(action) >= 2:
-                                msg = np.array(action[1], dtype=np.float32).ravel()
+                            message_value = None
+                            if isinstance(action, (tuple, list)) and len(action) == 3:
+                                message_value = action[1]
+                            elif isinstance(action, (tuple, list)) and len(action) == 2:
+                                candidate_message = np.asarray(action[1])
+                                if candidate_message.ndim > 0 and candidate_message.size > 1:
+                                    message_value = action[1]
+                            if message_value is not None:
+                                msg = np.array(message_value, dtype=np.float32).ravel()
                                 if msg.size > 0:
                                     if msg.size < MESSAGE_SIZE:
                                         padded = np.zeros(MESSAGE_SIZE, dtype=np.float32)

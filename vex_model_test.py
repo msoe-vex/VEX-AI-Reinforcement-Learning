@@ -8,7 +8,11 @@ import time
 from gymnasium import spaces
 
 # Import from new modular architecture
-from vex_core.base_env import VexMultiAgentEnv, MESSAGE_SIZE
+from vex_core.base_env import (
+    MESSAGE_SIZE,
+    OPTION_TERMINATION_THRESHOLD,
+    VexMultiAgentEnv,
+)
 from vex_core.config import VexEnvConfig, CommunicationOption
 from pushback import PushBackGame
 from override import OverrideGame
@@ -213,6 +217,16 @@ def run_simulation(
 
                 obs_dict = observations[agent_id]
                 obs_np = obs_dict["observations"] if isinstance(obs_dict, dict) and "observations" in obs_dict else obs_dict
+                active_action_values = (
+                    np.asarray(obs_dict.get("active_action", []), dtype=np.float32).reshape(-1)
+                    if isinstance(obs_dict, dict)
+                    else np.zeros(0, dtype=np.float32)
+                )
+                active_action = (
+                    int(np.argmax(active_action_values))
+                    if active_action_values.size and np.max(active_action_values) > 0.5
+                    else None
+                )
 
                 # If communication_mode is copy but test_communication_mode is not NONE, fill the second half of the observation vector with zeros
                 if config.communication_mode == CommunicationOption.COPY and test_communication_mode is not CommunicationOption.COPY:
@@ -237,11 +251,16 @@ def run_simulation(
 
                     action_space = env.action_space(agent_id)
                     if isinstance(action_space, spaces.Tuple):
-                        if test_communication_mode == CommunicationOption.NONE:
-                            message_vector = np.zeros(MESSAGE_SIZE, dtype=np.float32)
+                        if len(action_space.spaces) == 3:
+                            if test_communication_mode == CommunicationOption.NONE:
+                                message_vector = np.zeros(MESSAGE_SIZE, dtype=np.float32)
+                            else:
+                                message_vector = np.random.uniform(
+                                    -1.0, 1.0, size=(MESSAGE_SIZE,)
+                                ).astype(np.float32)
+                            actions_to_take[agent_id] = (action, message_vector, 0)
                         else:
-                            message_vector = np.random.uniform(-1.0, 1.0, size=(MESSAGE_SIZE,)).astype(np.float32)
-                        actions_to_take[agent_id] = (action, message_vector)
+                            actions_to_take[agent_id] = (action, 0)
                     else:
                         actions_to_take[agent_id] = action
 
@@ -254,7 +273,16 @@ def run_simulation(
                     torch.cuda.synchronize(device)
                 inference_start = time.perf_counter()
                 
-                action, message_vector = runner.get_prediction(obs_np, action_mask_np)
+                action, message_vector, termination_probability = runner.get_prediction(
+                    obs_np,
+                    action_mask_np,
+                    active_action=active_action,
+                )
+                should_stop = (
+                    active_action is not None
+                    and action != active_action
+                    and termination_probability >= OPTION_TERMINATION_THRESHOLD
+                )
                 
                 if device.type == "cuda":
                     torch.cuda.synchronize(device)
@@ -267,9 +295,16 @@ def run_simulation(
 
                 action_space = env.action_space(agent_id)
                 if isinstance(action_space, spaces.Tuple):
-                    if test_communication_mode == CommunicationOption.NONE:
-                        message_vector = np.zeros(MESSAGE_SIZE, dtype=np.float32)
-                    actions_to_take[agent_id] = (action, message_vector)
+                    if len(action_space.spaces) == 3:
+                        if message_vector is None:
+                            message_vector = np.zeros(MESSAGE_SIZE, dtype=np.float32)
+                        actions_to_take[agent_id] = (
+                            action,
+                            message_vector,
+                            int(should_stop),
+                        )
+                    else:
+                        actions_to_take[agent_id] = (action, int(should_stop))
                 else:
                     actions_to_take[agent_id] = action
 

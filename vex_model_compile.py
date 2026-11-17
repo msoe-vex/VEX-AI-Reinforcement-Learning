@@ -139,15 +139,21 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
             message_head = getattr(rl_module, "message_head", None)
             msg_log_std = getattr(rl_module, "msg_log_std", None)
             attention_unit = getattr(rl_module, "attention_unit", None)
+            termination_head = getattr(rl_module, "termination_head", None)
 
             class CombinedHead(nn.Module):
-                """Wrapper that returns concatenated [masked_logits, msg_mean, msg_log_std]
-                when the ATOC message head exists; otherwise returns masked logits only.
-                Applies action masking to logits to match training behavior.
-                """
-                def __init__(self, pi, msg_head=None, msg_log_std=None, attention_unit=None):
+                """Return action logits, optional message parameters, and per-option beta."""
+                def __init__(
+                    self,
+                    pi,
+                    termination_head,
+                    msg_head=None,
+                    msg_log_std=None,
+                    attention_unit=None,
+                ):
                     super().__init__()
                     self.pi = pi
+                    self.termination_head = termination_head
                     self.msg_head = msg_head
                     self.msg_log_std = msg_log_std
                     self.attention_unit = attention_unit
@@ -165,11 +171,20 @@ def compile_checkpoint_to_torchscript(game: VexGame, checkpoint_path: str, outpu
                         gate = torch.sigmoid(attention_logits)
                         msg_mean = msg_mean * gate
                         msg_log_std_exp = self.msg_log_std.expand(batch_size, -1)
-                        return torch.cat([logits, msg_mean, msg_log_std_exp], dim=1)
+                        outputs = [logits, msg_mean, msg_log_std_exp]
                     else:
-                        return logits
+                        outputs = [logits]
+                    if self.termination_head is not None:
+                        outputs.append(torch.sigmoid(self.termination_head(feats)))
+                    return torch.cat(outputs, dim=1)
 
-            clean_head = CombinedHead(pi_head, message_head, msg_log_std, attention_unit)
+            clean_head = CombinedHead(
+                pi_head,
+                termination_head,
+                message_head,
+                msg_log_std,
+                attention_unit,
+            )
             
             # Combine them into a simple container for export
             class ExportModel(nn.Module):

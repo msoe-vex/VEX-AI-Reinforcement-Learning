@@ -1486,6 +1486,9 @@ class OverrideGame(VexGame):
             ), 0.0
         return [ActionStep(0.1, state["position"].copy(), state["orientation"].copy())], DEFAULT_PENALTY
 
+    def cancel_action(self, agent: str, action: int) -> None:
+        self.state["agents"][agent].pop("_pending_stack_pickup", None)
+
     def update_tracker(self, agent: str, action: int) -> None:
         # Update inferred held-object, parking, and Toggle state after an action.
         state = self.state["agents"][agent]
