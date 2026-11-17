@@ -260,70 +260,64 @@ class VexScoreCallback(RLlibCallback):
     
     def on_algorithm_init(self, *, algorithm, **kwargs):
         """Called when a new algorithm instance has been created."""
-        try:
-            env_config = algorithm.config.env_config
-            warm_start = env_config.get("warm_start", False)
-            restore_path = env_config.get("restore_path", None)
-            
-            if warm_start and restore_path:
-                print(f"*** WARM START: Loading weights only from {restore_path} ***")
-                import os
-                import pickle
-                try:
-                    restore_abs = os.path.abspath(restore_path)
-                    if not restore_abs.startswith("file://"):
-                        restore_abs_file = "file://" + restore_abs
-                    else:
-                        restore_abs_file = restore_abs
-                        restore_abs = restore_abs.replace("file://", "")
-                        
-                    # Fast path: Extract RLModule weights directly from checkpoint to avoid resource deadlock
-                    rl_module_dir = os.path.join(restore_abs, "learner_group", "learner", "rl_module")
-                    fast_load_success = False
-                    
-                    if os.path.exists(rl_module_dir):
-                        policy_ids = [d for d in os.listdir(rl_module_dir) if os.path.isdir(os.path.join(rl_module_dir, d))]
-                        multi_agent_state = {}
-                        
-                        for policy_id in policy_ids:
-                            pkl_path = os.path.join(rl_module_dir, policy_id, "module_state.pkl")
-                            if os.path.exists(pkl_path):
-                                with open(pkl_path, 'rb') as f:
-                                    multi_agent_state[policy_id] = pickle.load(f)
-                                print(f"Loaded {len(multi_agent_state[policy_id])} weight tensors for {policy_id}")
-                                
-                        if multi_agent_state:
-                            algorithm.set_weights(multi_agent_state)
-                            print("Successfully injected raw RLModule weights for warm start.")
-                            fast_load_success = True
-                            
-                    if not fast_load_success:
-                        print("Fallback: Using full Algorithm restore (warning: may hang if cluster resources are exhausted)")
-                        from ray.rllib.algorithms.algorithm import Algorithm
-                        temp_algo = Algorithm.from_checkpoint(restore_abs_file)
-                        algorithm.set_weights(temp_algo.get_weights())
-                        temp_algo.stop()
-                        print("Successfully loaded weights via Algorithm fallback for warm start.")
-                        
-                except Exception as e:
-                    print(f"Failed to perform warm start weight load from algorithm: {e}")
-                    import traceback
-                    traceback.print_exc()
-        except Exception as e:
-            print(f"Error in warm start initialization: {e}")
+        env_config = algorithm.config.env_config
+        warm_start = env_config.get("warm_start", False)
+        restore_path = env_config.get("restore_path", None)
 
-        try:
-            phase = get_training_phase(0, ACTIVE_TRAINING_PHASES)
-            algorithm.learner_group.foreach_learner(
-                lambda learner: apply_head_training_status_on_learner(learner, phase)
-            )
+        if warm_start and not restore_path:
+            raise ValueError("--warm-start requires --experiment-path with a valid checkpoint.")
+
+        if warm_start:
+            print(f"*** WARM START: Loading weights only from {restore_path} ***")
+            import os
+            import pickle
+
+            restore_abs = os.path.abspath(restore_path)
+            if not restore_abs.startswith("file://"):
+                restore_abs_file = "file://" + restore_abs
+            else:
+                restore_abs_file = restore_abs
+                restore_abs = restore_abs.replace("file://", "")
+
+            # Fast path: Extract RLModule weights directly from checkpoint to avoid resource deadlock
+            rl_module_dir = os.path.join(restore_abs, "learner_group", "learner", "rl_module")
+            fast_load_success = False
             
-            enc_status = "TRAINING" if phase.get("train_encoder", True) else "FROZEN"
-            action_status = "TRAINING" if phase.get("train_action", True) else "FROZEN"
-            msg_status = "TRAINING" if phase.get("train_message", True) else "FROZEN"
-            print(f"  [Init] Phase Config: Encoder [{enc_status}] | Action [{action_status}] | Message [{msg_status}] | LR: {phase.get('lr', 0.0005)} | Ent: {phase.get('entropy', 0.05)}")
-        except getattr(Exception, "dummy", Exception):
-            pass
+            if os.path.exists(rl_module_dir):
+                policy_ids = [d for d in os.listdir(rl_module_dir) if os.path.isdir(os.path.join(rl_module_dir, d))]
+                multi_agent_state = {}
+
+                for policy_id in policy_ids:
+                    pkl_path = os.path.join(rl_module_dir, policy_id, "module_state.pkl")
+                    if os.path.exists(pkl_path):
+                        with open(pkl_path, 'rb') as f:
+                            multi_agent_state[policy_id] = pickle.load(f)
+                        print(f"Loaded {len(multi_agent_state[policy_id])} weight tensors for {policy_id}")
+
+                if multi_agent_state:
+                    algorithm.set_weights(multi_agent_state)
+                    print("Successfully injected raw RLModule weights for warm start.")
+                    fast_load_success = True
+                    
+            if not fast_load_success:
+                print("Fallback: Using full Algorithm restore (warning: may hang if cluster resources are exhausted)")
+                from ray.rllib.algorithms.algorithm import Algorithm
+                temp_algo = Algorithm.from_checkpoint(restore_abs_file)
+                try:
+                    algorithm.set_weights(temp_algo.get_weights())
+                finally:
+                    temp_algo.stop()
+                print("Successfully loaded weights via Algorithm fallback for warm start.")
+
+        phase = get_training_phase(0, ACTIVE_TRAINING_PHASES)
+        algorithm.learner_group.foreach_learner(
+            lambda learner: apply_head_training_status_on_learner(learner, phase)
+        )
+
+        enc_status = "TRAINING" if phase.get("train_encoder", True) else "FROZEN"
+        action_status = "TRAINING" if phase.get("train_action", True) else "FROZEN"
+        msg_status = "TRAINING" if phase.get("train_message", True) else "FROZEN"
+        print(f"  [Init] Phase Config: Encoder [{enc_status}] | Action [{action_status}] | Message [{msg_status}] | LR: {phase.get('lr', 0.0005)} | Ent: {phase.get('entropy', 0.05)}")
 
     def on_episode_end(self, *, episode, env_runner, metrics_logger, env, env_index, rl_module, **kwargs):
         """Called at the end of each episode to log team scores."""
@@ -365,18 +359,15 @@ class VexScoreCallback(RLlibCallback):
             print(f"[Iter {iteration}] Episode Return Mean: {episode_return:.1f}")
             
         # Toggle frozen heads
-        try:
-            phase = get_training_phase(iteration, ACTIVE_TRAINING_PHASES)
-            algorithm.learner_group.foreach_learner(
-                lambda learner: apply_head_training_status_on_learner(learner, phase)
-            )
-            
-            enc_status = "TRAINING" if phase.get("train_encoder", True) else "FROZEN"
-            action_status = "TRAINING" if phase.get("train_action", True) else "FROZEN"
-            msg_status = "TRAINING" if phase.get("train_message", True) else "FROZEN"
-            print(f"  -> Phase Config: Encoder [{enc_status}] | Action [{action_status}] | Message [{msg_status}] | LR: {phase.get('lr', 0.0005)} | Ent: {phase.get('entropy', 0.05)}")
-        except getattr(Exception, "dummy", Exception):
-            pass
+        phase = get_training_phase(iteration, ACTIVE_TRAINING_PHASES)
+        algorithm.learner_group.foreach_learner(
+            lambda learner: apply_head_training_status_on_learner(learner, phase)
+        )
+
+        enc_status = "TRAINING" if phase.get("train_encoder", True) else "FROZEN"
+        action_status = "TRAINING" if phase.get("train_action", True) else "FROZEN"
+        msg_status = "TRAINING" if phase.get("train_message", True) else "FROZEN"
+        print(f"  -> Phase Config: Encoder [{enc_status}] | Action [{action_status}] | Message [{msg_status}] | LR: {phase.get('lr', 0.0005)} | Ent: {phase.get('entropy', 0.05)}")
             
         sys.stdout.flush()
 
@@ -669,6 +660,7 @@ if __name__ == "__main__":
             num_env_runners=num_env_runners,
             batch_mode="complete_episodes",  # Collect complete episodes, not fragments
             rollout_fragment_length="auto",  # Let RLlib calculate the optimal fragment length
+            sample_timeout_s=60.0,
         )
         .multi_agent(
             policies=set(configured_policy_ids),  # Define policy IDs from mapping function
@@ -745,6 +737,7 @@ if __name__ == "__main__":
     # Prepare the actual tune restore parameter
     # IF warm_start is True, we pass None to tune.run so it thinks it's a fresh start
     tune_restore_path = None if args.warm_start else restore_path
+    checkpoint_metric = "env_runners/episode_return_mean"
 
     # Run the training process with logger callbacks
     analysis = tune.run(
@@ -754,7 +747,7 @@ if __name__ == "__main__":
         storage_path=output_directory,
         checkpoint_freq=checkpoint_freq,
         keep_checkpoints_num=1,  # Keep 1 best checkpoint
-        checkpoint_score_attr="env_runners/episode_return_mean",  # Use this metric for best checkpoint
+        checkpoint_score_attr=checkpoint_metric,  # Use this metric for best checkpoint
         sync_config=tune.SyncConfig(
             sync_period=300,  # Sync every 5 minutes instead of constantly
         ),
@@ -765,7 +758,7 @@ if __name__ == "__main__":
             #TBXLoggerCallback(),
         ],
         log_to_file=False,
-        metric="env_runners/episode_return_mean",
+        metric=checkpoint_metric,
         mode="max",
         verbose=args.verbose,  # Use the verbosity level from the argument
         restore=tune_restore_path,  # Resume from checkpoint if provided
@@ -774,8 +767,18 @@ if __name__ == "__main__":
     print(f"Training completed at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
     print(f"Total training time: {time.time() - start_time:.2f} seconds")
 
-    # Use the best checkpoint directly from the analysis
-    best_checkpoint = analysis.best_checkpoint
+    # Specify the nested metric explicitly; best_checkpoint may use a stale/default
+    # unqualified metric when reading results from older Tune runs.
+    best_trial = analysis.get_best_trial(metric=checkpoint_metric, mode="max")
+    best_checkpoint = (
+        analysis.get_best_checkpoint(
+            trial=best_trial,
+            metric=checkpoint_metric,
+            mode="max",
+        )
+        if best_trial is not None
+        else None
+    )
     best_checkpoint_path = best_checkpoint.path if best_checkpoint is not None else find_latest_checkpoint(experiment_dir)
     if best_checkpoint_path is None:
         raise RuntimeError(
@@ -786,6 +789,16 @@ if __name__ == "__main__":
     print(f"Saving results to: {experiment_dir}")
 
     compile_checkpoint_to_torchscript(temp_env.game, best_checkpoint_path, experiment_dir, env_config=env_config_obj)
+    missing_exports = [
+        os.path.join(experiment_dir, f"{policy_id}.pt2")
+        for policy_id in configured_policy_ids
+        if not os.path.isfile(os.path.join(experiment_dir, f"{policy_id}.pt2"))
+    ]
+    if missing_exports:
+        raise RuntimeError(
+            "Checkpoint compilation did not produce model exports for "
+            f"{configured_policy_ids}: {missing_exports}"
+        )
 
     # Shutdown Ray
     ray.shutdown()
@@ -808,6 +821,13 @@ if __name__ == "__main__":
             iterations=1000,
             test_communication_mode=env_config_obj.communication_mode
         )
+        test_results_path = os.path.join(experiment_dir, "results.csv")
+        if not os.path.isfile(test_results_path):
+            raise RuntimeError(
+                f"Automated testing returned without writing results to {test_results_path}. "
+                "Check the model-loading output for an earlier error."
+            )
         print("Automated testing complete.")
     except Exception as e:
         print(f"Automated testing failed: {e}")
+        raise

@@ -493,10 +493,11 @@ class OverrideGame(VexGame):
     def _goal_for_action(self, action: Optional[Actions]) -> Optional[GoalType]:
         return self.goal_action_map.get(action) if action is not None else None
 
-    def _goal_objects(self, goal: GoalType) -> List[Dict]:
+    def _goal_objects(self, goal: GoalType) -> List[Tuple[int, Dict]]:
         goal_position = self.goal_positions[goal]
         return [
-            obj for obj in self.state["objects"]
+            (index, obj)
+            for index, obj in enumerate(self.state["objects"])
             if obj["kind"] in {"pin", "cup"}
             and obj["status"] in {ObjectStatus.ON_FIELD, ObjectStatus.SCORED}
             and np.linalg.norm(obj["position"] - goal_position) <= GOAL_RADII[goal]
@@ -505,7 +506,10 @@ class OverrideGame(VexGame):
     def _goal_stack_height(self, goal: GoalType) -> float:
         """Return the highest item currently occupying a Goal."""
         objects = self._goal_objects(goal)
-        return max((float(obj.get("z", 0.0)) for obj in objects), default=0.0)
+        return max(
+            (float(obj.get("z", 0.0)) for _, obj in objects),
+            default=0.0,
+        )
 
     @property
     def goal_positions(self) -> Dict[GoalType, np.ndarray]:
@@ -1158,14 +1162,7 @@ class OverrideGame(VexGame):
             values.extend(relative_polar(
                 goal_position, state["position"], camera_angle
             ))
-            goal_objects = [
-                (index, obj)
-                for index, obj in enumerate(self.state["objects"])
-                if any(
-                    candidate is obj
-                    for candidate in self._goal_objects(goal_type)
-                )
-            ]
+            goal_objects = self._goal_objects(goal_type)
 
             pin_counts = {"friendly": 0.0, "opponent": 0.0, "neutral": 0.0}
             for _, obj in goal_objects:
@@ -1209,7 +1206,10 @@ class OverrideGame(VexGame):
                 1.0 if index == top_feature else 0.0
                 for index in range(GOAL_TOP_FEATURES)
             )
-            values.append(self._goal_stack_height(goal_type))
+            values.append(max(
+                (float(obj.get("z", 0.0)) for _, obj in goal_objects),
+                default=0.0,
+            ))
 
         for _ in range(NUM_GOALS - len(active_goals)):
             values.extend([-144.0, 0.0, 0.0, 0.0, 0.0, 0.0])
