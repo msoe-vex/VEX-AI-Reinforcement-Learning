@@ -110,8 +110,7 @@ def run_simulation(
     
     use_random_actions = model_dir is None or str(model_dir).strip() == ""
     if not use_random_actions and not os.path.exists(model_dir):
-        print(f"Error: Model directory not found at {model_dir}")
-        return
+        raise FileNotFoundError(f"Model directory not found at {model_dir}")
 
     # Device Awareness: Automatically use GPU (CUDA) if available
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -145,8 +144,8 @@ def run_simulation(
                 runners[agent_id] = VexModelRunner(model_path=None, game=game, temperature=temperature, agent_name=agent_id, model=model)
             print(f"Successfully loaded models for {len(runners)} agents")
         except Exception as e:
-            print(f"Error loading models: {e}")
-            return
+            env.close()
+            raise RuntimeError(f"Error loading models: {e}") from e
     
     # Get observation and action space shapes for a sample agent
     # These are used to correctly shape tensors for the model
